@@ -272,6 +272,22 @@ func _setup_input_boost() -> void:
 	_boost_timer.wait_time = INPUT_BOOST_SECS
 	_boost_timer.timeout.connect(func(): OS.low_processor_usage_mode = true)
 	add_child(_boost_timer)
+	# Idle main-loop pacing. In low-processor mode Godot still wakes every
+	# low_processor_usage_mode_sleep_usec (6.9 ms by default, ~145 times a second) and runs every
+	# node's _process -- OGUI's main thread cost ~13% of a core on the Air X doing nothing. 16.7 ms
+	# in the menus keeps a 60 Hz input response; 50 ms while a game covers the shell, where the
+	# shell only has to notice the Guide button. Input still switches to full rate (above).
+	var in_game_state := load("res://assets/state/states/in_game.tres") as State
+	in_game_state.state_entered.connect(func(_from): _set_idle_pacing(true))
+	in_game_state.state_exited.connect(func(_to): _set_idle_pacing(false))
+	_set_idle_pacing(false)
+
+
+const IDLE_SLEEP_MENU_USEC := 16666
+const IDLE_SLEEP_IN_GAME_USEC := 50000
+
+func _set_idle_pacing(in_game: bool) -> void:
+	OS.low_processor_usage_mode_sleep_usec = IDLE_SLEEP_IN_GAME_USEC if in_game else IDLE_SLEEP_MENU_USEC
 
 
 func _input(event: InputEvent) -> void:
