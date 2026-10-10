@@ -1,0 +1,58 @@
+From: qforge
+Subject: [PATCH] wlserver: rotate touch on SPI and other SoC touchscreens
+
+gamescope applies the panel orientation to touch input only when the
+touch device is associated with a connector, and the association
+heuristic knew two buses: I2C (internal) and USB (external). A touch
+controller on any other bus got no connector, so its coordinates were
+used unrotated. The MANGMI Air X (SM6115) has its Himax touch panel on
+SPI and a portrait panel scanned out landscape: touches landed on the
+wrong spot, the axes were swapped and scrolling ran the wrong way.
+
+Treat SPI as internal, and fall back to the internal connector for a
+touchscreen with no USB ancestor at all -- on a handheld that is the
+built-in panel, whichever bus the board wired it to.
+
+(qforge: HW, MANGMI Air X, 2026-10-10.)
+---
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -419,27 +419,36 @@
+ 	if (touch->connector != nullptr) return;
+ 
+ 	// Heuristic to associate a monitor to a touch input device:
+-	//  - if a touchscreen's bus is I²C, it can very likely be associated to an internal monitor.
++	//  - if a touchscreen's bus is I²C or SPI, it can very likely be associated to an internal monitor.
+ 	//  - if its bus is USB, it can be associated to an external monitor.
++	//  - anything else (no USB parent at all) is a touchscreen built into the device, so the
++	//    internal monitor too. SoC handhelds wire their touch controller to whatever bus the board
++	//    has: the MANGMI Air X's Himax panel is on SPI, and with no connector its touches got no
++	//    panel rotation at all, so on a rotated panel the axes came out swapped and scrolling
++	//    inverted.
+ 	// This isn't perfect, but we can't rely on the physical sizes reported by both devices,
+ 	// because it's not uncommon for touchscreens to report wildly incorrect sizes.
+ 	gamescope::IBackendConnector* connector = nullptr;
++	bool bSawUsb = false;
+ 	struct libinput_device *lidev = wlr_libinput_get_device_handle(&touch->wlr->base);
+ 	struct udev_device *dev = libinput_device_get_udev_device(lidev);
+ 	auto *parent = dev;
+ 	while (parent) {
+ 		const char *subsystem = udev_device_get_subsystem(parent);
+ 		if (subsystem) {
+-			if (strcmp( subsystem, "i2c" ) == 0) {
++			if (strcmp( subsystem, "i2c" ) == 0 || strcmp( subsystem, "spi" ) == 0) {
+ 				connector = GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL);
+ 				break;
+ 			} else if (strcmp( subsystem, "usb" ) == 0) {
++				bSawUsb = true;
+ 				connector = GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL);
+ 				break;
+ 			}
+ 		}
+ 		parent = udev_device_get_parent(parent);
+ 	}
++	if (connector == nullptr && !bSawUsb)
++		connector = GetBackend()->GetConnector(gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL);
+ 	udev_device_unref(dev);
+ 	if (connector != nullptr) {
+ 		touch->connector = connector;
