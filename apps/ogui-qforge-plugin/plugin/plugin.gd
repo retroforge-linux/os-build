@@ -27,6 +27,9 @@ var _emulators_button: Control
 var _emulators_page: Control
 var _game_settings_page: Control
 var _hardware_card: Control
+## Input boost (see _input): how long the UI renders every frame after the last input.
+const INPUT_BOOST_SECS := 1.5
+var _boost_timer: Timer
 var _watch: RefCounted  # rom_watch.gd
 var _rescan_timer: Timer
 var _rescanning := false
@@ -51,6 +54,7 @@ func _ready() -> void:
 	_add_game_settings_page()
 	_add_hardware_card()
 	_apply_render_mode()
+	_setup_input_boost()
 
 
 func unload() -> void:
@@ -253,3 +257,27 @@ func _apply_render_mode() -> void:
 	var root := get_tree().root
 	root.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
 	logger.info("UI renders at %s, scaled to %s" % [str(root.content_scale_size), str(root.size)])
+
+
+## OpenGamepadUI runs in Godot's low-processor mode, which draws only when something changed --
+## the reason the idle shell costs nothing. It also paces animations: menu and card transitions
+## reached the screen at ~35 fps on the Air X however cheap each frame was, and at 60+ with the
+## mode off. So for INPUT_BOOST_SECS after every input event the mode is off (transitions run at
+## the display rate), then back on (the idle shell draws nothing again).
+func _setup_input_boost() -> void:
+	_boost_timer = Timer.new()
+	_boost_timer.one_shot = true
+	_boost_timer.wait_time = INPUT_BOOST_SECS
+	_boost_timer.timeout.connect(func(): OS.low_processor_usage_mode = true)
+	add_child(_boost_timer)
+
+
+func _input(event: InputEvent) -> void:
+	if _boost_timer == null:
+		return
+	if event is InputEventMouseMotion and (event as InputEventMouseMotion).relative.length() < 1.0:
+		return
+	if event is InputEventJoypadMotion and absf((event as InputEventJoypadMotion).axis_value) < 0.2:
+		return
+	OS.low_processor_usage_mode = false
+	_boost_timer.start()
