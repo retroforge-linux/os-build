@@ -26,6 +26,7 @@ var _tabs := {}
 var _emulators_button: Control
 var _emulators_page: Control
 var _game_settings_page: Control
+var _hardware_card: Control
 var _watch: RefCounted  # rom_watch.gd
 var _rescan_timer: Timer
 var _rescanning := false
@@ -48,6 +49,7 @@ func _ready() -> void:
 	await get_tree().process_frame
 	_add_emulators_page()
 	_add_game_settings_page()
+	_add_hardware_card()
 
 
 func unload() -> void:
@@ -61,6 +63,9 @@ func unload() -> void:
 			node.queue_free()
 	if is_instance_valid(_game_settings_page):
 		_game_settings_page.detach()
+	if is_instance_valid(_hardware_card):
+		var qb_card := _hardware_card.find_parent("QuickBarCard*")
+		(qb_card if qb_card else _hardware_card).queue_free()
 
 
 ## Game settings > QForge (the gear on a ROM's launch menu): per-game options.
@@ -214,3 +219,24 @@ func _build_card(item: LibraryItem) -> Control:
 		menu_state_machine.push_state(launcher_state)
 	card.button_up.connect(on_button_up)
 	return card
+
+
+## Quick bar > Hardware: the board's battery, temperatures, fan, clocks, backlight and LED
+## groups, read from the standard tree /run/qforge/hw that /usr/lib/qforge/hw-map resolves from
+## the board profile -- the one path every board exposes them at, so this card has no per-board
+## code. Rows the map did not resolve stay hidden.
+func _add_hardware_card() -> void:
+	var card = load(plugin_base.path_join("hardware_card.gd")).new()
+	card.setup(plugin_base)
+	var icon := load("res://assets/ui/icons/battery-full.svg") as Texture2D
+	# Straight to the quick bar with an explicit title, NOT Plugin.add_to_quick_bar: that passes no
+	# title, so add_child_menu falls back to find_child("SectionLabel") and frees what it finds,
+	# which on a code-built card either throws on null or frees a live node (OGUI SIGSEGV, Air X).
+	var qb := get_tree().get_first_node_in_group("quick-bar")
+	if not qb:
+		card.free()
+		logger.warn("OGUI quick bar not found; no Hardware card")
+		return
+	qb.add_child_menu(card, icon, null, "Hardware")
+	_hardware_card = card
+	logger.info("Quick bar > Hardware added")
