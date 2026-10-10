@@ -128,3 +128,18 @@ ath11k/QCA6390/hw2.0/m3.bin       ath11k/QCA6390/hw2.0/m3.bin       1921d25edb52
 # rows above, no SM8250 board here is known to need a .bNN variant.
 qca/htbtfw20.tlv           qca/htbtfw20.tlv         3fbe07f93d170b1483c1c7f71bdfd6c98862281bfc10898b8cd537b700f688ec
 qca/htnv20.bin             qca/htnv20.bin           a4c0cbafc102998805679a2947aa82dd3b0abf1a1c0b372f1630b8ea327e2e8a
+# ---------------------------------------------------------------------------------------
+# SM6115 (Snapdragon 662) — MANGMI Air X MQ65 / MQ66 / MQ66B and MANGMI Air Y. Added 2026-10-09,
+# aligned the same day with ROCKNIX `next`: the GPU zap shader, cDSP, modem and WLAN firmware are
+# the MANGMI-signed blobs in EXTRA_FW.pin (ROCKNIX's "sm6115: remove firmware from main repo",
+# 2026-10-05), and only these three stay open. The A610 has no GMU, so there is no gmu row.
+# Every sha below was taken from the file downloaded at the commit above.
+# ---------------------------------------------------------------------------------------
+# Adreno 610 GPU microcode — the A610 runs the A630 SQE firmware. Embedded (kernel/embed.list).
+qcom/a630_sqe.fw           qcom/a630_sqe.fw           1c21b527d9183487cc550dabbb3f43e555df5a977a461934fc61f0635a9aa90c
+# aDSP (remoteproc, QCOM_Q6V5_PAS=m, loaded from the mounted root). The one DSP image the MANGMI
+# boards still boot from the QRB4210 dev-board set.
+qcom/qrb4210/adsp.mbn      qcom/qrb4210/adsp.mbn      10949c8c18e3afa99d33440fab5174b570e39668d964bdf1163d75602ae27948
+# Venus 6.0 video firmware. VIDEO_QCOM_VENUS is off (kernel/kernel.config, SM6115 block); pinned
+# so turning it on is a one-line kernel change, not a firmware hunt.
+qcom/venus-6.0/venus.mbn   qcom/venus-6.0/venus.mbn   602d18992dbc11c7141472d4c68778d49277491ca7452ebf6115be0e6119572a

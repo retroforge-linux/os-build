@@ -1,0 +1,49 @@
+# qforge extra-firmware pin — VENDOR blobs that are neither in linux-firmware nor in the
+# Nova-Deck/qcom-firmwares repo, republished by ROCKNIX in ROCKNIX/extra-firmware (one
+# directory per SoC, pulled from each device's Android image). Pinned by commit + per-file sha256,
+# fetched by firmware/fetch-extra-fw.sh into firmware/extra-fw/ (git-ignored) — the same row
+# format and the same fetch logic as LINUX_FW.pin, against a raw.githubusercontent base.
+#
+# Columns:  <src-path-in-extra-firmware>  <install-path-under-/lib/firmware>  <sha256>
+#
+# Why a third source rather than rows in QCOM_FW.pin: fetch-qcom-fw.sh takes the whole
+# qcom-firmwares repo at a commit and trusts its sha256sums.txt; extra-firmware has no sidecar
+# and we want a handful of its files, not the tree. Per-file rows with their own sha are the honest
+# shape for that, and they are what LINUX_FW.pin already does.
+#
+# Added 2026-10-09 for SM6115 (MANGMI Air X / Air Y). The commit is the one ROCKNIX's `next`
+# pins (projects/ROCKNIX/packages/linux-firmware/extra-firmware/package.mk, after their
+# "sm6115: remove firmware from main repo" move); every sha was taken from the file downloaded at
+# that commit.
+commit: 925dfb5efbe5d6c3ca654f81e3e1f367f8492777
+base:   https://raw.githubusercontent.com/ROCKNIX/extra-firmware
+# --- SM6115 MANGMI Air X / Air Y -----------------------------------------------------------------
+# Qualcomm-side blobs signed for the MANGMI boards. ROCKNIX moved from the QRB4210 dev-board set in
+# linux-firmware to these on 2026-10-05 (their Air X base DTS names qcom/sm6115/mangmi/ for the GPU
+# zap shader, the cDSP and the modem; only the aDSP stays the open qrb4210 one, LINUX_FW.pin). The
+# modem is what carries Wi-Fi: wlanmdsp.mbn is the WLAN firmware the modem fetches over QRTR TFTP
+# (tqftpserv resolves it from the modem's firmware-name directory, this one).
+SM6115/qcom/sm6115/mangmi/a610_zap.mbn   qcom/sm6115/mangmi/a610_zap.mbn   dcb29e62a04a09513a8610a8632e0b79fffb75056487c00b4b8377f2ea69aa4a
+SM6115/qcom/sm6115/mangmi/cdsp.mbn       qcom/sm6115/mangmi/cdsp.mbn       2148fb252e9cf5f68b1618e74e8b5a1d2400a32c50e51bcdc9386c6642138511
+SM6115/qcom/sm6115/mangmi/modem.mbn      qcom/sm6115/mangmi/modem.mbn      d2344167f7537e1314d8ded88bb53ba506354587a57780fa57b1f11fc26b5b9c
+SM6115/qcom/sm6115/mangmi/wlanmdsp.mbn   qcom/sm6115/mangmi/wlanmdsp.mbn   dcbd7cfaeaac81dbb49dffc0df13e6f6dd4e0623d344732b74bcf3f7bb5d61b3
+# WCN3950 Wi-Fi board files, one per board: the DTS &wifi { firmware-name } selects the directory
+# (kernel/patches/1016 teaches ath10k to look there); firmware-5.bin is the 60-byte feature stub.
+SM6115/ath10k/WCN3990/hw1.0/mangmi-air-x/board-2.bin     ath10k/WCN3990/hw1.0/mangmi-air-x/board-2.bin     e4c6b25c73bc096be504da43a970672ff067f9e2c54d7dd3ba83b5f944cad49c
+SM6115/ath10k/WCN3990/hw1.0/mangmi-air-x/firmware-5.bin  ath10k/WCN3990/hw1.0/mangmi-air-x/firmware-5.bin  80daf4f3a89e6ea8222e45387bb362c854fcd30c02e9da59ca723b39b269cdd2
+SM6115/ath10k/WCN3990/hw1.0/mangmi-air-y/board-2.bin     ath10k/WCN3990/hw1.0/mangmi-air-y/board-2.bin     61f1f27ff35a74e977f64f20cbfcbe3eb9591ef0df8e579dda9551aa394d2cb3
+SM6115/ath10k/WCN3990/hw1.0/mangmi-air-y/firmware-5.bin  ath10k/WCN3990/hw1.0/mangmi-air-y/firmware-5.bin  80daf4f3a89e6ea8222e45387bb362c854fcd30c02e9da59ca723b39b269cdd2
+# Himax HX83112A touch controller firmware (Air X MQ66), requested by the driver as
+# Himax_firmware.bin (kernel/patches/0737).
+SM6115/Himax_firmware.bin   Himax_firmware.bin   804b6f962ede2bb6543b9a021172c03ce23785b9a4fc453b339474f0ba354acb
+# AW88261 speaker amp calibration, requested by the amp nodes of both boards as aw88261_acf.bin.
+SM6115/aw88261_acf.bin      aw88261_acf.bin      fbf2187fba35aa61486b06cedd5a309a33642fb24a881e182a2430636586e138
+# WCN3950 Bluetooth (hci_qca, kernel/patches/1020-1023). The boards' own blobs; linux-firmware
+# carries a cmbtfw13.tlv of a different size, and ROCKNIX ships these. crbtfw13/crnv13 are the
+# 10-12 byte placeholders the vendor image carries; kept so a firmware probe finds a file.
+SM6115/qca/cmbtfw13.tlv     qca/cmbtfw13.tlv     1718c71da53cf632d5286153cf2e0dd58e06847a48ac236ba2cfc5621d297bd3
+SM6115/qca/cmbtfw13.ver     qca/cmbtfw13.ver     8dc70ce74bf471cb0b2f107d300f67ff065ee36c85b2cab866db6b6cd0107aea
+SM6115/qca/cmnv13.bin       qca/cmnv13.bin       3ad9ddfbbc9c1c5fac7493216ebc60e083ed65115c8c8e1d6f996ecbdddeaaea
+SM6115/qca/cmnv13s.bin      qca/cmnv13s.bin      48c747d5fd71ad36abde4fdd4254cf15535e59c4ca73d4d160646289b7d0b384
+SM6115/qca/crbtfw13.tlv     qca/crbtfw13.tlv     34c90fff090f419c8a8db8e60ed790887fa6ea96fb5edb53d48959b9e3e4eab3
+SM6115/qca/crnv13.bin       qca/crnv13.bin       b5476b03b4b97da9055baf34806c1b8b46eecc6e1e0f5008ec67f224e8ab9151

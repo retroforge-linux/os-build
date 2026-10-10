@@ -33,6 +33,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/out"
 FW="$ROOT/firmware/qcom-fw"
 LFW="$ROOT/firmware/linux-fw"
+XFW="$ROOT/firmware/extra-fw"
 IMGDIR="$OUT/images"
 IMG="$IMGDIR/rootfs.img"
 VARIMG="$IMGDIR/var.img"     # -> var-a  (ext4, carries the /etc overlay upper+work)
@@ -126,6 +127,17 @@ if [ -d "$LFW" ]; then
   done < <(find "$LFW" -type f ! -name .fetched.stamp 2>/dev/null)
 else
   echo "  (no linux-firmware at ${LFW#"$ROOT"/} — run firmware/fetch-linux-fw.sh; GPU/BT/VPU firmware will be missing)"
+fi
+
+# STAGE firmware-extra — vendor blobs from ROCKNIX/extra-firmware (SM6115 touch / amp / BT) under
+# /lib/firmware. Staged by firmware/fetch-extra-fw.sh from EXTRA_FW.pin; same shape as the two above.
+if [ -d "$XFW" ]; then
+  while IFS= read -r f; do
+    rel="${f#"$XFW"/}"
+    install -Dm0644 "$f" "$stage/lib/firmware/$rel"
+  done < <(find "$XFW" -type f ! -name .fetched.stamp 2>/dev/null)
+else
+  echo "  (no extra-firmware at ${XFW#"$ROOT"/} — run firmware/fetch-extra-fw.sh; SM6115 touch/amp/BT firmware will be missing)"
 fi
 
 # STAGE release-marker — so the running system can identify the slot's provenance.

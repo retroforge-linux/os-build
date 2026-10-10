@@ -214,6 +214,9 @@ FW_LINUX     := firmware/linux-fw/.fetched.stamp
 # Device-proprietary blobs are SoC-agnostic (the qcom-firmwares repo mirrors /lib/firmware,
 # blobs self-namespaced by their on-device path), so this is shared across all SoCs.
 FW_QCOM      := firmware/qcom-fw/sha256sums.txt
+# Vendor blobs republished by ROCKNIX/extra-firmware (SM6115: Himax touch firmware, AW88261 amp
+# calibration, WCN3950 Bluetooth) — per-file pinned and fetched like the open set.
+FW_EXTRA     := firmware/extra-fw/.fetched.stamp
 # The base tree is exported root-owned with the source image's FROZEN mtimes (e.g. sshd dates
 # to the image build, not to this run), so it can't be the make target — a content change
 # wouldn't bump any in-tree mtime and downstream stages would skip. A stamp outside that tree,
@@ -369,6 +372,7 @@ toolchain: $(BUILD_STAMP) ## Build the qforge-build cross-compile docker image
 kernel:    $(KERNEL)       ## Build Image + all dtbs + modules (in build container)
 fw-linux:  $(FW_LINUX)     ## Fetch open linux-firmware blobs (host, network)
 fw-qcom:   $(FW_QCOM)      ## Fetch device-proprietary firmware from the qcom-firmwares repo (host, network)
+fw-extra:  $(FW_EXTRA)     ## Fetch the vendor blobs pinned from ROCKNIX/extra-firmware (host, network)
 overlay:   $(OVERLAY_DB)   ## Rebuild from-source overlay pkgs (patched gamescope) -> work/repo/<arch>/
 base:      $(BASE_STAMP)   ## Bootstrap the aarch64 root from packages (host; docker+qemu)
 rootfs:    $(ROOTFS)       ## Assemble the read-only root + var images (in container)
@@ -505,6 +509,11 @@ $(FW_QCOM): firmware/QCOM_FW.pin
 	firmware/fetch-qcom-fw.sh
 	@touch $@
 
+# Vendor blobs from ROCKNIX/extra-firmware — per-file pinned + verified, host network.
+$(FW_EXTRA): firmware/EXTRA_FW.pin
+	firmware/fetch-extra-fw.sh
+	@touch $@
+
 # ==============================================================================
 # From-source overlay packages (host — build-overlay.sh drives docker + qemu binfmt)
 # ==============================================================================
@@ -624,7 +633,7 @@ $(KERNEL_SRC_HASH): FORCE
 	@new=$$(sha256sum $(KERNEL_SRC) | sha256sum | cut -d' ' -f1); \
 	 [ "$$(cat $@ 2>/dev/null)" = "$$new" ] || printf '%s\n' "$$new" > $@
 
-$(KERNEL): $(KERNEL_SRC_HASH) $(FW_LINUX) $(FW_QCOM) | $(BUILD_STAMP)
+$(KERNEL): $(KERNEL_SRC_HASH) $(FW_LINUX) $(FW_QCOM) $(FW_EXTRA) | $(BUILD_STAMP)
 	$(DOCKER) $(if $(BASE_CONFIG),-e BASE_CONFIG=/src/$(BASE_CONFIG)) -e QFORGE_CCACHE=$(QFORGE_CCACHE) \
 	  $(BUILD_IMG) kernel/build.sh
 
@@ -741,7 +750,7 @@ $(VERSION_STAMP):
 # /usr/lib/qforge/boot mirror the RAUC hook refreshes the ESP and the slot's efi partition FROM.
 # That is what makes "this root and the software that boots it came from one build" true by
 # construction. No cycle: the initramfs is built from work/base, never from the assembled root.
-$(ROOTFS): $(KERNEL) $(INITRAMFS) $(STEAMCL) $(GRUB) $(BASE_STAMP) $(FW_LINUX) $(FW_QCOM) $(PLUGIN_ZIP) $(SIGDEFER_LIB) $(ASSEMBLE_SRC) $(MODE_STAMP) $(VERSION_STAMP) | $(BUILD_STAMP)
+$(ROOTFS): $(KERNEL) $(INITRAMFS) $(STEAMCL) $(GRUB) $(BASE_STAMP) $(FW_LINUX) $(FW_QCOM) $(FW_EXTRA) $(PLUGIN_ZIP) $(SIGDEFER_LIB) $(ASSEMBLE_SRC) $(MODE_STAMP) $(VERSION_STAMP) | $(BUILD_STAMP)
 	$(DOCKER) $(DEV_ENV) $(ID_ENV) -e QFORGE_DEBUG $(BUILD_IMG) \
 	  $(ROOTFS_DIR)/assemble-rootfs.sh /src/work/base
 
@@ -912,4 +921,4 @@ distclean: clean clean-base ## clean + drop fetched firmware + kernel tree (KEEP
 	# image), so remove it from inside a throwaway container like clean/clean-base — a host-side
 	# rm fails with permission errors. firmware/* are fetched on the host, so a plain rm is fine.
 	docker run --rm -v $(CURDIR)/work:/wb busybox rm -rf /wb/kernel
-	rm -rf firmware/linux-fw firmware/qcom-fw
+	rm -rf firmware/linux-fw firmware/qcom-fw firmware/extra-fw

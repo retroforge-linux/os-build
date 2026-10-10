@@ -241,8 +241,11 @@ FW_QCOM_DIR="$ROOT/firmware/qcom-fw"
 FW_LINUX_DIR="$ROOT/firmware/linux-fw"
 FW_QCOM_STAMP="$FW_QCOM_DIR/sha256sums.txt"
 FW_LINUX_STAMP="$FW_LINUX_DIR/.fetched.stamp"
+FW_EXTRA_DIR="$ROOT/firmware/extra-fw"
+FW_EXTRA_STAMP="$FW_EXTRA_DIR/.fetched.stamp"
 [ -f "$FW_QCOM_STAMP" ]  || die "no device firmware at ${FW_QCOM_DIR#"$ROOT"/} — run: make fw-qcom"
 [ -f "$FW_LINUX_STAMP" ] || die "no linux-firmware at ${FW_LINUX_DIR#"$ROOT"/} — run: make fw-linux"
+[ -f "$FW_EXTRA_STAMP" ] || die "no extra-firmware at ${FW_EXTRA_DIR#"$ROOT"/} — run: make fw-extra"
 # The RAUC keyring. The spine refuses outright without a readable one, and correctly: an installer
 # that could not verify a bundle would write unverified bytes to a stranger's internal disk. Same
 # CA the shipped image gets from rootfs/assemble-rootfs.sh, so one bundle verifies against both.
@@ -277,7 +280,7 @@ overlay:$(sha256sum "$OVERLAY_DB" | cut -d' ' -f1)
 script:$(sha256sum "$0" | cut -d' ' -f1)
 osrelease:$(sha256sum "$OSRELEASE" | cut -d' ' -f1)
 esplabel:$ESP_LABEL
-firmware:$(sha256sum "$FW_QCOM_STAMP" "$FW_LINUX_STAMP" | sha256sum | cut -d' ' -f1)
+firmware:$(sha256sum "$FW_QCOM_STAMP" "$FW_LINUX_STAMP" "$FW_EXTRA_STAMP" | sha256sum | cut -d' ' -f1)
 inputplumber:$(cat "$IP_DIR"/*/*.yaml 2>/dev/null | sha256sum | cut -d' ' -f1)
 udev:$(cat "$UDEV_DIR"/*.rules "$BOOTDISK_PROG" 2>/dev/null | sha256sum | cut -d' ' -f1)
 modules:$KVER:$(sha256sum "$MODROOT/lib/modules/$KVER/modules.dep" | cut -d' ' -f1)
@@ -498,6 +501,7 @@ docker run --rm --platform linux/arm64 \
   -v "$STAGE":/prebuilt:ro \
   -v "$FW_QCOM_DIR":/fw-qcom:ro \
   -v "$FW_LINUX_DIR":/fw-linux:ro \
+  -v "$FW_EXTRA_DIR":/fw-extra:ro \
   -v "$MODROOT":/modroot:ro \
   -v "$PACMAN_CACHE":/var/cache/pacman/pkg \
   -v "$OVERLAY_REPO":/novarepo:ro \
@@ -610,13 +614,13 @@ docker run --rm --platform linux/arm64 \
   install -d -m0755 /target/usr/lib/qforge/devices
   install -m0644 /prebuilt/devices/*.conf /target/usr/lib/qforge/devices/
 
-  # Firmware, both trees whole -- the same content rootfs/assemble-rootfs.sh puts on the card, from
+  # Firmware, all three trees whole -- the same content rootfs/assemble-rootfs.sh puts on the card, from
   # the same sources, so hardware support is identical to the image being installed BY CONSTRUCTION
   # rather than by a list somebody has to remember to extend. /usr/lib/firmware is where the kernel
   # looks; the shipped image writes /lib/firmware, the same directory through the usr-merge symlink.
   # The two bookkeeping files are excluded: they describe the staging trees, not the device.
   install -d -m0755 /target/usr/lib/firmware
-  for src in /fw-qcom /fw-linux; do
+  for src in /fw-qcom /fw-linux /fw-extra; do
     [ -d "$src" ] || continue
     cp -a "$src/." /target/usr/lib/firmware/
   done

@@ -86,6 +86,7 @@ echo "[qforge] ${#BOARDS[@]} board(s): ${BOARDS[*]}"
 # from the list after configuring (below) — works on both the fragment and BASE_CONFIG paths.
 LFW="$ROOT/firmware/linux-fw"
 FWX="$ROOT/firmware/qcom-fw"
+XFW="$ROOT/firmware/extra-fw"
 EMBED_LIST="$KDIR_REPO/embed.list"
 [ -f "$EMBED_LIST" ] || { echo "missing embed list: $EMBED_LIST" >&2; exit 1; }
 echo "[qforge] staging built-in firmware (CONFIG_EXTRA_FIRMWARE) into firmware/"
@@ -94,9 +95,10 @@ while read -r rel _rest; do
   case "$rel" in ''|'#'*) continue ;; esac
   if   [ -f "$LFW/$rel" ]; then src="$LFW/$rel"
   elif [ -f "$FWX/$rel" ]; then src="$FWX/$rel"
+  elif [ -f "$XFW/$rel" ]; then src="$XFW/$rel"
   else
     echo "missing embed firmware: $rel" >&2
-    echo "  run firmware/fetch-linux-fw.sh (open blobs) + firmware/fetch-qcom-fw.sh (device blobs)" >&2
+    echo "  run firmware/fetch-linux-fw.sh (open blobs) + firmware/fetch-qcom-fw.sh (device blobs) + firmware/fetch-extra-fw.sh (vendor blobs)" >&2
     exit 1
   fi
   install -Dm0644 "$src" "$SRCDIR/firmware/$rel"

@@ -1,10 +1,10 @@
 # firmware/
 
 Recipes that **fetch and stage** device firmware for the kernel build and image assembly.
-Nothing here ships proprietary blobs — both sources are fetched on demand, pinned, and
-verified, into git-ignored trees (`qcom-fw/`, `linux-fw/`; see `.gitignore`).
+Nothing here ships proprietary blobs — all three sources are fetched on demand, pinned, and
+verified, into git-ignored trees (`qcom-fw/`, `linux-fw/`, `extra-fw/`; see `.gitignore`).
 
-Two firmware sources:
+Three firmware sources:
 
 - **`linux-fw`** — open firmware (Adreno GPU microcode, qca BT, Venus/Iris VPU, ath11k
   Wi-Fi, and on SM8250 the adsp/cdsp too) from the official `linux-firmware` repo. The
@@ -14,6 +14,11 @@ Two firmware sources:
   images, AudioReach tplg, ath12k Wi-Fi/BT, Renesas xHCI) extracted from each device's Android
   vendor image and republished to the [Nova-Deck/qcom-firmwares](https://github.com/Nova-Deck/qcom-firmwares)
   repo. Fetched + verified by `fetch-qcom-fw.sh` (pinned in `QCOM_FW.pin`).
+- **`extra-fw`** — vendor blobs that are in neither of the above, republished per SoC by
+  [ROCKNIX/extra-firmware](https://github.com/ROCKNIX/extra-firmware). Today that is the SM6115
+  MANGMI Air X's Himax touch firmware, AW88261 amp calibration and WCN3950 Bluetooth. Fetched +
+  per-file sha256-verified by `fetch-extra-fw.sh` (pinned in `EXTRA_FW.pin`, same row format as
+  `LINUX_FW.pin`) because that repo has no sha sidecar to trust the way `qcom-fw` does.
 
 Which class a given blob falls in is **per-SoC, not fixed**. SM8550/SM8650 boards each need
 their own vendor-signed `adsp`/`cdsp`; every SM8250 board is served by the generic open pair
@@ -35,6 +40,7 @@ claimed by `qcom-iris.ko`, not venus — see the SM8250 block in `LINUX_FW.pin`.
 |---|---|
 | `fetch-linux-fw.sh` | Fetch the open `linux-fw` blobs at the pinned commit into `linux-fw/`, per-file sha256-verified. Host, network. SoC-agnostic flat tree. |
 | `fetch-qcom-fw.sh` | Fetch the device-proprietary `qcom-fw` tree from the pinned qcom-firmwares commit into `qcom-fw/`, verified against the repo's `sha256sums.txt`. Host, network. SoC-agnostic (blobs are self-namespaced by on-device path). |
+| `fetch-extra-fw.sh` | Fetch the `EXTRA_FW.pin` rows from the pinned ROCKNIX/extra-firmware commit into `extra-fw/`, per-file sha256-verified. Host, network. |
 
 There is no separate firmware requirements list. What ships is decided by the two pins and
 nothing else: `LINUX_FW.pin` is an explicit per-file allowlist (each row carries its own
