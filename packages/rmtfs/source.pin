@@ -1,0 +1,14 @@
+# rmtfs — Qualcomm modem userspace (rmtfs + libqrtr + tqftpserv), built FROM SOURCE via a
+# qforge-owned PKGBUILD (packages/rmtfs/PKGBUILD). Needed by SM6115 (MANGMI Air X) for Wi-Fi: the
+# WCN3950 WLAN firmware runs on the modem DSP, which only boots with rmtfs serving its EFS and
+# tqftpserv serving its firmware. Not in the holo snapshot at all; see the PKGBUILD header for why
+# the three daemons are one package.
+#
+# "Local PKGBUILD" form (like packages/rauc): build-overlay.sh uses the checked-in recipe; makepkg
+# downloads the four upstream tag tarballs the PKGBUILD names, and prepare() checks their sums.
+#
+# After adding or bumping this: `make relock` (the package must land in rootfs/manifest.lock; it is
+# listed in PKGS in rootfs/customize-base.sh).
+name: rmtfs
+pkgbuild_local: PKGBUILD
+pkgrel_suffix: 1

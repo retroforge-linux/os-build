@@ -1,0 +1,99 @@
+# qforge rmtfs — the Qualcomm modem userspace the SM6115 (MANGMI Air X) needs for Wi-Fi, built
+# FROM SOURCE via a qforge-owned PKGBUILD. None of it is in the holo snapshot (only libqrtr-glib
+# is, which is a different library), and Arch carries these only on the AUR.
+#
+# WHY ONE PACKAGE AND NOT FOUR. packages/build-overlay.sh builds every source.pin in one container
+# run and indexes the repo once at the END, so a package cannot `makepkg -s` another overlay
+# package built moments earlier in the same run. rmtfs and tqftpserv both link libqrtr, and rmtfs
+# needs the qmic code generator at build time; splitting them into four pins would need an
+# ordering the builder does not have. So this one recipe builds qmic (build-time only, not
+# shipped), libqrtr + its tools, rmtfs and tqftpserv, and ships the last three as `rmtfs`,
+# providing qrtr and tqftpserv for anything that asks by name.
+#
+# WHAT THE THREE DO ON THE AIR X. The WCN3950 WLAN firmware runs on the modem DSP. The modem will
+# not boot without rmtfs serving it its EFS partitions (modemst1/modemst2/fsg/fsc on the eMMC,
+# found by partlabel: -P) over QRTR, and it fetches wlanmdsp.mbn over QRTR TFTP from tqftpserv.
+# rmtfs runs READ-ONLY (-r): this OS lives on an SD card next to an intact Android install, and
+# the modem's EFS is that install's; nothing here may write it. -s syncs with the mss remoteproc.
+# Those three flags are upstream's own unit (rmtfs.service.in), installed unchanged. The QRTR
+# name service is in the kernel (QRTR), so qrtr-ns is not built; pd-mapper is in the kernel too
+# (QCOM_PD_MAPPER=y, kernel/kernel.config).
+#
+# rootfs/overlay/usr/lib/systemd/system/{rmtfs,tqftpserv}.service.d/10-qforge-sm6115.conf gates
+# both units on the SM6115 devicetree compatible, so SM8250 boards (which also expose a
+# qcom_rmtfs_mem device) do not start a modem service they have no use for.
+#
+# To bump: change the four pkgver variables and their sha256sums together. The sums are of the
+# GitHub tag tarballs (archive/refs/tags/vN.tar.gz), taken 2026-10-09. makepkg runs with
+# --skipinteg in this tree, so prepare() verifies them itself, as packages/opengamepadui does.
+
+pkgname=rmtfs
+pkgver=1.3
+pkgrel=1
+_qrtr=1.2
+_tqftpserv=1.2
+_qmic=1.0
+pkgdesc='Qualcomm modem userspace: rmtfs (remote filesystem), libqrtr + tools, tqftpserv (QRTR TFTP)'
+arch=('aarch64')
+url='https://github.com/linux-msm/rmtfs'
+license=('BSD-3-Clause')
+depends=('glibc' 'systemd-libs' 'zstd')
+makedepends=('meson' 'ninja' 'pkgconf')
+provides=("qrtr=${_qrtr}" "tqftpserv=${_tqftpserv}")
+source=("rmtfs-${pkgver}.tar.gz::https://github.com/linux-msm/rmtfs/archive/refs/tags/v${pkgver}.tar.gz"
+        "qrtr-${_qrtr}.tar.gz::https://github.com/linux-msm/qrtr/archive/refs/tags/v${_qrtr}.tar.gz"
+        "tqftpserv-${_tqftpserv}.tar.gz::https://github.com/linux-msm/tqftpserv/archive/refs/tags/v${_tqftpserv}.tar.gz"
+        "qmic-${_qmic}.tar.gz::https://github.com/linux-msm/qmic/archive/refs/tags/v${_qmic}.tar.gz")
+sha256sums=('4b6c398806a1046e2256a685d592833de0f37b7245b8adc4797e1791f0e117ee'
+            '7a82bf80246fe71287b13c66c0466208822e8337fcd4aaf302eee6c5fcb48a52'
+            'a3850c34e48f23b7bc360d70f1e91700de2f8c60af003eda93e14182f8cf6af1'
+            'e2797c85a2b617b2b35024566105f4d8e998ef576f0f96f7923abf3717d12e86')
+
+# qrtr is installed into this staging prefix first, so rmtfs and tqftpserv can build against it
+# within the same makepkg run; PKG_CONFIG_SYSROOT_DIR makes qrtr.pc's /usr paths resolve there.
+_stage="${srcdir}/stage"
+
+prepare() {
+  local i
+  for i in "${!sha256sums[@]}"; do
+    echo "${sha256sums[$i]}  ${source[$i]%%::*}" | sha256sum -c - >/dev/null \
+      || { echo "checksum mismatch: ${source[$i]%%::*}" >&2; return 1; }
+  done
+}
+
+build() {
+  # 1. qmic: the QMI IDL compiler rmtfs's Makefile runs (qmic -k) to generate qmi_rmtfs.c.
+  make -C "qmic-${_qmic}"
+  export PATH="${srcdir}/qmic-${_qmic}:${PATH}"
+
+  # 2. libqrtr + qrtr-cfg/qrtr-lookup. No qrtr-ns (the kernel runs the name service) and no unit.
+  meson setup "qrtr-${_qrtr}/build" "qrtr-${_qrtr}" --prefix=/usr \
+    -Dqrtr-ns=disabled -Dsystemd-service=disabled
+  meson compile -C "qrtr-${_qrtr}/build"
+  DESTDIR="${_stage}" meson install -C "qrtr-${_qrtr}/build" --quiet
+  export PKG_CONFIG_SYSROOT_DIR="${_stage}"
+  export PKG_CONFIG_PATH="${_stage}/usr/lib/pkgconfig"
+
+  # 3. rmtfs. Its Makefile APPENDS to CFLAGS/LDFLAGS (`LDFLAGS += -lqrtr -ludev -lpthread`), and a
+  #    variable given on make's COMMAND LINE overrides a makefile `+=` outright -- the first build
+  #    of this recipe did that and linked rmtfs with no libraries at all (undefined qrtr_*/udev_*).
+  #    Handed over through the ENVIRONMENT instead, the `+=` extends them, which is how the staged
+  #    qrtr becomes reachable. prefix lands the unit under /usr/lib/systemd/system and the udev
+  #    rule under /usr/lib/udev.
+  CFLAGS="${CFLAGS} -I${_stage}/usr/include" LDFLAGS="${LDFLAGS} -L${_stage}/usr/lib" \
+    make -C "rmtfs-${pkgver}" prefix=/usr
+
+  # 4. tqftpserv (meson; finds qrtr through the sysroot'ed pkg-config).
+  meson setup "tqftpserv-${_tqftpserv}/build" "tqftpserv-${_tqftpserv}" --prefix=/usr \
+    -Dsystemd-unit-prefix=/usr/lib/systemd/system
+  meson compile -C "tqftpserv-${_tqftpserv}/build"
+}
+
+package() {
+  DESTDIR="${pkgdir}" meson install -C "qrtr-${_qrtr}/build" --quiet
+  make -C "rmtfs-${pkgver}" prefix=/usr DESTDIR="${pkgdir}" install
+  DESTDIR="${pkgdir}" meson install -C "tqftpserv-${_tqftpserv}/build" --quiet
+  install -Dm644 "rmtfs-${pkgver}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.rmtfs"
+  install -Dm644 "qrtr-${_qrtr}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.qrtr"
+  install -Dm644 "tqftpserv-${_tqftpserv}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE.tqftpserv"
+}

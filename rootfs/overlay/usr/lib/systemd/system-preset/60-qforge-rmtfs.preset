@@ -1,0 +1,4 @@
+# qforge: Qualcomm modem userspace (packages/rmtfs). Both units carry an SM6115-only
+# ConditionFirmware drop-in, so enabling them fleet-wide costs nothing elsewhere.
+enable rmtfs.service
+enable tqftpserv.service
