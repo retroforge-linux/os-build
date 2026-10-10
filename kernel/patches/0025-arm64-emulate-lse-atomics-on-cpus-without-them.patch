@@ -1,0 +1,397 @@
+Subject: [PATCH] arm64: emulate LSE atomics for EL0 on CPUs without them
+
+Valve's arm64 Steam client has required ARMv8.1 LSE atomics since its
+2026-04-15 builds (steam-for-linux#13288): steamclient.so, steamui.so,
+steamwebhelper and the rest issue LDADDAL and friends unconditionally,
+about 13,700 sites, with no outline-atomics fallback. On an ARMv8.0 CPU
+(the SM6115's Cortex-A73/A53, every A53/A55 SoC) the client dies with
+SIGILL on its first atomic.
+
+Emulate them in the EL0 undefined-instruction path, after the deprecated
+instruction emulation, the way SWP is already emulated: decode LDADD,
+LDCLR, LDEOR, LDSET, LD{S,U}{MAX,MIN}, SWP, CAS and CASP in every size and
+ordering (plus the ARMv8.3 LDAPR), and run each as a compare-and-exchange
+loop on the user address with LDXR/STXR (LDXP/STXP for CASP), between
+full barriers. Exclusives interoperate with the process's own LL/SC
+atomics, so the emulated operations stay atomic. Faults keep their
+meaning: unaligned is SIGBUS, an invalid address SIGSEGV after the normal
+page-fault handling has had its chance through the exception table.
+
+Only CPUs without ARM64_HAS_LSE_ATOMICS ever get here; HWCAP_ATOMICS
+stays clear, so outline-atomics code keeps its native path and only
+software with no alternative pays a trap per atomic. Each emulation is
+counted as a PERF_COUNT_SW_EMULATION_FAULTS event, so
+`perf stat -e emulation-faults` measures the cost per process.
+
+New option CONFIG_ARM64_LSE_EMULATION, default n.
+
+---
+diff -ruN a/arch/arm64/Kconfig b/arch/arm64/Kconfig
+--- a/arch/arm64/Kconfig
++++ b/arch/arm64/Kconfig
+@@ -1894,6 +1894,20 @@
+ 	  If unsure, say Y
+ endif # ARMV8_DEPRECATED
+ 
++config ARM64_LSE_EMULATION
++	bool "Emulate LSE atomics for userspace on CPUs without them"
++	help
++	  On a CPU without the ARMv8.1 Large System Extensions, emulate the
++	  LSE atomic instructions (LDADD and friends, SWP, CAS, CASP) and the
++	  ARMv8.3 LDAPR when an AArch64 task executes them, instead of
++	  killing it with SIGILL. Each emulated instruction costs a trap, so
++	  this is for software built for ARMv8.1+ that has no fallback (e.g.
++	  Valve's arm64 Steam client); software with outline atomics never
++	  traps, because HWCAP_ATOMICS stays clear. A CPU that has LSE never
++	  reaches this code.
++
++	  If unsure, say N.
++
+ endif # COMPAT
+ 
+ menu "ARMv8.1 architectural features"
+diff -ruN a/arch/arm64/include/asm/traps.h b/arch/arm64/include/asm/traps.h
+--- a/arch/arm64/include/asm/traps.h
++++ b/arch/arm64/include/asm/traps.h
+@@ -22,6 +22,15 @@
+ }
+ #endif /* CONFIG_ARMV8_DEPRECATED */
+ 
++#ifdef CONFIG_ARM64_LSE_EMULATION
++bool try_emulate_lse(struct pt_regs *regs, u32 insn);
++#else
++static inline bool try_emulate_lse(struct pt_regs *regs, u32 insn)
++{
++	return false;
++}
++#endif /* CONFIG_ARM64_LSE_EMULATION */
++
+ void force_signal_inject(int signal, int code, unsigned long address, unsigned long err);
+ void arm64_notify_segfault(unsigned long addr);
+ void arm64_force_sig_fault(int signo, int code, unsigned long far, const char *str);
+diff -ruN a/arch/arm64/kernel/Makefile b/arch/arm64/kernel/Makefile
+--- a/arch/arm64/kernel/Makefile
++++ b/arch/arm64/kernel/Makefile
+@@ -52,6 +52,7 @@
+ obj-$(CONFIG_EFI)			+= efi.o efi-rt-wrapper.o
+ obj-$(CONFIG_PCI)			+= pci.o
+ obj-$(CONFIG_ARMV8_DEPRECATED)		+= armv8_deprecated.o
++obj-$(CONFIG_ARM64_LSE_EMULATION)	+= lse_emulate.o
+ obj-$(CONFIG_ACPI)			+= acpi.o
+ obj-$(CONFIG_ACPI_NUMA)			+= acpi_numa.o
+ obj-$(CONFIG_ARM64_ACPI_PARKING_PROTOCOL)	+= acpi_parking_protocol.o
+diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
+--- a/arch/arm64/kernel/lse_emulate.c
++++ b/arch/arm64/kernel/lse_emulate.c
+@@ -0,0 +1,298 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Emulate the ARMv8.1 LSE atomics (LDADD/LDCLR/LDEOR/LDSET/LD{S,U}{MAX,MIN},
++ * SWP, CAS, CASP) and the ARMv8.3 RCpc load-acquire LDAPR for EL0 tasks on
++ * CPUs that implement neither, such as the Cortex-A53/A55-class and A73
++ * cores of ARMv8.0 SoCs.
++ *
++ * Software built with -moutline-atomics checks HWCAP_ATOMICS and keeps an
++ * LDXR/STXR path, so it never reaches this code. Software built for
++ * ARMv8.1 or later issues LSE unconditionally and would otherwise die with
++ * SIGILL on the first atomic (e.g. Valve's arm64 Steam client since
++ * 2026-04-15, which carries ~13,000 LDADDAL sites).
++ *
++ * The kernel never advertises HWCAP_ATOMICS because of this: emulation is
++ * for code that offers no alternative, and advertising it would move every
++ * outline-atomics user onto a trapping path.
++ *
++ * Each instruction becomes a compare-and-exchange loop on the user address
++ * with LDXR/STXR (LDXP/STXP for CASP), bracketed by full barriers, which
++ * is at least as strong as any of the acquire/release forms. Exclusives
++ * interoperate with the native LDXR/STXR atomics in the same process, so
++ * the emulated operations stay atomic with respect to everything else.
++ * Every emulation counts as a PERF_COUNT_SW_EMULATION_FAULTS event.
++ */
++
++#include <linux/perf_event.h>
++#include <linux/printk.h>
++#include <linux/sched.h>
++#include <linux/uaccess.h>
++
++#include <asm/asm-extable.h>
++#include <asm/insn-def.h>
++#include <asm/cpufeature.h>
++#include <asm/ptrace.h>
++#include <asm/traps.h>
++
++/* LDADD..LDUMIN, SWP, LDAPR: size 111 V=0 00 A R 1 Rs o3 opc 00 Rn Rt */
++#define LSE_MEMOP_MASK	0x3f200c00
++#define LSE_MEMOP_VAL	0x38200000
++/* CAS: size 0010001 L 1 Rs o0 11111 Rn Rt */
++#define LSE_CAS_MASK	0x3fa07c00
++#define LSE_CAS_VAL	0x08a07c00
++/* CASP: 0 sz 0010000 L 1 Rs o0 11111 Rn Rt */
++#define LSE_CASP_MASK	0xbfa07c00
++#define LSE_CASP_VAL	0x08207c00
++
++#define __lse_cmpxchg_user(sfx, _wd, _addr, _old, _new, _prev, _err)		\
++do {									\
++	unsigned long __tmp;						\
++	asm volatile(							\
++	"1:	ldxr" sfx "	%" _wd "[p], [%[a]]\n"			\
++	"	cmp	%" _wd "[p], %" _wd "[o]\n"				\
++	"	b.ne	3f\n"						\
++	"2:	stxr" sfx "	%w[t], %" _wd "[n], [%[a]]\n"		\
++	"	cbnz	%w[t], 1b\n"					\
++	"3:\n"								\
++	_ASM_EXTABLE_UACCESS_ERR(1b, 3b, %w[e])				\
++	_ASM_EXTABLE_UACCESS_ERR(2b, 3b, %w[e])				\
++	: [p] "=&r" (_prev), [t] "=&r" (__tmp), [e] "+r" (_err)		\
++	: [a] "r" (_addr), [o] "r" (_old), [n] "r" (_new)			\
++	: "cc", "memory");						\
++} while (0)
++
++/*
++ * One compare-and-exchange of 1 << size bytes at a user address. Stores new
++ * only when the memory held old; *prev gets what the memory held (a
++ * single-copy-atomic read either way). 0 or -EFAULT.
++ */
++static int lse_cmpxchg(unsigned long addr, unsigned int size, u64 old,
++		       u64 new, u64 *prev)
++{
++	int err = 0;
++	u64 p = 0;
++
++	uaccess_enable_privileged();
++	switch (size) {
++	case 0:
++		__lse_cmpxchg_user("b", "w", addr, old, new, p, err);
++		break;
++	case 1:
++		__lse_cmpxchg_user("h", "w", addr, old, new, p, err);
++		break;
++	case 2:
++		__lse_cmpxchg_user("", "w", addr, old, new, p, err);
++		break;
++	default:
++		__lse_cmpxchg_user("", "x", addr, old, new, p, err);
++		break;
++	}
++	uaccess_disable_privileged();
++	*prev = p;
++	return err;
++}
++
++#define __lse_cmpxchg_pair_user(_wd, _addr, _o0, _o1, _n0, _n1, _p0, _p1, _err)	\
++do {									\
++	unsigned long __tmp, __s0, __s1;				\
++	asm volatile(							\
++	"1:	ldxp	%" _wd "[p0], %" _wd "[p1], [%[a]]\n"		\
++	"	cmp	%" _wd "[p0], %" _wd "[o0]\n"			\
++	"	ccmp	%" _wd "[p1], %" _wd "[o1], #0, eq\n"		\
++	"	csel	%" _wd "[s0], %" _wd "[n0], %" _wd "[p0], eq\n"	\
++	"	csel	%" _wd "[s1], %" _wd "[n1], %" _wd "[p1], eq\n"	\
++	"2:	stxp	%w[t], %" _wd "[s0], %" _wd "[s1], [%[a]]\n"	\
++	"	cbnz	%w[t], 1b\n"					\
++	"3:\n"								\
++	_ASM_EXTABLE_UACCESS_ERR(1b, 3b, %w[e])				\
++	_ASM_EXTABLE_UACCESS_ERR(2b, 3b, %w[e])				\
++	: [p0] "=&r" (_p0), [p1] "=&r" (_p1), [s0] "=&r" (__s0),		\
++	  [s1] "=&r" (__s1), [t] "=&r" (__tmp), [e] "+r" (_err)		\
++	: [a] "r" (_addr), [o0] "r" (_o0), [o1] "r" (_o1),			\
++	  [n0] "r" (_n0), [n1] "r" (_n1)					\
++	: "cc", "memory");						\
++} while (0)
++
++/*
++ * CASP: compare the pair at addr with (o0, o1) and store (n0, n1) when both
++ * match. The pair is always written back -- the old values on a mismatch --
++ * because only a successful STXP makes the LDXP pair a single-copy-atomic
++ * snapshot, which is what CASP returns.
++ */
++static int lse_cmpxchg_pair(unsigned long addr, bool is64, u64 o0, u64 o1,
++			    u64 n0, u64 n1, u64 *p0, u64 *p1)
++{
++	int err = 0;
++	u64 r0 = 0, r1 = 0;
++
++	uaccess_enable_privileged();
++	if (is64)
++		__lse_cmpxchg_pair_user("x", addr, o0, o1, n0, n1, r0, r1, err);
++	else
++		__lse_cmpxchg_pair_user("w", addr, o0, o1, n0, n1, r0, r1, err);
++	uaccess_disable_privileged();
++	*p0 = r0;
++	*p1 = r1;
++	return err;
++}
++
++static inline s64 lse_sext(u64 v, unsigned int size)
++{
++	unsigned int shift = 64 - (8 << size);
++
++	return (s64)(v << shift) >> shift;
++}
++
++static u64 lse_op(unsigned int opc, u64 old, u64 val, unsigned int size)
++{
++	switch (opc) {
++	case 0: return old + val;				/* LDADD */
++	case 1: return old & ~val;				/* LDCLR */
++	case 2: return old ^ val;				/* LDEOR */
++	case 3: return old | val;				/* LDSET */
++	case 4: return lse_sext(old, size) > lse_sext(val, size) ? old : val;
++	case 5: return lse_sext(old, size) < lse_sext(val, size) ? old : val;
++	case 6: return old > val ? old : val;			/* LDUMAX */
++	default: return old < val ? old : val;			/* LDUMIN */
++	}
++}
++
++static unsigned long lse_addr(struct pt_regs *regs, u32 insn)
++{
++	unsigned int rn = (insn >> 5) & 0x1f;
++
++	return rn == 31 ? regs->sp : regs->regs[rn];
++}
++
++static int lse_load(unsigned long addr, unsigned int size, u64 *val)
++{
++	int err;
++
++	switch (size) {
++	case 0: { u8 v; err = get_user(v, (u8 __user *)addr); *val = v; break; }
++	case 1: { u16 v; err = get_user(v, (u16 __user *)addr); *val = v; break; }
++	case 2: { u32 v; err = get_user(v, (u32 __user *)addr); *val = v; break; }
++	default: { u64 v; err = get_user(v, (u64 __user *)addr); *val = v; break; }
++	}
++	return err;
++}
++
++/* 0, or the signal the instruction must raise (fault address in *fault). */
++static int lse_emulate(struct pt_regs *regs, u32 insn, unsigned long *fault)
++{
++	unsigned int size = insn >> 30, rt = insn & 0x1f, rs = (insn >> 16) & 0x1f;
++	unsigned long addr = lse_addr(regs, insn);
++	u64 mask, val, cur, prev, nv;
++
++	*fault = addr;
++
++	if ((insn & LSE_CASP_MASK) == LSE_CASP_VAL) {
++		bool is64 = size & 1;
++		unsigned int bytes = is64 ? 16 : 8;
++		u64 o0, o1, n0, n1, p0, p1;
++
++		if ((rs & 1) || (rt & 1))
++			return SIGILL;		/* odd pair registers: UNDEFINED */
++		if (addr & (bytes - 1))
++			return SIGBUS;
++		if (!access_ok((void __user *)addr, bytes))
++			return SIGSEGV;
++		mask = is64 ? ~0ULL : 0xffffffffULL;
++		o0 = pt_regs_read_reg(regs, rs) & mask;
++		o1 = pt_regs_read_reg(regs, rs + 1) & mask;
++		n0 = pt_regs_read_reg(regs, rt) & mask;
++		n1 = pt_regs_read_reg(regs, rt + 1) & mask;
++		smp_mb();
++		if (lse_cmpxchg_pair(addr, is64, o0, o1, n0, n1, &p0, &p1))
++			return SIGSEGV;
++		smp_mb();
++		pt_regs_write_reg(regs, rs, p0);
++		pt_regs_write_reg(regs, rs + 1, p1);
++		return 0;
++	}
++
++	mask = size == 3 ? ~0ULL : (1ULL << (8 << size)) - 1;
++	if (addr & ((1UL << size) - 1))
++		return SIGBUS;
++	if (!access_ok((void __user *)addr, 1UL << size))
++		return SIGSEGV;
++
++	if ((insn & LSE_CAS_MASK) == LSE_CAS_VAL) {
++		val = pt_regs_read_reg(regs, rs) & mask;
++		smp_mb();
++		if (lse_cmpxchg(addr, size, val, pt_regs_read_reg(regs, rt) & mask, &prev))
++			return SIGSEGV;
++		smp_mb();
++		pt_regs_write_reg(regs, rs, prev);
++		return 0;
++	}
++
++	if ((insn & LSE_MEMOP_MASK) == LSE_MEMOP_VAL) {
++		unsigned int o3 = (insn >> 15) & 1, opc = (insn >> 12) & 7;
++
++		if (o3 && opc == 4) {
++			/* LDAPR: Rs must be 11111, and it is ordered as LDAR. */
++			if (rs != 31)
++				return SIGILL;
++			if (lse_load(addr, size, &val))
++				return SIGSEGV;
++			smp_mb();
++			pt_regs_write_reg(regs, rt, val);
++			return 0;
++		}
++		if (o3 && opc != 0)
++			return SIGILL;		/* not an LSE operation */
++
++		val = pt_regs_read_reg(regs, rs) & mask;
++		cur = 0;			/* a guess: a wrong one costs one retry */
++		smp_mb();
++		for (;;) {
++			nv = o3 ? val : lse_op(opc, cur, val, size) & mask;
++			if (lse_cmpxchg(addr, size, cur, nv, &prev))
++				return SIGSEGV;
++			if (prev == cur)
++				break;
++			cur = prev;
++		}
++		smp_mb();
++		pt_regs_write_reg(regs, rt, cur);
++		return 0;
++	}
++
++	return SIGILL;
++}
++
++static bool lse_candidate(u32 insn)
++{
++	return (insn & LSE_MEMOP_MASK) == LSE_MEMOP_VAL ||
++	       (insn & LSE_CAS_MASK) == LSE_CAS_VAL ||
++	       (insn & LSE_CASP_MASK) == LSE_CASP_VAL;
++}
++
++bool try_emulate_lse(struct pt_regs *regs, u32 insn)
++{
++	unsigned long fault;
++	int sig;
++
++	if (!user_mode(regs) || compat_user_mode(regs) || !lse_candidate(insn))
++		return false;
++	/* A CPU with LSE never traps on these; anything it rejects is genuine. */
++	if (cpus_have_final_cap(ARM64_HAS_LSE_ATOMICS))
++		return false;
++
++	sig = lse_emulate(regs, insn, &fault);
++	if (sig == SIGILL)
++		return false;
++
++	perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS, 1, regs, regs->pc);
++	pr_info_once("LSE atomics emulated for userspace on this CPU (first: %s[%d])\n",
++		     current->comm, task_pid_nr(current));
++
++	if (sig == SIGBUS)
++		force_sig_fault(SIGBUS, BUS_ADRALN, (void __user *)fault);
++	else if (sig == SIGSEGV)
++		arm64_notify_segfault(fault);
++	else
++		arm64_skip_faulting_instruction(regs, AARCH64_INSN_SIZE);
++	return true;
++}
+diff -ruN a/arch/arm64/kernel/traps.c b/arch/arm64/kernel/traps.c
+--- a/arch/arm64/kernel/traps.c
++++ b/arch/arm64/kernel/traps.c
+@@ -469,6 +469,9 @@
+ 	if (try_emulate_armv8_deprecated(regs, insn))
+ 		return;
+ 
++	if (try_emulate_lse(regs, insn))
++		return;
++
+ out_err:
+ 	force_signal_inject(SIGILL, ILL_ILLOPC, regs->pc, 0);
+ }
