@@ -1,0 +1,92 @@
+Subject: [PATCH] drm/msm: expose gpu_busy_percent in sysfs
+
+Userspace has no way to read how busy an Adreno is: devfreq keeps the
+busy fraction to itself, and the attribute the handheld tools look for --
+gpu_busy_percent, as amdgpu exposes it -- does not exist. PowerStation's
+devfreq backend reads <devfreq>/device/gpu_busy_percent and reported "not
+supported", so OpenGamepadUI's performance view showed no GPU load.
+
+devfreq already samples the GPU every 50 ms (msm_devfreq_get_dev_status,
+from the GMU/CX busy counter). Keep the busy share of each sample and
+expose it as gpu_busy_percent on the GPU device, 0-100, and 0 while the
+GPU is runtime-suspended.
+
+---
+diff -ruN a/drivers/gpu/drm/msm/msm_gpu.h b/drivers/gpu/drm/msm/msm_gpu.h
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -148,6 +148,11 @@
+ 	 * cycles since last sampling period.
+ 	 */
+ 	u64 busy_cycles;
++	/**
++	 * @busy_percent: Share of the last sampling period the GPU was busy,
++	 * 0-100, reported through the gpu_busy_percent sysfs attribute.
++	 */
++	u32 busy_percent;
+ 	/** @time: Time of last sampling period.  */
+ 	ktime_t time;
+ 	/** @idle_time: Time of last transition to idle.  */
+diff -ruN a/drivers/gpu/drm/msm/msm_gpu_devfreq.c b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
+--- a/drivers/gpu/drm/msm/msm_gpu_devfreq.c
++++ b/drivers/gpu/drm/msm/msm_gpu_devfreq.c
+@@ -93,6 +93,7 @@
+ 	if (df->suspended) {
+ 		mutex_unlock(&df->lock);
+ 		status->busy_time = 0;
++		WRITE_ONCE(df->busy_percent, 0);
+ 		return 0;
+ 	}
+ 
+@@ -108,6 +109,10 @@
+ 		busy_time = ~0LU;
+ 
+ 	status->busy_time = busy_time;
++	if (status->total_time)
++		WRITE_ONCE(df->busy_percent,
++			   min_t(u64, div64_u64((u64)busy_time * 100,
++						status->total_time), 100));
+ 
+ 	return 0;
+ }
+@@ -136,6 +141,22 @@
+ 	return !!df->devfreq;
+ }
+ 
++/*
++ * gpu_busy_percent: how busy the GPU was over the last devfreq sampling
++ * period (50 ms), the same attribute amdgpu exposes, so the tools that read
++ * it there (PowerStation, and through it OpenGamepadUI's performance view)
++ * see the Adreno too. 0 while the GPU is runtime-suspended.
++ */
++static ssize_t gpu_busy_percent_show(struct device *dev,
++				     struct device_attribute *attr, char *buf)
++{
++	struct msm_gpu_devfreq *df = &dev_to_gpu(dev)->devfreq;
++
++	return sysfs_emit(buf, "%u\n", READ_ONCE(df->suspended) ? 0 :
++			  READ_ONCE(df->busy_percent));
++}
++static DEVICE_ATTR_RO(gpu_busy_percent);
++
+ void msm_devfreq_init(struct msm_gpu *gpu)
+ {
+ 	struct msm_gpu_devfreq *df = &gpu->devfreq;
+@@ -200,6 +221,9 @@
+ 			      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+ 	msm_hrtimer_work_init(&df->idle_work, gpu->worker, msm_devfreq_idle_work,
+ 			      CLOCK_MONOTONIC, HRTIMER_MODE_REL);
++
++	if (device_create_file(&gpu->pdev->dev, &dev_attr_gpu_busy_percent))
++		DRM_DEV_INFO(&gpu->pdev->dev, "no gpu_busy_percent attribute\n");
+ }
+ 
+ static void cancel_idle_work(struct msm_gpu_devfreq *df)
+@@ -221,6 +245,7 @@
+ 	if (!has_devfreq(gpu))
+ 		return;
+ 
++	device_remove_file(&gpu->pdev->dev, &dev_attr_gpu_busy_percent);
+ 	devfreq_cooling_unregister(gpu->cooling);
+ 	dev_pm_qos_remove_request(&df->boost_freq);
+ }

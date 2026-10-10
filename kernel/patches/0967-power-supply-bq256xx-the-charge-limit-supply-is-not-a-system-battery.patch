@@ -1,0 +1,48 @@
+Subject: [PATCH] power: supply: bq256xx: the charge-limit supply is not a system battery
+
+The driver registers a second supply, "bq256xx-battery", of type Battery
+that reports only the charger's constant-charge current and voltage
+limits. It has no capacity, energy or status. On a board whose real
+battery is reported by a fuel gauge (the MANGMI Air X: the gauge's
+"battery" supply), UPower takes the bq256xx one for a second system
+battery, reads it as present and empty, and averages it into the display
+device: OpenGamepadUI showed 50% and charging on a full battery, and its
+docked/undocked performance profiles keyed off the wrong state.
+
+Report POWER_SUPPLY_SCOPE_DEVICE for it. UPower then does not count it as
+a system battery (scope "device"), and the kernel's own
+power_supply_is_system_supplied() already skips device-scope supplies.
+The charge-limit properties are unchanged.
+
+---
+ drivers/power/supply/bq256xx_charger.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+--- a/drivers/power/supply/bq256xx_charger.c
++++ b/drivers/power/supply/bq256xx_charger.c
+@@ -1228,6 +1228,17 @@
+ 
+ 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX:
+ 		val->intval = bq->init_data.vbatreg_max;
++		break;
++
++	/*
++	 * This supply only carries the charger's charge limits; it knows
++	 * nothing about the cell's state. The battery the system runs on is
++	 * the fuel gauge's supply. Without a scope, userspace (UPower) takes
++	 * this one for a second, empty system battery and averages it into
++	 * the displayed charge.
++	 */
++	case POWER_SUPPLY_PROP_SCOPE:
++		val->intval = POWER_SUPPLY_SCOPE_DEVICE;
+ 		break;
+ 
+ 	default:
+@@ -1663,6 +1674,7 @@
+ static enum power_supply_property bq256xx_battery_props[] = {
+ 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
+ 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE_MAX,
++	POWER_SUPPLY_PROP_SCOPE,
+ };
+ 
+ static int bq256xx_property_is_writeable(struct power_supply *psy,
