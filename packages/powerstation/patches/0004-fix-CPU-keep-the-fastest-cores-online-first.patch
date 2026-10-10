@@ -1,0 +1,91 @@
+From: qforge
+Subject: [PATCH] fix(CPU): keep the fastest cores online first
+
+SetCoresEnabled walked the cores in number order and kept the first N
+online. On big.LITTLE SoCs the little cores usually carry the low numbers
+(SM6115: cpu0-3 are Cortex-A53, cpu4-7 Cortex-A73), so lowering the core
+count in OpenGamepadUI took the big cores offline first: "4 cores" left a
+game on the four A53s, at roughly 60% of the per-core throughput, when
+the user only meant to save some power.
+
+Order the cores by the scheduler's cpu_capacity, highest first, then by
+number. On a CPU where the kernel reports no capacity (or every core is
+the same) all cores tie and the old order is kept. cpu0, which cannot go
+offline, is still counted first as before.
+
+The kernel hides cpu_capacity while a CPU is offline, so each value is
+cached the first time it is read: at startup, when every CPU is online,
+and for the online ones before every change. Without the cache a second
+change saw the offline little cores as "fastest" (measured on the Air X:
+4 cores then 2 left cpu0+cpu1, two A53s).
+
+---
+--- a/src/performance/cpu/cpu_features.rs
++++ b/src/performance/cpu/cpu_features.rs
+@@ -60,6 +60,13 @@
+         }
+         log::info!("Core Map: {:?}", core_map);
+ 
++        // Read every CPU's capacity while they are all still online (see cpu_capacity).
++        for cores in core_map.values() {
++            for core in cores {
++                cpu_capacity(core.number);
++            }
++        }
++
+         Cpu {
+             core_map,
+             core_count,
+@@ -215,9 +222,19 @@
+             num
+         };
+ 
+-        // Collect all core IDs from the core map
++        // Collect all core IDs from the core map, fastest first. On big.LITTLE the
++        // little cores usually have the low numbers (SM6115: cpu0-3 are A53, cpu4-7
++        // A73), so walking them in number order kept the slow cores and took the
++        // fast ones offline: "4 cores" left a game on four A53s. Order by the
++        // scheduler's cpu_capacity, highest first, then by number; where the
++        // kernel reports no capacity every core ties and the order is unchanged.
+         let mut core_ids = self.core_map.keys().cloned().collect::<Vec<u32>>();
+-        core_ids.sort();
++        for cores in self.core_map.values() {
++            for core in cores {
++                cpu_capacity(core.number);
++            }
++        }
++        core_ids.sort_by_key(|id| (std::cmp::Reverse(cpu_capacity(*id)), *id));
+ 
+         // Enable/disable cores based on their hyper-threaded sibling
+         let mut enabled_count = 1;
+@@ -266,6 +283,30 @@
+     }
+ }
+ 
++/// The scheduler's relative capacity of a CPU (sysfs cpu_capacity, 1024 for the fastest).
++///
++/// The kernel hides cpu_capacity while a CPU is offline, so every value read is cached:
++/// capacity never changes, and PowerStation sees all CPUs online at boot (Cpu::new reads
++/// them all) and refreshes the online ones before every change. A CPU never seen online
++/// counts as the fastest, which is the old number-order behaviour for it.
++fn cpu_capacity(number: u32) -> u32 {
++    use std::collections::HashMap;
++    use std::sync::{Mutex, OnceLock};
++    static CACHE: OnceLock<Mutex<HashMap<u32, u32>>> = OnceLock::new();
++    let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
++    let live = std::fs::read_to_string(format!("/sys/devices/system/cpu/cpu{}/cpu_capacity", number))
++        .ok()
++        .and_then(|s| s.trim().parse::<u32>().ok());
++    let mut cache = cache.lock().unwrap();
++    match live {
++        Some(capacity) => {
++            cache.insert(number, capacity);
++            capacity
++        }
++        None => *cache.get(&number).unwrap_or(&1024),
++    }
++}
++
+ // Returns true if the CPU has the given feature flag.
+ async fn has_feature(flag: String) -> fdo::Result<bool> {
+     let features = get_features();
