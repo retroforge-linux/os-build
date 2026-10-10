@@ -461,6 +461,17 @@ commit its texture came from, and the per-slot ring hands back the last copy whe
 commit and rotation match. Measured on the Air X with God of War: 301 -> 150 gamescope submits
 in 3 s, overlay plane fb constant.
 
+`0035` — **a client's pre-rotated buffer is scanned out as is** (ours, 2026-10-10). Mesa's
+`vk_wsi_wayland_prerotate` (packages/mesa 0006) copies each present into a rotated buffer in the
+client and tags it with a wl_surface buffer transform; gamescope ignored the transform and
+rotated it again. The commit now carries the transform, and one equal to the display's rotation
+(wl 90/180/270 = `g_uPreRotation` 1/2/3) marks the layer `bPreRotated`, which the DRM backend
+of `0028` already places and scans out with no rotation. It is sized as its unrotated self and
+never pre-emptively upscaled; `vulkan_composite` and `vulkan_screenshot` copy it back unrotated
+(cached per commit) and restore the frame afterwards. Covers X11 Vulkan games and OpenGamepadUI,
+whose presents go through the gamescope WSI layer into Mesa's Wayland WSI. Measured on the Air
+X: gamescope GPU submits zero in menu and game, total GPU time and fps unchanged.
+
 Drop the patch files here with those exact names (or rename and update `source.pin`'s
 `patches:` line). **Until a declared patch is present, `make overlay` / `make base` fail fast**
 with a clear "missing patch" message from `build-overlay.sh`.

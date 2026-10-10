@@ -1,0 +1,271 @@
+From: qforge
+Subject: [PATCH] scan out a client's pre-rotated buffer unrotated
+
+On a panel the planes can't rotate, every game frame is turned by a
+copy in gamescope (0028), synchronously in the compositor thread. Mesa
+can do that copy in the client instead: with vk_wsi_wayland_prerotate
+set, its Wayland WSI blits each present into a rotated buffer on the
+game's own queue and tags it with the matching wl_surface buffer
+transform. Under gamescope that covers X11 Vulkan games too, since the
+gamescope WSI layer presents them through Mesa's Wayland WSI. gamescope
+ignored the transform, so such a buffer was rotated a second time.
+
+Carry the buffer transform with each commit. A commit whose transform
+is the rotation the display needs (wl_output_transform 90/180/270 is
+g_uPreRotation 1/2/3: Mesa's prerotate=90 copies with ROTATE_270, as
+our blit does for rotation 1) is marked bPreRotated: the DRM backend
+already places such a layer as its unrotated self and scans it out with
+no rotation and no copy. It is sized as its unrotated self, and never
+pre-emptively upscaled.
+
+The composite samples layers in logical orientation, so a frame that
+has to composite, and a screenshot or PipeWire capture, gets the layer
+copied back unrotated first (once per
+commit, cached per slot) and restored afterwards for the caller.
+
+(qforge: perf, MANGMI Air X, 2026-10-10.)
+---
+diff --git a/src/commit.cpp b/src/commit.cpp
+index c9d0001..de6c254 100644
+--- a/src/commit.cpp
++++ b/src/commit.cpp
+@@ -141,6 +141,10 @@ bool commit_t::ShouldPreemptivelyUpscale( GamescopeUpscaleFilter eFilter, Gamesc
+     if ( !vulkanTex )
+         return false;
+ 
++    // A pre-rotated buffer is scanned out as is; upscaling it would sample it turned.
++    if ( uBufferTransform != 0 )
++        return false;
++
+     float flScaleX = 1.0f;
+     float flScaleY = 1.0f;
+     // I wish this function was more programatic with its inputs, but it does do exactly what we want right now...
+diff --git a/src/commit.h b/src/commit.h
+index 20f881d..c650752 100644
+--- a/src/commit.h
++++ b/src/commit.h
+@@ -40,6 +40,9 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
+ 
+ 	struct wlr_buffer *buf = nullptr;
+ 	gamescope::Rc<CVulkanTexture> vulkanTex;
++	// wl_output_transform of the buffer. A client that pre-rotates for the panel (Mesa's
++	// vk_wsi_wayland_prerotate) draws it turned and tags it with the matching transform.
++	uint32_t uBufferTransform = 0;
+ 	std::optional<UpscaledTexture_t> upscaledTexture;
+ 
+ 	gamescope::Rc<CVulkanTexture> GetTexture( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler, GamescopeAppTextureColorspace &colorspace )
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 951a5e9..6578024 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -4560,8 +4560,96 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
+ 	}
+ }
+ 
++// A client layer drawn already turned to the panel (commit_is_pre_rotated) scans out as is, but
++// the composite samples layers in logical orientation: copy it back unrotated, once per commit.
++static gamescope::Rc<CVulkanTexture> vulkan_unrotate_layer( const gamescope::Rc<CVulkanTexture> &pTex, uint64_t ulContentID, uint32_t uSlot )
++{
++	if ( !g_uPreRotation || !g_device.supportsRotatedCopy() || !pTex || pTex->isYcbcr() || uSlot >= k_nMaxLayers )
++		return nullptr;
++
++	uint32_t uWidth = pTex->width();
++	uint32_t uHeight = pTex->height();
++	if ( g_uPreRotation & 1u )
++		std::swap( uWidth, uHeight );
++
++	struct UnrotatedLayer_t
++	{
++		gamescope::OwningRc<CVulkanTexture> pImage;
++		const CVulkanTexture *pLastSrc = nullptr;
++		uint64_t ulLastContentID = 0;
++	};
++	static UnrotatedLayer_t s_Unrotated[ k_nMaxLayers ];
++	auto &slot = s_Unrotated[ uSlot ];
++
++	if ( !slot.pImage || slot.pImage->width() != uWidth || slot.pImage->height() != uHeight || slot.pImage->drmFormat() != pTex->drmFormat() )
++	{
++		CVulkanTexture::createFlags flags;
++		flags.bSampled = true;
++		flags.bTransferDst = true;
++		flags.bTransferSrc = true;
++		slot.pImage = new CVulkanTexture();
++		slot.pLastSrc = nullptr;
++		slot.ulLastContentID = 0;
++		if ( !slot.pImage->BInit( uWidth, uHeight, 1u, pTex->drmFormat(), flags ) )
++		{
++			vk_log.errorf( "failed to allocate a %ux%u image to unrotate a pre-rotated layer", uWidth, uHeight );
++			slot.pImage = nullptr;
++			return nullptr;
++		}
++	}
++	else if ( ulContentID != 0 && slot.pLastSrc == pTex.get() && slot.ulLastContentID == ulContentID )
++	{
++		return slot.pImage.get();
++	}
++
++	auto cmdBuffer = g_device.commandBuffer();
++	cmdBuffer->blitImageRotated( pTex, slot.pImage.get(), ( 4u - g_uPreRotation ) % 4u );
++	g_device.wait( g_device.submit( std::move( cmdBuffer ) ), true );
++	slot.pLastSrc = pTex.get();
++	slot.ulLastContentID = ulContentID;
++	return slot.pImage.get();
++}
++
++// Swaps a frame's pre-rotated client layers for unrotated copies for the composite and puts
++// them back after, since the caller may still scan out or capture the frame it passed in.
++struct UnrotatedFrameScope_t
++{
++	FrameInfo_t *pFrameInfo = nullptr;
++	gamescope::Rc<CVulkanTexture> pOriginal[ k_nMaxLayers ];
++
++	explicit UnrotatedFrameScope_t( FrameInfo_t *pInfo ) : pFrameInfo( pInfo )
++	{
++		for ( int i = 0; i < pFrameInfo->layers.count() && i < k_nMaxLayers; i++ )
++		{
++			FrameInfo_t::Layer_t &layer = pFrameInfo->layers.get( i );
++			if ( !layer.bPreRotated || !layer.tex )
++				continue;
++			gamescope::Rc<CVulkanTexture> pUnrotated = vulkan_unrotate_layer( layer.tex, layer.ulContentID, i );
++			if ( !pUnrotated )
++				continue;
++			pOriginal[ i ] = layer.tex;
++			layer.tex = pUnrotated;
++			layer.bPreRotated = false;
++		}
++	}
++
++	~UnrotatedFrameScope_t()
++	{
++		for ( int i = 0; i < pFrameInfo->layers.count() && i < k_nMaxLayers; i++ )
++		{
++			if ( !pOriginal[ i ] )
++				continue;
++			FrameInfo_t::Layer_t &layer = pFrameInfo->layers.get( i );
++			layer.tex = pOriginal[ i ];
++			layer.bPreRotated = true;
++		}
++	}
++};
++
+ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, gamescope::Rc<CVulkanTexture> pYUVOutTexture )
+ {
++	// captures (screenshots, PipeWire) sample layers like the composite does
++	UnrotatedFrameScope_t unrotated( const_cast<FrameInfo_t *>( frameInfo ) );
+ 	EOTF outputTF = frameInfo->outputEncodingEOTF;
+ 	if (!frameInfo->applyOutputColorMgmt)
+ 		outputTF = EOTF_Count; //Disable blending stuff.
+@@ -4867,6 +4955,8 @@ static bool vulkan_composite_blit( CVulkanCmdBuffer *cmdBuffer, const struct Fra
+ 
+ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer, bool bAllowGfxBlit )
+ {
++	UnrotatedFrameScope_t unrotated( frameInfo );
++
+ 	EOTF outputTF = frameInfo->outputEncodingEOTF;
+ 	if (!frameInfo->applyOutputColorMgmt)
+ 		outputTF = EOTF_Count; //Disable blending stuff.
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index af18249..29b84ad 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -2520,6 +2520,17 @@ void MouseCursor::updateCursorFeedback( bool bForce )
+ 	m_needs_server_flush = true;
+ }
+ 
++// A buffer the client drew already turned to the panel: its transform is the rotation the
++// display needs (wl_output_transform 90/180/270 matches g_uPreRotation 1/2/3, the convention
++// of Mesa's vk_wsi_wayland_prerotate and of our rotated copy). It is scanned out unrotated and
++// placed as its unrotated self; the composite turns it back if the frame has to composite.
++static bool
++commit_is_pre_rotated( const commit_t *commit, const gamescope::Rc<CVulkanTexture> &tex )
++{
++	return g_uPreRotation != 0 && commit->uBufferTransform == g_uPreRotation &&
++		tex != nullptr && tex == commit->vulkanTex;
++}
++
+ static void
+ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerInfo_t& base, struct FrameInfo_t *frameInfo, float flOpacityScale, bool bOverrideOpacity )
+ {
+@@ -2532,6 +2543,10 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
+ 	layer->tex = commit->GetTexture( base.eUpscaleFilter, base.eUpscaleScaler, layer->colorspace );
+ 	layer->filter = base.filter;
+ 	layer->ulContentID = layer->tex == commit->vulkanTex ? commit->commitID : 0;
++	layer->bPreRotated = commit_is_pre_rotated( commit.get(), layer->tex );
++	const bool bTransposed = layer->bPreRotated && ( g_uPreRotation & 1u );
++	const uint32_t uTexWidth = bTransposed ? layer->tex->height() : layer->tex->width();
++	const uint32_t uTexHeight = bTransposed ? layer->tex->width() : layer->tex->height();
+ 	if ( layer->tex == commit->vulkanTex )
+ 	{
+ 		if ( base.uOutputWidth == currentOutputWidth && base.uOutputHeight == currentOutputHeight )
+@@ -2546,11 +2561,11 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
+ 			// The output changed size since this transform was cached, so refit
+ 			// the texture to it rather than replaying the stale mapping.
+ 			float flScaleX = 1.0f, flScaleY = 1.0f;
+-			calc_scale_factor( base.eUpscaleScaler, flScaleX, flScaleY, layer->tex->width(), layer->tex->height() );
++			calc_scale_factor( base.eUpscaleScaler, flScaleX, flScaleY, uTexWidth, uTexHeight );
+ 			layer->scale.x = 1.0f / flScaleX;
+ 			layer->scale.y = 1.0f / flScaleY;
+-			layer->offset.x = -( ( (int)currentOutputWidth - (int)layer->tex->width() * flScaleX ) / 2.0f );
+-			layer->offset.y = -( ( (int)currentOutputHeight - (int)layer->tex->height() * flScaleY ) / 2.0f );
++			layer->offset.x = -( ( (int)currentOutputWidth - (int)uTexWidth * flScaleX ) / 2.0f );
++			layer->offset.y = -( ( (int)currentOutputHeight - (int)uTexHeight * flScaleY ) / 2.0f );
+ 		}
+ 		frameInfo->focusedWindowScale = { layer->scale.x, layer->scale.y };
+ 		frameInfo->focusedWindowOffset = { layer->offset.x, layer->offset.y };
+@@ -2644,6 +2659,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
+ 
+ 	layer->tex = lastCommit->GetTexture( layer->filter, frameInfo->eUpscaleScaler, layer->colorspace );
+ 	layer->ulContentID = layer->tex == lastCommit->vulkanTex ? lastCommit->commitID : 0;
++	layer->bPreRotated = commit_is_pre_rotated( lastCommit.get(), layer->tex );
++	const bool bTransposed = layer->bPreRotated && ( g_uPreRotation & 1u );
+ 
+ 	if ( flags & PaintWindowFlag::NoScale )
+ 	{
+@@ -2662,11 +2679,11 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
+ 		// are using the bypass layer, we don't get that, so we need to handle
+ 		// this case explicitly.
+ 		if (w == scaleW) {
+-			sourceWidth = layer->tex->width();
+-			sourceHeight = layer->tex->height();
++			sourceWidth = bTransposed ? layer->tex->height() : layer->tex->width();
++			sourceHeight = bTransposed ? layer->tex->width() : layer->tex->height();
+ 
+-			baseWidth = lastCommit->vulkanTex->width();
+-			baseHeight = lastCommit->vulkanTex->height();
++			baseWidth = bTransposed ? lastCommit->vulkanTex->height() : lastCommit->vulkanTex->width();
++			baseHeight = bTransposed ? lastCommit->vulkanTex->width() : lastCommit->vulkanTex->height();
+ 		} else {
+ 			sourceWidth = scaleW->GetGeometry().nWidth;
+ 			sourceHeight = scaleW->GetGeometry().nHeight;
+@@ -8571,6 +8588,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
+ 		// Import failed to import, early exit.
+ 		return;
+ 	}
++	newCommit->uBufferTransform = reslistentry.uBufferTransform;
+ 
+ 	int fence = -1;
+ 	global_focus_t *pCurrentFocus = GetCurrentFocus();
+diff --git a/src/wlserver.cpp b/src/wlserver.cpp
+index 3dccb47..0ceaa1e 100644
+--- a/src/wlserver.cpp
++++ b/src/wlserver.cpp
+@@ -167,6 +167,7 @@ ResListEntry_t PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
+ 		std::move( pAcquirePoint ),
+ 		std::move( pReleasePoint )
+ 	};
++	newEntry.uBufferTransform = surf->current.transform;
+ 	wl_surf->present_id = std::nullopt;
+ 	wl_surf->desired_present_time = 0;
+ 	wl_surf->pending_presentation_feedbacks.clear();
+diff --git a/src/wlserver.hpp b/src/wlserver.hpp
+index 79a0723..64132f1 100644
+--- a/src/wlserver.hpp
++++ b/src/wlserver.hpp
+@@ -50,6 +50,7 @@ struct ResListEntry_t {
+ 	uint64_t desired_present_time;
+ 	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
+ 	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
++	uint32_t uBufferTransform = 0; // wl_output_transform the client drew the buffer in
+ };
+ 
+ struct wlserver_content_override;
