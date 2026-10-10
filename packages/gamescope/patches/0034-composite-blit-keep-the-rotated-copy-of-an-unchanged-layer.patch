@@ -1,0 +1,161 @@
+From: qforge
+Subject: [PATCH] composite-blit: keep the rotated copy of an unchanged layer
+
+On a panel whose planes can't rotate, --composite-blit copies every
+layer into a pre-rotated scanout image before each commit. It did so
+for every layer on every frame, whether or not the layer had changed.
+With a game running under OpenGamepadUI the overlay layer (the
+launcher's transparent window) is static for minutes at a time, yet it
+was copied once per game frame: on the MANGMI Air X (Adreno 610) a
+God of War frame paid ~0.9 ms for the game copy and ~0.5 ms for the
+overlay copy, ~100 blits a second at 51 fps.
+
+Tag each layer with the commit its texture came from (zero when the
+texture isn't the client buffer itself -- upscaled, cursor, mura) and
+let the per-slot ring hand back the previous copy when texture, commit
+and rotation all match. The ring only advances for a fresh copy, so the
+image written next is still never the one being scanned out.
+
+(qforge: perf, MANGMI Air X, 2026-10-10.)
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index d9cb7bf..4bd74fd 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -4654,7 +4654,7 @@ namespace gamescope
+ 						bValid &= !g_uPreRotation || !g_uOutputRotation;
+ 						continue;
+ 					}
+-					layer.pBlitRotatedTex = g_uPreRotation ? vulkan_blit_rotate_target( layer.tex, g_uPreRotation, i, false ) : nullptr;
++					layer.pBlitRotatedTex = g_uPreRotation ? vulkan_blit_rotate_target( layer.tex, g_uPreRotation, i, false, layer.ulContentID ) : nullptr;
+ 					bValid &= layer.pBlitRotatedTex != nullptr;
+ 					uBlits |= 1u << i;
+ 				}
+@@ -4677,8 +4677,12 @@ namespace gamescope
+ 					for ( int i = 0; i < nLayers; i++ )
+ 					{
+ 						FrameInfo_t::Layer_t &layer = pFrameInfo->layers.get( i );
+-						if ( layer.pBlitRotatedTex )
+-							vulkan_blit_rotate( layer.tex, vulkan_blit_rotate_target( layer.tex, g_uPreRotation, i, true ), g_uPreRotation );
++						if ( !layer.pBlitRotatedTex )
++							continue;
++						bool bNeedsBlit = true;
++						gamescope::Rc<CVulkanTexture> pTarget = vulkan_blit_rotate_target( layer.tex, g_uPreRotation, i, true, layer.ulContentID, &bNeedsBlit );
++						if ( bNeedsBlit )
++							vulkan_blit_rotate( layer.tex, pTarget, g_uPreRotation );
+ 					}
+ 					return 0;
+ 				}
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index def11a8..951a5e9 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -3519,8 +3519,16 @@ void vulkan_update_luts(const gamescope::Rc<CVulkanTexture>& lut1d, const gamesc
+ 
+ // Scanout images, per layer slot, to rotate a client buffer into with a blit for a plane that
+ // can't rotate it. bAdvance false peeks at the next one without taking it.
+-gamescope::Rc<CVulkanTexture> vulkan_blit_rotate_target( gamescope::Rc<CVulkanTexture> pTex, uint32_t uRotation, uint32_t uSlot, bool bAdvance )
++//
++// A layer whose content hasn't changed since its last copy (same texture, same commit, same
++// rotation) gets that copy back instead of a fresh one, and *pbNeedsBlit says so: a static
++// overlay such as the launcher over a running game is copied once, not every frame. The ring
++// only advances for a fresh copy, so the image written next is never the one on screen.
++gamescope::Rc<CVulkanTexture> vulkan_blit_rotate_target( gamescope::Rc<CVulkanTexture> pTex, uint32_t uRotation, uint32_t uSlot, bool bAdvance, uint64_t ulContentID, bool *pbNeedsBlit )
+ {
++	if ( pbNeedsBlit )
++		*pbNeedsBlit = true;
++
+ 	if ( !g_bCompositeBlit || !g_device.supportsRotatedCopy() || !pTex || pTex->isYcbcr() )
+ 		return nullptr;
+ 
+@@ -3537,6 +3545,12 @@ gamescope::Rc<CVulkanTexture> vulkan_blit_rotate_target( gamescope::Rc<CVulkanTe
+ 	{
+ 		gamescope::OwningRc<CVulkanTexture> pImages[ 3 ];
+ 		uint32_t uNext = 0;
++
++		// the last fresh copy: which image, and what was copied into it
++		uint32_t uCurrent = ~0u;
++		const CVulkanTexture *pLastSrc = nullptr;
++		uint64_t ulLastContentID = 0;
++		uint32_t uLastRotation = 0;
+ 	};
+ 	static BlitRotateTargets_t s_Targets[ k_nMaxLayers ];
+ 	if ( uSlot >= k_nMaxLayers )
+@@ -3549,6 +3563,10 @@ gamescope::Rc<CVulkanTexture> vulkan_blit_rotate_target( gamescope::Rc<CVulkanTe
+ 		CVulkanTexture::createFlags flags;
+ 		flags.bFlippable = true;
+ 		flags.bTransferDst = true;
++		targets.uNext = 0;
++		targets.uCurrent = ~0u;
++		targets.pLastSrc = nullptr;
++		targets.ulLastContentID = 0;
+ 		for ( auto &pImage : targets.pImages )
+ 		{
+ 			pImage = new CVulkanTexture();
+@@ -3562,9 +3580,25 @@ gamescope::Rc<CVulkanTexture> vulkan_blit_rotate_target( gamescope::Rc<CVulkanTe
+ 		}
+ 	}
+ 
++	const bool bUnchanged = ulContentID != 0 && targets.uCurrent < 3 &&
++		targets.pLastSrc == pTex.get() && targets.ulLastContentID == ulContentID &&
++		targets.uLastRotation == uRotation;
++	if ( bUnchanged )
++	{
++		if ( pbNeedsBlit )
++			*pbNeedsBlit = false;
++		return targets.pImages[ targets.uCurrent ].get();
++	}
++
+ 	gamescope::Rc<CVulkanTexture> pImage = targets.pImages[ targets.uNext ].get();
+ 	if ( bAdvance )
++	{
++		targets.uCurrent = targets.uNext;
++		targets.pLastSrc = pTex.get();
++		targets.ulLastContentID = ulContentID;
++		targets.uLastRotation = uRotation;
+ 		targets.uNext = ( targets.uNext + 1 ) % 3;
++	}
+ 	return pImage;
+ }
+ 
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index ae205da..7ef27e9 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -333,6 +333,7 @@ struct FrameInfo_t
+ 		bool applyColorMgmt; // drm only
+ 		bool bPreRotated = false; // drawn in panel orientation, scanned out unrotated
+ 		gamescope::Rc<CVulkanTexture> pBlitRotatedTex; // tex rotated to the panel by a blit, scanned out instead
++		uint64_t ulContentID = 0; // commit tex holds, 0 when unknown: an unchanged layer keeps its rotated copy
+ 
+ 		AlphaBlendingMode_t eAlphaBlendingMode = ALPHA_BLENDING_MODE_PREMULTIPLIED;
+ 
+@@ -479,7 +480,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
+ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer = nullptr, bool bAllowGfxBlit = false );
+ void vulkan_wait( uint64_t ulSeqNo, bool bReset );
+ gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
+-gamescope::Rc<CVulkanTexture> vulkan_blit_rotate_target( gamescope::Rc<CVulkanTexture> pTex, uint32_t uRotation, uint32_t uSlot, bool bAdvance );
++gamescope::Rc<CVulkanTexture> vulkan_blit_rotate_target( gamescope::Rc<CVulkanTexture> pTex, uint32_t uRotation, uint32_t uSlot, bool bAdvance, uint64_t ulContentID = 0, bool *pbNeedsBlit = nullptr );
+ void vulkan_blit_rotate( gamescope::Rc<CVulkanTexture> pSrc, gamescope::Rc<CVulkanTexture> pDst, uint32_t uRotation );
+ gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
+ gamescope::Rc<CVulkanTexture> vulkan_acquire_capture_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
+diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
+index fce1bc3..af18249 100644
+--- a/src/steamcompmgr.cpp
++++ b/src/steamcompmgr.cpp
+@@ -2531,6 +2531,7 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
+ 
+ 	layer->tex = commit->GetTexture( base.eUpscaleFilter, base.eUpscaleScaler, layer->colorspace );
+ 	layer->filter = base.filter;
++	layer->ulContentID = layer->tex == commit->vulkanTex ? commit->commitID : 0;
+ 	if ( layer->tex == commit->vulkanTex )
+ 	{
+ 		if ( base.uOutputWidth == currentOutputWidth && base.uOutputHeight == currentOutputHeight )
+@@ -2642,6 +2643,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
+ 	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : frameInfo->eUpscaleFilter;
+ 
+ 	layer->tex = lastCommit->GetTexture( layer->filter, frameInfo->eUpscaleScaler, layer->colorspace );
++	layer->ulContentID = layer->tex == lastCommit->vulkanTex ? lastCommit->commitID : 0;
+ 
+ 	if ( flags & PaintWindowFlag::NoScale )
+ 	{

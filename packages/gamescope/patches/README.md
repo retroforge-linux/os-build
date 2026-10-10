@@ -446,6 +446,21 @@ non-literal format with no arguments, which Arch's CFLAGS make a hard error (ROC
 without the flag). `if constexpr ( sizeof...( args ) == 0 )` sends those through `"%s"`. Found on
 the first overlay build of the series; the merged `0028` and `0030` compiled clean.
 
+`0032` — **screenshots on a GPU without cached-coherent memory** (ours, 2026-10-10). The A610
+has no HOST_CACHED|HOST_COHERENT memory type; a mappable image fell to index -1 and the
+screenshot SIGSEGV'd. Falls back to VISIBLE|COHERENT and fails cleanly when nothing fits.
+
+`0033` — **touch on SPI and other SoC touchscreens** (ours, 2026-10-10). Touch is rotated only
+when the device is associated with a connector, and the heuristic knew I2C and USB. The Air X's
+Himax panel is on SPI: taps landed wrong and scrolling ran backwards.
+
+`0034` — **an unchanged layer keeps its rotated copy** (ours, 2026-10-10). `0028` copied every
+layer every frame; the launcher's static overlay over a running game was copied once per game
+frame (~0.5 ms each on the A610, half of gamescope's GPU submits). The layer now carries the
+commit its texture came from, and the per-slot ring hands back the last copy when texture,
+commit and rotation match. Measured on the Air X with God of War: 301 -> 150 gamescope submits
+in 3 s, overlay plane fb constant.
+
 Drop the patch files here with those exact names (or rename and update `source.pin`'s
 `patches:` line). **Until a declared patch is present, `make overlay` / `make base` fail fast**
 with a clear "missing patch" message from `build-overlay.sh`.
