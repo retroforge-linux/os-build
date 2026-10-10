@@ -5,16 +5,14 @@ extends RefCounted
 ## new board only needs its hw-map profile right, and this card shows whatever it resolved.
 ##
 ## Pure GDScript (no OGUI types), so tests/test-plugin.sh can run it in a stock headless Godot
-## against a fabricated tree: new("/path/to/fake/hw").
+## against a fabricated tree (set `root` after new()).
 
 const DEFAULT_ROOT := "/run/qforge/hw"
 const THERMAL_ROLES := ["cpu", "gpu", "battery", "skin"]
 
-var root: String
-
-
-func _init(hw_root: String = DEFAULT_ROOT) -> void:
-	root = hw_root
+## The tree to read; tests point it at a fabricated one. (No _init override: the plugin lint
+## forbids it, see tests/test-plugin.sh.)
+var root: String = DEFAULT_ROOT
 
 
 ## First line of a file, stripped; "" when it cannot be read. sysfs reports a 4 KiB length for

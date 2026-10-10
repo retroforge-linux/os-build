@@ -94,6 +94,9 @@ fi
 # problem, set ENABLE_GAMESCOPE_WSI=0 (implicit sync, 8/8 clean re-launch) at the cost of the WSI
 # features above. Distinct from the earlier crash ValveSoftware/gamescope#1520 (fixed pre-3.16.17).
 export ENABLE_GAMESCOPE_WSI="${ENABLE_GAMESCOPE_WSI:-1}"
+# The shell's render mode, per board (device-env QFORGE_UI_VIEWPORT_RENDER); the QForge OGUI
+# plugin reads it at startup.
+export QFORGE_UI_VIEWPORT_RENDER="${QFORGE_UI_VIEWPORT_RENDER:-0}"
 
 # Composite rotation is UPSTREAM as of gamescope 3.16.28 (commit 38fb50fc, our PR #2228 merged
 # verbatim); we no longer carry a patch for it, so this needs nothing from the from-source overlay

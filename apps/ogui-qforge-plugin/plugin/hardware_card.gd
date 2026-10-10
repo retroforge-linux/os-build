@@ -29,8 +29,9 @@ var _timer: Timer
 
 ## Load the reader from the plugin's own folder (OGUI mounts the plugin zip at res://plugins/<id>).
 func setup(plugin_base: String, hw_root: String = "") -> void:
-	var script = load(plugin_base.path_join("hardware_info.gd"))
-	info = script.new(hw_root) if hw_root != "" else script.new()
+	info = load(plugin_base.path_join("hardware_info.gd")).new()
+	if hw_root != "":
+		info.root = hw_root
 
 
 func _ready() -> void:

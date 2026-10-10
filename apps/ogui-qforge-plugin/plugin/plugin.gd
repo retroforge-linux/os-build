@@ -50,6 +50,7 @@ func _ready() -> void:
 	_add_emulators_page()
 	_add_game_settings_page()
 	_add_hardware_card()
+	_apply_render_mode()
 
 
 func unload() -> void:
@@ -240,3 +241,15 @@ func _add_hardware_card() -> void:
 	qb.add_child_menu(card, icon, null, "Hardware")
 	_hardware_card = card
 	logger.info("Quick bar > Hardware added")
+
+
+## Render the shell at its design size and let gamescope scale it up, where the board profile asks
+## for it (QFORGE_UI_VIEWPORT_RENDER=1, exported by qforge-session). Godot's canvas_items stretch
+## draws every frame at the full output size; on a GPU that cannot fill that at 60 fps (Adreno 610:
+## 37-39 fps at 1920x1080) viewport stretch at 1280x800 with aspect "expand" gets ~57.
+func _apply_render_mode() -> void:
+	if OS.get_environment("QFORGE_UI_VIEWPORT_RENDER") != "1":
+		return
+	var root := get_tree().root
+	root.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
+	logger.info("UI renders at %s, scaled to %s" % [str(root.content_scale_size), str(root.size)])
