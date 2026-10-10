@@ -1,0 +1,22 @@
+# The device side of the USB network gadget (usr/lib/qforge/usb-gadget). systemd-networkd manages
+# ONLY this interface -- nothing else in the image matches a .network file -- and NetworkManager
+# is told to ignore it. The host plugged into the cable gets 10.42.0.2 by DHCP and nothing else:
+# no router, no DNS, so its own connectivity is untouched. ssh root@10.42.0.1.
+[Match]
+Name=usb0
+
+[Link]
+RequiredForOnline=no
+
+[Network]
+Address=10.42.0.1/30
+DHCPServer=yes
+LinkLocalAddressing=ipv6
+IPv6AcceptRA=no
+LLMNR=no
+MulticastDNS=no
+
+[DHCPServer]
+EmitDNS=no
+EmitRouter=no
+EmitNTP=no

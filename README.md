@@ -106,7 +106,7 @@ Dev vs release is selected by **environment**, not by a make knob, and it must b
 set -a; . ./dev.env; set +a
 ```
 
-`QFORGE_DEV=1` is the developer path: Wi-Fi creds, an SSH key and the dev package set baked in. See
+`QFORGE_DEV=1` is the developer path: Wi-Fi creds, an SSH key and the dev package set baked in. Every build is also reachable over its USB cable as a network adapter (`ssh root@10.42.0.1`, see the runbook). See
 `make help` and the header of the `Makefile` for every knob.
 
 ### Repository layout

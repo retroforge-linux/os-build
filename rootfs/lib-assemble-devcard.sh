@@ -47,9 +47,10 @@ if [ "${QFORGE_DEV:-}" = "1" ]; then
   fi
 
   if [ "$dev_wifi" = "0" ]; then
-    echo "  [DEV] NO Wi-Fi profile — this card will NOT auto-join and is NOT reachable over SSH."
-    echo "  [DEV]   first boot starts offline (the shipping OOBE condition); debug via card-mount."
-    echo "  [DEV]   for a reachable card, set QFORGE_WIFI_SSID + QFORGE_WIFI_PSK in dev.env.local."
+    echo "  [DEV] NO Wi-Fi profile — this card will NOT auto-join, so no SSH over Wi-Fi."
+    echo "  [DEV]   first boot starts offline (the shipping OOBE condition); debug via card-mount, or"
+    echo "  [DEV]   over the USB cable: the device is a network adapter, ssh root@10.42.0.1 (usb-gadget)."
+    echo "  [DEV]   for a Wi-Fi-reachable card, set QFORGE_WIFI_SSID + QFORGE_WIFI_PSK in dev.env.local."
   fi
 fi
 

@@ -1,0 +1,4 @@
+# systemd-networkd runs for the USB network gadget's usb0 only (usr/lib/systemd/network/
+# 10-qforge-usb-gadget.network); no other interface has a .network file, so it touches nothing
+# NetworkManager owns. qforge-usb-gadget.service itself is static: udev starts it when a UDC appears.
+enable systemd-networkd.service

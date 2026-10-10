@@ -1,0 +1,80 @@
+#!/bin/bash
+# qforge usb-gadget — present the device to whatever is on the USB-C cable as a CDC NCM network
+# adapter, so a workstation reaches it with no Wi-Fi at all:
+#
+#     ssh root@10.42.0.1          (dev card: the throwaway key from work/dev-ssh;
+#                                  release: the paired key — sshd policy is unchanged)
+#
+# The device side is usb0 at 10.42.0.1/30; systemd-networkd owns it (10-qforge-usb-gadget.network)
+# and hands the host the one other address, 10.42.0.2, by DHCP. NetworkManager is told to leave
+# usb0 alone (etc/NetworkManager/conf.d/90-qforge-usb-gadget.conf). avahi still answers
+# qforge.local on it. Nothing routes through the link: the DHCP server emits no router and no DNS.
+#
+# Run by udev when a UDC appears (70-qforge-usb-gadget.rules -> qforge-usb-gadget.service): the
+# controller only exposes a UDC once the Type-C controller has switched it to the device role, i.e.
+# when a host is plugged in, and again after every role flip, so this has to be re-runnable and
+# cheap. It is: the gadget is built once in configfs and only re-bound afterwards.
+#
+# NCM rather than RNDIS: macOS and Linux drive it with their class drivers, Windows 10 1703+ too
+# through the WINNCM OS descriptor below. The device-side MAC is fixed so usb0 is always usb0; the
+# host-side MAC is derived from the machine id so two devices on one workstation are two adapters.
+set -euo pipefail
+
+G=/sys/kernel/config/usb_gadget/qforge
+DEV_MAC=02:51:46:6f:72:67     # locally administered; "QForg"
+log() { echo "[qforge-usb-gadget] $*"; }
+
+case "${1:-start}" in
+start)
+  mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+  udc="$(ls /sys/class/udc 2>/dev/null | head -n1 || true)"
+  if [ -z "$udc" ]; then
+    log "no UDC: the USB controller is in host mode (nothing plugged in, or a device on the cable)"
+    exit 0
+  fi
+  if [ ! -d "$G" ]; then
+    mid="$(cat /etc/machine-id 2>/dev/null || cat /run/machine-id 2>/dev/null || echo 0123456789abcdef)"
+    host_mac="$(printf '02:%s:%s:%s:%s:%s' "${mid:0:2}" "${mid:2:2}" "${mid:4:2}" "${mid:6:2}" "${mid:8:2}")"
+    model="$(tr -d '\0' </sys/firmware/devicetree/base/model 2>/dev/null || true)"
+    mkdir -p "$G"
+    echo 0x1d6b > "$G/idVendor"      # Linux Foundation
+    echo 0x0104 > "$G/idProduct"     # Multifunction Composite Gadget
+    echo 0x0200 > "$G/bcdUSB"
+    echo 2      > "$G/bDeviceClass"  # Communications
+    mkdir -p "$G/strings/0x409"
+    echo "${mid:0:12}"      > "$G/strings/0x409/serialnumber"
+    echo "QForge"           > "$G/strings/0x409/manufacturer"
+    echo "${model:-QForge}" > "$G/strings/0x409/product"     # Windows refuses an empty iProduct
+    mkdir -p "$G/configs/c.1/strings/0x409"
+    echo "CDC NCM network"  > "$G/configs/c.1/strings/0x409/configuration"
+    echo 0xC0 > "$G/configs/c.1/bmAttributes"   # self-powered
+    echo 250  > "$G/configs/c.1/MaxPower"       # mA
+    mkdir -p "$G/functions/ncm.usb0"
+    echo "$DEV_MAC"  > "$G/functions/ncm.usb0/dev_addr"
+    echo "$host_mac" > "$G/functions/ncm.usb0/host_addr"
+    echo WINNCM  > "$G/functions/ncm.usb0/os_desc/interface.ncm/compatible_id"
+    echo 1       > "$G/os_desc/use"
+    echo 0xcd    > "$G/os_desc/b_vendor_code"
+    echo MSFT100 > "$G/os_desc/qw_sign"
+    ln -sf "$G/functions/ncm.usb0" "$G/configs/c.1/"
+    ln -sf "$G/configs/c.1" "$G/os_desc/"
+    log "gadget built: usb0 dev $DEV_MAC host $host_mac serial ${mid:0:12}"
+  fi
+  if [ "$(cat "$G/UDC" 2>/dev/null)" = "$udc" ]; then
+    log "already bound to $udc"
+    exit 0
+  fi
+  echo "" > "$G/UDC" 2>/dev/null || true
+  echo "$udc" > "$G/UDC"
+  log "bound to $udc; usb0 is 10.42.0.1, the host gets 10.42.0.2"
+  ;;
+stop)
+  [ -d "$G" ] || exit 0
+  echo "" > "$G/UDC" 2>/dev/null || true
+  rm -f "$G/os_desc/c.1" "$G/configs/c.1/ncm.usb0"
+  rmdir "$G/configs/c.1/strings/0x409" "$G/configs/c.1" "$G/functions/ncm.usb0" "$G/strings/0x409" "$G" 2>/dev/null || true
+  log "gadget removed"
+  ;;
+*)
+  echo "usage: $0 start|stop" >&2; exit 2 ;;
+esac

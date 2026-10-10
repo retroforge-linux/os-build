@@ -187,6 +187,29 @@ That key survives `make distclean`, so your `known_hosts` entry keeps working ac
 dev card built with no Wi-Fi credentials (or `QFORGE_WIFI=0`) has no network and no SSH by
 design — that is the shipping first-boot condition, and the only honest way to exercise it.
 
+### Over the USB cable, with no network at all
+
+Every build presents the device to whatever is on its USB-C cable as a **CDC NCM network adapter**
+(`usr/lib/qforge/usb-gadget`, started by udev the moment the Type-C controller switches the port to
+the device role). The device side is `usb0` at **10.42.0.1/30**; systemd-networkd runs a one-address
+DHCP server on it, so the workstation's new adapter gets 10.42.0.2 with no router and no DNS
+(nothing routes through the link). Then:
+
+```sh
+ssh -i work/dev-ssh/id_ed25519 root@10.42.0.1     # dev card
+ssh root@10.42.0.1                                # release card, after pairing (above)
+```
+
+macOS and Linux need no driver; Windows 10 1703+ binds its NCM class driver through the gadget's
+OS descriptor. `qforge.local` resolves over the link too (avahi answers on it). This is the debug
+path for a device whose display is dead but which booted: the home partition grows and sshd is up
+long before anything is painted.
+
+Only a board whose USB controller is dual-role exposes a UDC: the MANGMI Air X / Air Y Pro, the
+SM8250 boards and the SM8650 AYANEOs declare `dr_mode = "otg"` with a role switch; the SM8550
+trees (AYANEO Pocket family, AYN Odin 2 / Thor) do not yet, so their port stays a host port and
+the gadget never binds there. `journalctl -u qforge-usb-gadget` says which case you are in.
+
 ## Ship an update
 
 ### Build and sign a bundle
