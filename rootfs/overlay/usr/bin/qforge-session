@@ -97,6 +97,8 @@ export ENABLE_GAMESCOPE_WSI="${ENABLE_GAMESCOPE_WSI:-1}"
 # The shell's render mode, per board (device-env QFORGE_UI_VIEWPORT_RENDER); the QForge OGUI
 # plugin reads it at startup.
 export QFORGE_UI_VIEWPORT_RENDER="${QFORGE_UI_VIEWPORT_RENDER:-0}"
+# And the game display's default size, which Settings > Display > Game resolution calls "Default".
+export QFORGE_GAMESCOPE_NESTED_W="${QFORGE_GAMESCOPE_NESTED_W:-}" QFORGE_GAMESCOPE_NESTED_H="${QFORGE_GAMESCOPE_NESTED_H:-}"
 
 # Composite rotation is UPSTREAM as of gamescope 3.16.28 (commit 38fb50fc, our PR #2228 merged
 # verbatim); we no longer carry a patch for it, so this needs nothing from the from-source overlay

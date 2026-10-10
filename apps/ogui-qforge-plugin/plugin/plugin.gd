@@ -30,6 +30,7 @@ var _hardware_card: Control
 ## Input boost (see _input): how long the UI renders every frame after the last input.
 const INPUT_BOOST_SECS := 1.5
 var _boost_timer: Timer
+var _display: RefCounted  # display_settings.gd
 var _watch: RefCounted  # rom_watch.gd
 var _rescan_timer: Timer
 var _rescanning := false
@@ -68,6 +69,8 @@ func unload() -> void:
 			node.queue_free()
 	if is_instance_valid(_game_settings_page):
 		_game_settings_page.detach()
+	if _display:
+		_display.detach()
 	if is_instance_valid(_hardware_card):
 		var qb_card := _hardware_card.find_parent("QuickBarCard*")
 		(qb_card if qb_card else _hardware_card).queue_free()
@@ -247,16 +250,15 @@ func _add_hardware_card() -> void:
 	logger.info("Quick bar > Hardware added")
 
 
-## Render the shell at its design size and let gamescope scale it up, where the board profile asks
-## for it (QFORGE_UI_VIEWPORT_RENDER=1, exported by qforge-session). Godot's canvas_items stretch
-## draws every frame at the full output size; on a GPU that cannot fill that at 60 fps (Adreno 610:
-## 37-39 fps at 1920x1080) viewport stretch at 1280x800 with aspect "expand" gets ~57.
+## Settings > Display: Game resolution and Reduced UI resolution (display_settings.gd). The stored
+## choices (or the board profile's defaults) are applied at startup whether or not the menu exists.
 func _apply_render_mode() -> void:
-	if OS.get_environment("QFORGE_UI_VIEWPORT_RENDER") != "1":
-		return
-	var root := get_tree().root
-	root.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT
-	logger.info("UI renders at %s, scaled to %s" % [str(root.content_scale_size), str(root.size)])
+	_display = load(plugin_base.path_join("display_settings.gd")).new()
+	_display.apply_all(get_tree())
+	if _display.attach():
+		logger.info("Settings > Display: game resolution added")
+	else:
+		logger.warn("OGUI display settings layout not found; resolution settings not shown")
 
 
 ## OpenGamepadUI runs in Godot's low-processor mode, which draws only when something changed --
