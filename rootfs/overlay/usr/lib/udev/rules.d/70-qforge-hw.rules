@@ -1,0 +1,4 @@
+# A battery, charger, backlight, LED, thermal zone or hwmon device that appears after boot (a
+# late-probing driver, a hot-plugged charger) re-resolves /run/qforge/hw. qforge-hw.service is a
+# plain oneshot, so systemd starts it again each time; the script rebuilds the tree in ~50 ms.
+SUBSYSTEM=="power_supply|backlight|leds|thermal|hwmon", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="qforge-hw.service"

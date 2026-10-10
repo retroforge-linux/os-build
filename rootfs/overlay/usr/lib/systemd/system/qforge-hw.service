@@ -1,0 +1,16 @@
+[Unit]
+Description=qforge hardware map (/run/qforge/hw: the board's battery, thermal, fan, LEDs behind standard paths)
+Documentation=file:///usr/lib/qforge/hw-map
+# Links into sysfs, resolved from the board profile; nothing waits on this except the shell, which
+# reads the tree from its Hardware card. Re-run by udev (70-qforge-hw.rules) when a device of one
+# of the mapped classes appears after boot, which is why this is a plain oneshot and not
+# RemainAfterExit: an inactive oneshot can be started again.
+After=local-fs.target
+Before=qforge-session.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/qforge/hw-map
+
+[Install]
+WantedBy=multi-user.target

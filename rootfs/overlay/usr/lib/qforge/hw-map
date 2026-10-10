@@ -1,0 +1,186 @@
+#!/bin/bash
+# qforge hw-map — resolve this board's hardware into ONE standard tree, /run/qforge/hw, so every
+# consumer (the OpenGamepadUI plugin's Hardware card, scripts, daemons) reads the same paths on
+# every board instead of carrying its own list of sysfs names.
+#
+# What a board calls its battery, charger, backlight, thermal zones, fan and LEDs is the kernel's
+# business and differs per devicetree (the Air X battery is power_supply/battery next to a
+# bq256xx-battery decoy that only knows charge_full_design; a Pocket S2 names things differently
+# again). The board profile (/usr/lib/qforge/devices/<id>.conf, via device-env) may pin any of
+# them with QFORGE_HW_*; anything left empty is detected here by the rules below, which are the
+# ones that hold on every board we have seen. Either way the result is the same tree:
+#
+#   /run/qforge/hw/battery        -> /sys/class/power_supply/<battery>     (capacity, status, ...)
+#   /run/qforge/hw/charger        -> /sys/class/power_supply/<charger>     (online, status)
+#   /run/qforge/hw/backlight      -> /sys/class/backlight/<panel>          (brightness, max_brightness)
+#   /run/qforge/hw/thermal/<role> -> /sys/class/thermal/thermal_zoneN      (temp, in millidegrees)
+#                                    roles: cpu gpu battery skin, each only when a zone fits
+#   /run/qforge/hw/thermal/all/<type> -> every zone, by its type name
+#   /run/qforge/hw/fan            -> /sys/class/hwmon/hwmonN               (fan1_input, rpm)
+#   /run/qforge/hw/gpu            -> the GPU's devfreq directory            (cur_freq, min/max_freq)
+#   /run/qforge/hw/cpu            -> /sys/devices/system/cpu                (cpufreq/policy*/...)
+#   /run/qforge/hw/leds/<group>/NN -> /sys/class/leds/<led>, NN = 01.. in natural order
+#   /run/qforge/hw/hw.env         what was resolved, as KEY=value (sourceable; QFORGE_HW_*)
+#
+# A consumer tests for a link and reads through it; a missing link means the board has no such
+# thing. Links point INTO sysfs, so the values are always live and no daemon has to copy them.
+#
+# Runs as root from qforge-hw.service at boot, and again from the udev rule in
+# 70-qforge-hw.rules whenever a power_supply/backlight/leds/thermal/hwmon device appears late.
+# The tree is rebuilt beside the old one and swapped in, so a reader never sees a half tree.
+#
+# TEST SEAMS (tests/test-hw-map.sh): QFORGE_HW_SYS (sysfs root), QFORGE_HW_RUN (the tree to
+# write), QFORGE_HW_DEVICE_ENV (device-env to eval, "" = none).
+set -euo pipefail
+
+SYS=${QFORGE_HW_SYS:-/sys}
+RUN=${QFORGE_HW_RUN:-/run/qforge/hw}
+DEVICE_ENV=${QFORGE_HW_DEVICE_ENV-/usr/lib/qforge/device-env}
+
+# Board profile: device-env prints VAR=value lines quoted with printf %q, so eval is sound.
+if [ -n "$DEVICE_ENV" ] && [ -x "$DEVICE_ENV" ]; then
+    eval "$("$DEVICE_ENV" 2>/dev/null || true)"
+fi
+: "${QFORGE_HW_BATTERY:=}" "${QFORGE_HW_CHARGER:=}" "${QFORGE_HW_BACKLIGHT:=}"
+: "${QFORGE_HW_THERMAL_CPU:=}" "${QFORGE_HW_THERMAL_GPU:=}" "${QFORGE_HW_THERMAL_BATTERY:=}"
+: "${QFORGE_HW_THERMAL_SKIN:=}" "${QFORGE_HW_FAN:=}" "${QFORGE_HW_GPU_DEVFREQ:=}" "${QFORGE_HW_LED_GROUPS:=}"
+: "${QFORGE_DEVICE_ID:=unknown}" "${QFORGE_DEVICE_NAME:=unknown}" "${QFORGE_SOC_CLASS:=}"
+
+tmp="$RUN.tmp.$$"
+rm -rf "$tmp"
+mkdir -p "$tmp/thermal/all" "$tmp/leds"
+trap 'rm -rf "$tmp"' EXIT
+
+attr() { # attr <dir> <file>: the file's first line, "" when unreadable
+    local v; IFS= read -r v < "$1/$2" 2>/dev/null || v=""; printf '%s' "$v"
+}
+link() { # link <name-under-tree> <target-dir>: only when the target exists
+    [ -d "$2" ] || return 1
+    mkdir -p "$(dirname "$tmp/$1")"
+    ln -sfn "$2" "$tmp/$1"
+}
+resolved=()
+note() { resolved+=("$1=$2"); }
+
+# --- battery: the profile's, else the first power_supply of type Battery that reports a capacity
+# (a charger's companion "battery" node that knows only charge_full_design is not a battery) ----
+bat=""
+if [ -n "$QFORGE_HW_BATTERY" ]; then
+    bat="$SYS/class/power_supply/$QFORGE_HW_BATTERY"
+else
+    for p in "$SYS"/class/power_supply/*/; do
+        p=${p%/}; [ -d "$p" ] || continue
+        [ "$(attr "$p" type)" = Battery ] || continue
+        [ -r "$p/capacity" ] || continue
+        bat=$p; break
+    done
+fi
+[ -n "$bat" ] && link battery "$bat" && note QFORGE_HW_BATTERY "$(basename "$bat")" || note QFORGE_HW_BATTERY ""
+
+# --- charger: the profile's, else the first non-Battery supply with `online`, preferring one that
+# also reports a charging `status` (the charger IC over a bare Type-C source) ---------------------
+chg=""
+if [ -n "$QFORGE_HW_CHARGER" ]; then
+    chg="$SYS/class/power_supply/$QFORGE_HW_CHARGER"
+else
+    first=""
+    for p in "$SYS"/class/power_supply/*/; do
+        p=${p%/}; [ -d "$p" ] || continue
+        [ "$(attr "$p" type)" != Battery ] || continue
+        [ -r "$p/online" ] || continue
+        [ -n "$first" ] || first=$p
+        if [ -r "$p/status" ]; then chg=$p; break; fi
+    done
+    [ -n "$chg" ] || chg=$first
+fi
+[ -n "$chg" ] && link charger "$chg" && note QFORGE_HW_CHARGER "$(basename "$chg")" || note QFORGE_HW_CHARGER ""
+
+# --- backlight: the profile's, else the first one --------------------------------------------
+bl=""
+if [ -n "$QFORGE_HW_BACKLIGHT" ]; then
+    bl="$SYS/class/backlight/$QFORGE_HW_BACKLIGHT"
+else
+    for p in "$SYS"/class/backlight/*/; do p=${p%/}; [ -d "$p" ] && { bl=$p; break; }; done
+fi
+[ -n "$bl" ] && link backlight "$bl" && note QFORGE_HW_BACKLIGHT "$(basename "$bl")" || note QFORGE_HW_BACKLIGHT ""
+
+# --- thermal: every zone under all/<type>; the roles by the profile's type name, else the first
+# zone (in zone-number order) whose type matches the role's pattern. (No bash-4 arrays: the test
+# runs this under the host's bash, which on macOS is 3.2.) --------------------------------------
+zones=$(ls -d "$SYS"/class/thermal/thermal_zone* 2>/dev/null | sort -V || true)
+for z in $zones; do
+    [ -d "$z" ] || continue
+    t=$(attr "$z" type); [ -n "$t" ] || continue
+    name=$t; n=2
+    while [ -e "$tmp/thermal/all/$name" ]; do name="$t-$n"; n=$((n+1)); done
+    link "thermal/all/$name" "$z"
+done
+thermal_role() { # thermal_role <role> <profile type> <regex over the type name>
+    local role=$1 want=$2 re=$3 z="" t ty
+    for t in $zones; do
+        [ -d "$t" ] || continue
+        ty=$(attr "$t" type)
+        if [ -n "$want" ]; then [ "$ty" = "$want" ] && { z=$t; break; }
+        elif [[ "$ty" =~ $re ]]; then z=$t; break; fi
+    done
+    local key; key="QFORGE_HW_THERMAL_$(printf '%s' "$role" | tr '[:lower:]' '[:upper:]')"
+    if [ -n "$z" ] && link "thermal/$role" "$z"; then note "$key" "$(attr "$z" type)"
+    else note "$key" ""; fi
+}
+thermal_role cpu     "$QFORGE_HW_THERMAL_CPU"     '^(cpu|soc)'
+thermal_role gpu     "$QFORGE_HW_THERMAL_GPU"     '^gpu'
+thermal_role battery "$QFORGE_HW_THERMAL_BATTERY" '^batt'
+thermal_role skin    "$QFORGE_HW_THERMAL_SKIN"    '(skin|xo-therm|quiet|case)'
+# --- fan: the profile's hwmon name, else the first hwmon with a fan1_input --------------------
+fan=""
+for h in "$SYS"/class/hwmon/hwmon*/; do
+    h=${h%/}; [ -d "$h" ] || continue
+    if [ -n "$QFORGE_HW_FAN" ]; then
+        [ "$(attr "$h" name)" = "$QFORGE_HW_FAN" ] && { fan=$h; break; }
+    elif [ -r "$h/fan1_input" ]; then fan=$h; break; fi
+done
+[ -n "$fan" ] && link fan "$fan" && note QFORGE_HW_FAN "$(attr "$fan" name)" || note QFORGE_HW_FAN ""
+
+# --- gpu devfreq + cpu ------------------------------------------------------------------------
+gpu=""
+if [ -n "$QFORGE_HW_GPU_DEVFREQ" ]; then
+    gpu="$SYS/class/devfreq/$QFORGE_HW_GPU_DEVFREQ"
+else
+    for d in "$SYS"/class/devfreq/*gpu*/; do d=${d%/}; [ -d "$d" ] && { gpu=$d; break; }; done
+fi
+[ -n "$gpu" ] && link gpu "$gpu" && note QFORGE_HW_GPU "$(basename "$gpu")" || note QFORGE_HW_GPU ""
+link cpu "$SYS/devices/system/cpu" || true
+
+# --- LEDs: "group=glob[,glob]..." from the profile; a lone power-led is the default group -----
+groups=$QFORGE_HW_LED_GROUPS
+[ -n "$groups" ] || { [ -d "$SYS/class/leds/power-led" ] && groups="power=power-led"; }
+summary=""
+for spec in $groups; do
+    role=${spec%%=*}; globs=${spec#*=}
+    [ -n "$role" ] && [ "$role" != "$spec" ] || continue
+    i=0
+    for g in ${globs//,/ }; do
+        for l in $(cd "$SYS/class/leds" 2>/dev/null && ls -d $g 2>/dev/null | sort -V); do
+            [ -d "$SYS/class/leds/$l" ] || continue
+            i=$((i+1)); link "leds/$role/$(printf '%02d' "$i")" "$SYS/class/leds/$l"
+        done
+    done
+    [ "$i" -gt 0 ] && summary="$summary${summary:+ }$role=$i"
+done
+note QFORGE_HW_LED_GROUPS "$summary"
+
+{
+    printf '# qforge hw-map: this board\x27s hardware behind the standard paths of /run/qforge/hw\n'
+    printf '%s=%q\n' QFORGE_DEVICE_ID "$QFORGE_DEVICE_ID" QFORGE_DEVICE_NAME "$QFORGE_DEVICE_NAME" QFORGE_SOC_CLASS "$QFORGE_SOC_CLASS"
+    for kv in "${resolved[@]}"; do printf '%s=%q\n' "${kv%%=*}" "${kv#*=}"; done
+    printf '%s=%q\n' QFORGE_HW_RESOLVED_AT "$(date +%s)"
+} > "$tmp/hw.env"
+chmod -R a+rX "$tmp"
+
+mkdir -p "$(dirname "$RUN")"
+old="$RUN.old.$$"
+[ -e "$RUN" ] && mv "$RUN" "$old"
+mv "$tmp" "$RUN"
+rm -rf "$old"
+trap - EXIT
+echo "qforge hw-map: $(grep -v '^#' "$RUN/hw.env" | grep -v '^QFORGE_DEVICE\|RESOLVED_AT\|SOC_CLASS' | tr '\n' ' ')" >&2
