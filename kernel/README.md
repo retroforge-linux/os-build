@@ -39,7 +39,7 @@ Two rules when editing it:
 
 ## Key decision: 4K pages
 `CONFIG_ARM64_4K_PAGES=y` is set deliberately — **userland and emulator JITs assume 4K
-pages.** Standardized across all three SoCs.
+pages.** Standardized across all four SoCs.
 
 ## Status (Phase 1)
 - ✅ Source pinned to the 7.2 series — `kernel/SOURCE.pin` is the authority for the exact
@@ -58,7 +58,7 @@ pages.** Standardized across all three SoCs.
 - ✅ Patches are numbered by **subsystem**, in bands, so apply order reads off the name;
   `kernel/patches/README.md` carries the band map, the convention lint, and the mapping
   from the old ad-hoc numbering.
-- ✅ Boots on real hardware across all three SoC generations; display, input, and Turnip
+- ✅ Boots on real hardware across the three SM8xxx SoC generations (SM6115 added 2026-10-09, not yet booted); display, input, and Turnip
   Vulkan validated (Phase 1 gate cleared) — see `docs/archive/bringup.md`.
 
 ### Per-board HW gate

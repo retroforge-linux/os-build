@@ -1,0 +1,40 @@
+Subject: [PATCH] ASoC: qcom: sm8250: pin S16_LE on the qrb4210-rb2 card
+
+qforge, 2026-10-09. Replaces ROCKNIX SM6115 0037 ("constrain BE format mask to S16_LE only"),
+which forced 16-bit on every stream of every board the sm8250 machine driver serves. That
+collides with 0870 (Nova-Deck; also ROCKNIX SM8250 0100), which deliberately lets non-compressed
+streams negotiate on the SM8250 boards. Both are right for their boards, so the strict rule is
+scoped to the card compatible the MANGMI Air X uses: qcom,qrb4210-rb2-sndcard. On it the ES8326
+headphone codec and AW88261 amps sit on MI2S and take 16-bit only, and adding S16_LE to the mask
+(what 0870 keeps doing for compressed streams) is not enough -- the front end can still pick
+S32_LE -- hence params_set_format().
+
+--- a/sound/soc/qcom/sm8250.c
++++ b/sound/soc/qcom/sm8250.c
+@@ -3,6 +3,7 @@
+ 
+ #include <dt-bindings/sound/qcom,q6afe.h>
+ #include <linux/module.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <sound/soc.h>
+ #include <sound/soc-dapm.h>
+@@ -67,8 +68,16 @@
+ 	rate->min = rate->max = 48000;
+ 	channels->min = channels->max = 2;
+ 
+-	/* Only force S16_LE format for compressed playback */
+-	if (rtd->dai_link->compr_ops) {
++	/*
++	 * Only force S16_LE format for compressed playback -- except on the
++	 * qrb4210-rb2 card (SM6115, MANGMI Air X): its ES8326 and AW88261 MI2S
++	 * back ends take 16-bit only, and merely adding S16_LE to the mask still
++	 * lets the front end negotiate S32_LE, so pin the format outright there.
++	 */
++	if (of_device_is_compatible(rtd->card->dev->of_node,
++				    "qcom,qrb4210-rb2-sndcard")) {
++		params_set_format(params, SNDRV_PCM_FORMAT_S16_LE);
++	} else if (rtd->dai_link->compr_ops) {
+ 		/* This is a compressed stream, set format to S16_LE */
+ 		snd_mask_set_format(fmt, SNDRV_PCM_FORMAT_S16_LE);
+ 	} else {

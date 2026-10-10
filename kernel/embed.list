@@ -43,3 +43,11 @@ qcom/sm8250/a650_zap.mbn
 # No SM8250 tplg line, and that is not an omission: SM8250 audio runs the legacy q6asm/ADM
 # path (SND_SOC_SM8250), which has no AudioReach topology blob to load. Its adsp/cdsp are
 # likewise absent here — QCOM_Q6V5_PAS is =m, so they load from the mounted root.
+
+# --- sm6115: Adreno 610 GPU microcode + zap shader ---
+# The A610 runs the A630 SQE firmware (open, linux-firmware) and has no GMU. Its zap shader is the
+# MANGMI-signed one from ROCKNIX/extra-firmware (firmware/EXTRA_FW.pin; kernel/build.sh resolves
+# that tree too). Shared by the Air X variants and the Air Y; embedded for the same reason as the
+# other SoCs.
+qcom/a630_sqe.fw
+qcom/sm6115/mangmi/a610_zap.mbn

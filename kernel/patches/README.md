@@ -14,8 +14,8 @@ The number says **when a patch applies**, and it is keyed on subsystem.
 
 | Range | Band | Contents |
 |---|---|---|
-| `0000-0099` | core | arch/arm64, syscall ABI, prctl — the FEX-adjacent core changes |
-| `0100-0199` | clk | clk, pmdomain, interconnect |
+| `0000-0099` | core | arch/arm64, syscall ABI, prctl — the FEX-adjacent core changes; cpuidle / irqchip / soc suspend plumbing (`0030`-`0050`, SM6115) |
+| `0100-0199` | clk | clk, pmdomain, interconnect, pinctrl |
 | `0200-0299` | gpu | drm/msm GPU: adreno, GEM, VM_BIND, shrinker |
 | `0300-0399` | dpu | drm/msm DPU: planes, flush, rotation, LUTDMA (+ its binding) |
 | `0400-0479` | dsi | drm/msm DSI: host, PHY, byte clock |
@@ -25,7 +25,7 @@ The number says **when a patch applies**, and it is keyed on subsystem.
 | `0700-0799` | input | touch `0700s`, joystick `0740s`, haptics + force-feedback `0770s` |
 | `0800-0899` | audio | ASoC, qdsp6, codecs |
 | `0900-0999` | power / misc | power-supply `0900s`, hwmon + misc devices `0970s` |
-| `1000-1099` | net / usb / pci / crypto | |
+| `1000-1099` | net / usb / pci / crypto | serial too (`1090`) |
 | `1100-1199` | dts | arm64 `.dtsi` fixes to upstream SoC files — last, after their drivers |
 
 Numbers are spaced by 10 (by 5 where a band is dense) so a new patch slots in without
@@ -118,7 +118,7 @@ never land upstream, which is why provenance is a table and not a number band.
 | `0610` | community | Teguh Sobirin via ROCKNIX `0058`. Never posted. | never |
 | `0620` | mainline | Neil Armstrong v5 `<20260529-topic-sm8650-ayaneo-pocket-s2-sy7758-v5-1-03aacd49747c@linaro.org>` → `110d67699a43` (same driver file) | v7.3 |
 | `0650` | community | Teguh Sobirin via ROCKNIX `0033`. Never posted. | never |
-| `0660` | community | ROCKNIX SM8250 `0061`. Never posted; clean enough to send with a binding hunk. | when upstreamed |
+| `0660` | community | ROCKNIX SM6115 `0013` (2026-10 state): aw200xx vdd supply + power off in suspend. Supersedes the SM8250 `0061` vdd-only version this slot used to carry; serves the Pocket Max, Air X and Air Y. | when upstreamed |
 | `0680` | posted | BigfootACA, in Xilin Wu's Odin 2 v1 02/10 `<20240424-ayn-odin2-initial-v1-2-e0aa05c991fd@gmail.com>`. v2 never sent. **Missing ROCKNIX fix `4609c5017f`** (`set_bit()` on a `u8[3]`: alignment fault + overflow). | never |
 | `0705` | qforge | Also ROCKNIX `0015`. Aaron Kling posted an equivalent (patchwork 14518751); Dmitry Torokhov pushed back. | never |
 | `0710` | community | Teguh Sobirin via ROCKNIX `0053`. The DT property was rejected by Conor Dooley (series 1133142) — the fix belongs in an I2C adapter quirk. | never |
@@ -130,7 +130,30 @@ never land upstream, which is why provenance is a table and not a number band.
 | `0738` | community | Chipone vendor driver via kevinkreiser/chipone_tddi → ROCKNIX. ROCKNIX SM8750 has a ~380-line clean-room replacement (`0061-input-touchscreen-add-chipone-tddi`). | never |
 | `0745` | qforge | Driver by Teguh Sobirin; ROCKNIX SM8550 `0031`. Never posted. | never |
 | `0750` | community | ROCKNIX SM8250 `0008` (Molly Sophia, BigfootACA, Teguh Sobirin). Never posted. | never |
-| `0755` | community | ROCKNIX SM8250 `0060` (sunshineinabox). ROCKNIX has since added Air Y Pro support. | never |
+| `0755` | community | ROCKNIX SM8250 `0060` (sunshineinabox) at its 2026-10 state: Pocket Max + Air Y Pro variants of the MCU joypad. Makefile hunk re-rolled around `0750`. | never |
+| `0580` `0736` `0990` `1175` | community | ROCKNIX SM8250 `0064` `0065` `0066` `0067` (Philippe Simons): MANGMI Air Y Pro panel, Hynitron CST66xx touch, pm8150l LCDB regulator + its dtsi node. Added 2026-10-09. | never |
+| `0030` `0040` `0050` | community | ROCKNIX SM6115 `0017` `0018` `0019` (cpuidle-psci late init, PSCI SYSTEM_SUSPEND fallback driver, MPM wake timer via genpd). Never posted. SM6115 port, 2026-10-09. | never |
+| `0135` | posted | ROCKNIX SM6115 `0010`, Xilin Wu: `clk-rcg2` set_duty_cycle() boundary overflow. | when merged |
+| `0140` `0145` `0150` `0160` | community | ROCKNIX SM6115 `0006` `0007` `0008` `0035` (gcc-sm6115 GP clocks on rcg2_gp_ops, video GDSC HW_CTRL trigger, USB GDSC retention, LPASS LPI pinctrl functions). `0006` is Xilin Wu's sc7280 pattern applied to sm6115. | never |
+| `0387` `0388` | community | ROCKNIX SM6115 `0207` `0211` (sunshineinabox): SmartDMA on the sm6115 catalog, VBIF AXI non-shareable. The rest of ROCKNIX's SM6115 DPU set is already here: `0205`/`0208`/`0210` are `0350`/`0351`/`0352`, `0200`-`0202` are `0385`. | never |
+| `0565` `0566` `0567` | community | ROCKNIX SM6115 `0001` (Philippe Simons), `0060` (Noxwell), `0065` (sunshineinabox): ROCKNIX's own `panel-hx83112a.c` for the Air X MQ66 — created, then given per-panel data with Air X and Retroid Duo Lite variants, then the Air X's staged power sequence. The upstream `panel-himax-hx83112a.c` is a different driver and stays off, as in ROCKNIX's config. | never |
+| `0570` `0575` `0585` | community | ROCKNIX SM6115 `0002` `0003` `0005` (Philippe Simons): MANGMI Air X panels BM5460BB1 / TD4310 and the Air Y's GH7005. At ROCKNIX `next`'s 2026-10-06 state. Never posted. | never |
+| `0685` | community | ROCKNIX SM6115 `0012` (Philippe Simons): pm6125 PWM on the LPG driver + its dtsi node. | never |
+| `0737` `0739` | community | ROCKNIX SM6115 `0011` `0046`: Himax HX83112A SPI touchscreen (Air X MQ66); Hynitron CST3530 in the cstxxx driver (Air Y), behind the Odin2 Mini's `0720`. | never |
+| `0760` | community | ROCKNIX SM6115 `0009` (Philippe Simons): MANGMI Air X serdev MCU joypad. Makefile hunk re-rolled around `0755`. | never |
+| `0625` `0798` | community | ROCKNIX SM6115 `0047` `0020`: pwm_bl brightness-scale (the Air Y's 511-step backlight), pwm-vibra minimum duty cycle. | never |
+| `0841` `0842` `0843` `0861` | community | ROCKNIX SM6115 `0051` `0053` `0054` `0052`: ES8326 sysclk from MCLK / vdd supply / stereo controls; MI2S jack detection in qcom common. | never |
+| `0855` | community | ROCKNIX SM6115 `0080`: let the LPASS rx/tx/va/wsa macros and the SoundWire controller idle -- runtime-PM references in the clock-gate paths, autosuspend after probe, system-sleep handlers that run the runtime paths for a device still active at suspend. Power only, not a boot requirement; the Air X instantiates the rx/tx/va macros (`qcom,sm6115-lpass-*-macro`) and wires the VA macro into `VA_CODEC_DMA_TX_0`. Found by the 2026-10-09 audit after the first port skipped it. | never |
+| `0871` | qforge | Replaces ROCKNIX SM6115 `0037` (strict S16_LE on every stream), scoped to the `qcom,qrb4210-rb2-sndcard` compatible so it coexists with `0870`. | never |
+| `0872` `0873` `0874` | community | ROCKNIX SM6115 `0042` `0044` `0045` (Val Packett; sm8250 machine driver: codec_fmt on all codec DAIs, QUATERNARY MI2S startup, MI2S AFE port clock shutdown). Apply verbatim on `0870`/`0871`. | never |
+| `0896` | posted | ROCKNIX SM6115 `0041`, Val Packett: q6afe clk vote response type mismatch. Applies after `0895`. | when merged |
+| `0925` | community | ROCKNIX SM6115 `0027` (Philippe Simons): CellWise CW2215/2217/2218 gauge. | never |
+| `0945`-`0965` | community | ROCKNIX SM6115 `0028`-`0032` (2026-10 state): bq256xx SGM41515 chip info, init reset + DT limits, OTG VBUS regulator, IINDPM by Type-C precedence (replaced the source-type version), software JEITA. | never |
+| `1015` `1016` `1017` | community | ROCKNIX SM6115 `0021` `0078` `0079`: Wi-Fi/BT addresses from the SoC serial (spycat88); ath10k WCN3990 firmware workarounds (incl. the per-board firmware-name directory the vendor board files live in) and the STA vdev-start deferral. | never |
+| `1020`-`1023` | posted / community | ROCKNIX SM6115 `0023`-`0026`: WCN3950 Bluetooth. `1020` is a squash of Manivannan Sadhasivam's pwrseq `is_fixed` + hci_qca BT_EN detection series (posted); the other three are ROCKNIX's. | `1020` when merged; rest never |
+| `1045` `1051`-`1056` | community | ROCKNIX SM6115 `0022` `0055`-`0059` `0067`: dwc3-qcom VBUS override deferred over suspend; fusb302 TX completion / collision / TX_START / PD 3.0 on the AW35615 / reset on shutdown, tcpm requeue on -EAGAIN. | never |
+| `1090` | community | ROCKNIX SM6115 `0034`: GENI UART IRQ masked over system suspend. | never |
+| `1165` `1170` | posted / community | ROCKNIX SM6115 `0015` `0016`: sm6115.dtsi venus node (posted upstream), MPM wake controller. ROCKNIX dropped its thermal-labels patch on 2026-10-05 and so did we. | `1165` when merged; `1170` never |
 | `0770` | posted | Caleb Connolly v7 `<20221015172915.1436236-3-caleb@connolly.tech>`, stalled since 2022. Fenglin Wu's PMIH driver (v7, 2026-08-28) uses the same file and the generic `qcom,spmi-haptics` compatible. | when David Heidelberg's pmi8998 haptics lands |
 | `0775` | community | spycat88, ROCKNIX SM8250 `0013`. | never |
 | `0780` | community | CAF/CLO downstream `qcom-hv-haptics` via ROCKNIX `1000`. | never |
@@ -271,3 +294,17 @@ trees are byte-identical.
 | `1145-arm64-dts-qcom-add-the-dpu-lutdma-register-set.patch` | dts | `0532-arm64-dts-qcom-add-the-dpu-lutdma-register-set.patch` |
 | `1150-arm64-dts-qcom-sm8450-8550-8650-add-missing-cx-power-domain-to-gcc.patch` | dts | `20260424_neil_armstrong_arm64_dts_qcom_sm8_456_50_add_missing_cx_power_domain_to_gcc.patch` |
 | `1155-arm64-dts-qcom-sm8650-misc-enhancements.patch` | dts | `v2_20260420_neil_armstrong_arm64_qcom_sm8650_misc_enhancements.patch` |
+
+## SM6115 port (2026-10-09)
+
+ROCKNIX's `devices/SM6115/patches/linux` set, at `next`'s 2026-10-06 state (which added the MANGMI
+Air Y and refreshed the Air X), was brought over for the two boards, renumbered into the bands
+above (the table lists each). The SM6125 Retroid Pocket Duo Lite patches in that directory
+(`0060`-`0077`, `0080`) are a different SoC and were not taken. Not brought over:
+`0004` (A610 speed-bin / 1050 MHz overclock — a performance decision for the tuning pass),
+`0013` (aw200xx vdd — `0660` already), `0200`-`0202` and `0205`/`0208`/`0210` (the SDE rotator
+and QSEED work — `0385` and `0350`-`0352` already, both carrying the sm6115 compatible), and
+`0037` (replaced by the scoped `0871`). The whole stack applies with `--fuzz=0` on v7.2.9.
+
+The same day brought the MANGMI Air Y Pro (SM8250) over from ROCKNIX's SM8250 tree: `0580`,
+`0736`, `0990`, `1175`, and `0755` refreshed to the driver revision that knows the board.
