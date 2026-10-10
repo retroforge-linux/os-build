@@ -52,6 +52,41 @@ from a throwaway probe plugin, OGUI forced to redraw continuously, hiding one br
 - Left alone: the cards' and icons' `clip_children` masks are real shape masks (rounded corners);
   replacing them saves ~1.3 ms but squares the cards.
 
+## Latency: from a frame to the panel
+
+Measured 2026-10-10 with gamescope's own trace markers (`chmod 666 /sys/kernel/tracing/trace_marker`
+before the session starts, then `tracing_on=1`): a frame arrives in gamescope ("pushing wait for
+commit N"), its GPU fence signals ("wait fence (end_ctx=N)"), gamescope latches it at its
+vblank-timed wakeup ("flip commit"), and the flip completes at vblank ("page_flip_handler", plus
+the `drm/drm_vblank_event` tracepoint). Note "commit N done" is NOT the fence: gamescope logs it
+only when its main loop next wakes to paint.
+
+| Frame -> on screen (mean / p95) | Mesa pre-rotation off | on (session default) |
+|---|---|---|
+| God of War, 51 fps | 28.3 / 46.1 ms | 22.0 / 29.4 ms |
+| OGUI menu navigation | 36.5 / 50.2 ms | 30.2 / 32.0 ms |
+| OGUI menu, Reduced UI resolution | | 15.5 / 27.1 ms |
+
+- **Pre-rotation is a latency fix, not only a copy move.** With it off, gamescope's rotation
+  copy is submitted at flip time behind the client's GPU work on the A610's single ring and
+  waits for it synchronously: flips slip past vblank (one paint took 46 ms).
+- **OGUI misses the latch by ~2 ms every frame at full resolution.** It starts each frame just
+  after vblank (FIFO), its GPU work is ~14.5 ms (render 11.6 + blit to the swapchain 2.3 + the
+  pre-rotation copy 1.0), and gamescope latches ~2.4 ms before vblank (1.65 ms redzone + its
+  paint time). Every frame waits one more refresh. Reduced UI resolution (9.6 ms of GPU) makes
+  the latch and halves menu latency; at full resolution the render needs ~3 ms less overdraw.
+  Not the cause: swapchain image count (2 or 3), Godot frame queue size, vsync mailbox.
+- **First press after the menu idles: 57-80 ms** from InputPlumber's D-Bus signal to the panel:
+  OGUI's main thread wakes from its 16.7 ms low-processor sleep (avg ~8 ms), needs 11-18 ms of
+  CPU for the frame, then ~20-30 ms of GPU. Pinning CPU and GPU clocks to max saves ~10 ms, GPU
+  runtime-suspend (66 ms autosuspend) is not a factor; neither is worth the power.
+- **ARMSX2 VsyncQueueSize = 1** (seed): one frame of EE run-ahead instead of two, same fps
+  (31.3 vs 31.4 heavy scene; 0 costs 7%). Already presents MAILBOX with vsync off.
+- **Input path:** InputPlumber's evdev source polls every 2.5 ms (~1.3 ms average); its targets
+  are event-driven (the 8 ms target interval is only a fallback tick); it ships prebuilt.
+- **The panel has one mode, 60 Hz**; a game below 60 fps waits ~half a refresh for the latch
+  (8.7 ms mean in God of War).
+
 ## Measured, no change needed
 
 - **Godot renderer for OGUI**: Forward Mobile 17.9 ms/submit (26 fps, CPU 74%), GL compatibility
