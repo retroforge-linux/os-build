@@ -1,0 +1,56 @@
+From: qforge
+Subject: [PATCH] rendervulkan: mappable images on a GPU without cached+coherent memory
+
+A mappable image (screenshots, captures) asks findMemoryType() for a
+HOST_VISIBLE | HOST_COHERENT | HOST_CACHED type and hands whatever comes
+back to vkAllocateMemory unchecked. turnip only exposes that combination
+when the GPU is DMA-coherent; on an Adreno 610 (SM6115) the types are
+DEVICE_LOCAL|HOST_VISIBLE|HOST_COHERENT, DEVICE_LOCAL|HOST_VISIBLE|
+HOST_CACHED and a lazily-allocated one, so the lookup returns -1 and
+turnip indexes its memory-type table with 0xffffffff:
+
+  tu_AllocateMemory (tu_device.cc:3759) <- CVulkanTexture::BInit
+  (rendervulkan.cpp:2744) <- acquire_pooled_texture <-
+  vulkan_acquire_screenshot_texture <- paint_all: SIGSEGV
+
+Every screenshot request (GAMESCOPECTRL_REQUEST_SCREENSHOT, the
+`screenshot` command, Steam's capture) took the whole session down.
+
+When no cached+coherent type exists for a mappable image, fall back to
+HOST_VISIBLE | HOST_COHERENT, which the spec guarantees; the CPU-side
+reads of a screenshot are merely slower. And if no type fits at all, fail
+BInit with an error instead of passing -1 to the driver.
+
+(qforge: HW, MANGMI Air X, 2026-10-10. Two cores: coredumpctl 12346 and
+16505, symbolised against the unstripped build.)
+---
+diff -ruN a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+--- a/src/rendervulkan.cpp	2026-10-10 06:31:28
++++ b/src/rendervulkan.cpp	2026-10-10 06:31:28
+@@ -2672,10 +2672,25 @@
+ 	VkMemoryRequirements memRequirements;
+ 	g_device.vk.GetImageMemoryRequirements(g_device.device(), m_vkImage, &memRequirements);
+ 
++	int32_t nMemoryType = g_device.findMemoryType( properties, memRequirements.memoryTypeBits );
++	if ( nMemoryType < 0 && flags.bMappable == true )
++	{
++		// No host-visible type that is both cached and coherent. turnip on a SoC whose GPU is not
++		// DMA-coherent (e.g. Adreno 610) offers cached-only and coherent-only types; take the
++		// coherent one, which the spec guarantees, and accept slower CPU reads.
++		properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
++		nMemoryType = g_device.findMemoryType( properties, memRequirements.memoryTypeBits );
++	}
++	if ( nMemoryType < 0 )
++	{
++		vk_log.errorf( "no memory type for image: properties 0x%x, type bits 0x%x", properties, memRequirements.memoryTypeBits );
++		return false;
++	}
++
+ 	VkMemoryAllocateInfo allocInfo = {
+ 		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+ 		.allocationSize = memRequirements.size,
+-		.memoryTypeIndex = uint32_t(g_device.findMemoryType(properties, memRequirements.memoryTypeBits)),
++		.memoryTypeIndex = uint32_t( nMemoryType ),
+ 	};
+ 
+ 	m_size = allocInfo.allocationSize;
