@@ -31,6 +31,7 @@ var _hardware_card: Control
 const INPUT_BOOST_SECS := 1.5
 var _boost_timer: Timer
 var _display: RefCounted  # display_settings.gd
+var _overlay: RefCounted  # overlay_hiding.gd
 var _watch: RefCounted  # rom_watch.gd
 var _rescan_timer: Timer
 var _rescanning := false
@@ -55,6 +56,7 @@ func _ready() -> void:
 	_add_game_settings_page()
 	_add_hardware_card()
 	_apply_render_mode()
+	_overlay = load(plugin_base.path_join("overlay_hiding.gd")).new().setup(get_tree())
 	_setup_input_boost()
 
 
@@ -71,6 +73,8 @@ func unload() -> void:
 		_game_settings_page.detach()
 	if _display:
 		_display.detach()
+	if _overlay:
+		_overlay.detach()
 	if is_instance_valid(_hardware_card):
 		var qb_card := _hardware_card.find_parent("QuickBarCard*")
 		(qb_card if qb_card else _hardware_card).queue_free()
@@ -289,6 +293,8 @@ func _set_in_game(in_game: bool) -> void:
 	_set_idle_pacing(in_game)
 	if _display:
 		_display.set_backgrounded(in_game)
+	if _overlay:
+		_overlay.set_in_game(in_game)
 
 
 const IDLE_SLEEP_MENU_USEC := 16666
