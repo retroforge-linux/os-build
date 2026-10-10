@@ -67,6 +67,14 @@ start)
   echo "" > "$G/UDC" 2>/dev/null || true
   echo "$udc" > "$G/UDC"
   log "bound to $udc; usb0 is 10.42.0.1, the host gets 10.42.0.2"
+  # What the port is doing, for a journal read off the card: the Type-C roles the controller
+  # negotiated, and whether a host enumerated us (state "configured") in the next few seconds.
+  for p in /sys/class/typec/port[0-9]; do   # not port0-partner
+    [ -d "$p" ] || continue
+    log "typec $(basename "$p"): data_role=[$(cat "$p/data_role" 2>/dev/null)] power_role=[$(cat "$p/power_role" 2>/dev/null)] power_operation_mode=$(cat "$p/power_operation_mode" 2>/dev/null) partner=$([ -d "$p-partner" ] && echo yes || echo no)"
+  done
+  sleep 4
+  log "udc $udc state after 4 s: $(cat "/sys/class/udc/$udc/state" 2>/dev/null) (speed $(cat "/sys/class/udc/$udc/current_speed" 2>/dev/null)); usb0 carrier=$(cat /sys/class/net/usb0/carrier 2>/dev/null)"
   ;;
 stop)
   [ -d "$G" ] || exit 0
