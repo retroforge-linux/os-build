@@ -21,6 +21,13 @@
 # rows' allow_mismatched_32bit_el0 / fw_devlink.strict / pcie_ports are SoC
 # workarounds and are deliberately absent from the SM8250 rows; so is the
 # 045e:028e USB polling quirk, which only some boards carry.
+# The SM6115 rows (MANGMI Air X, three panel variants of one board — the DTS
+# decides the panel driver, so the user has to pick the right one — and the
+# Air Y) carry what ROCKNIX's SM6115 EXTRA_CMDLINE adds beyond the common
+# line: gpt, ssbd=force-off, kpti=off (Spectre-v4 / Meltdown mitigations off
+# on the A73/A53 cluster, a performance choice ROCKNIX made for this SoC).
+# No irqaffinity: the default IRQ spread is kept until the SM6115 tuning pass
+# measures otherwise (ROCKNIX pins GPU/MDSS to cpu3 from userspace).
 ayaneo-pocket-ace	AYANEO Pocket ACE	qcs8550-ayaneo-pocketace	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
 ayaneo-pocket-dmg	AYANEO Pocket DMG	qcs8550-ayaneo-pocketdmg	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
 ayaneo-pocket-ds	AYANEO Pocket DS	qcs8550-ayaneo-pocketds	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
@@ -35,9 +42,14 @@ ayn-thor	AYN Thor	qcs8550-ayn-thor	allow_mismatched_32bit_el0 fw_devlink.strict=
 ayn-thor-lite	AYN Thor Lite	sm8250-ayn-thorlite
 konkr-pocket-fit	KONKR Pocket FIT	sm8650-konkr-pf	irqaffinity=0-1 usbcore.interrupt_interval_override=045e:028e:2
 mangmi-pocket-max	MANGMI Pocket Max	sm8250-mangmi-pocket-max
+mangmi-air-y-pro	MANGMI Air Y Pro	sm8250-mangmi-air-y-pro
 retroid-pocket-5	Retroid Pocket 5	sm8250-retroidpocket-rp5
 retroid-pocket-6	Retroid Pocket 6	qcs8550-retroidpocket-rp6	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2
 retroid-pocket-flip2	Retroid Pocket Flip2	sm8250-retroidpocket-flip2
 retroid-pocket-mini	Retroid Pocket Mini	sm8250-retroidpocket-rpmini
 retroid-pocket-mini-v2	Retroid Pocket Mini V2	sm8250-retroidpocket-rpminiv2
 retroid-pocket-nova	Retroid Pocket Nova	qcs8550-retroidpocket-rpnova	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2
+mangmi-air-x-mq65	MANGMI Air X MQ65	sm6115-mangmi-air-x-mq65	gpt ssbd=force-off kpti=off
+mangmi-air-x-mq66	MANGMI Air X MQ66	sm6115-mangmi-air-x-mq66	gpt ssbd=force-off kpti=off
+mangmi-air-x-mq66b	MANGMI Air X MQ66B	sm6115-mangmi-air-x-mq66b	gpt ssbd=force-off kpti=off
+mangmi-air-y	MANGMI Air Y	sm6115-mangmi-air-y	gpt ssbd=force-off kpti=off

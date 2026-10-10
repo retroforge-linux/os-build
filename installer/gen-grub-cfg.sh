@@ -118,8 +118,11 @@ set timeout=-1
 
 # rotation MUST be set before terminal_output brings gfxterm up. Patch 0001 reads it exactly once,
 # when the video driver builds the framebuffer render target; setting it afterwards is a silent
-# no-op. 270 is the panel's mounting on every board in the catalog — portrait-native display held
-# landscape, so an unrotated menu paints sideways.
+# no-op. 270 is the panel's mounting on every board in the catalog but the SM6115 MANGMI Air X
+# (GRUB 90 there, as in ROCKNIX) — portrait-native display held landscape, so an unrotated menu
+# paints sideways. The card's stage-2 config overrides this per SAVED board; this medium remembers
+# nothing (see above), so on the Air X the installer menu paints upside-down and there is nothing
+# to key an override on. Live with it: the entries are still readable and the choice is made once.
 set rotation=270
 set menu_color_normal=cyan/blue
 set menu_color_highlight=white/blue

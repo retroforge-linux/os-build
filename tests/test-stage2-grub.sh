@@ -357,6 +357,29 @@ for slot in A B; do
   [ -n "$ln_rot" ] && [ -n "$ln_term" ] && [ "$ln_rot" -lt "$ln_term" ] \
     && ok "grub-$lc.cfg sets rotation before terminal_output gfxterm" \
     || bad "grub-$lc.cfg sets rotation after the terminal is up, where it is a no-op"
+  # Per-SoC overrides: an SM6115 board gets `set rotation=90` keyed on its saved entry, between the
+  # default and terminal_output (boot/gen-grub-cfg.sh soc_grub_rotation); every other board gets none.
+  ln_term=$(grep -n '^terminal_output gfxterm$' "$cfg" | cut -d: -f1)
+  while IFS=$'\t' read -r id name dtb ba; do
+    [ -n "$id" ] && [[ $id != \#* ]] && [ -n "$dtb" ] || continue
+    # Mirror of boot/gen-grub-cfg.sh soc_grub_rotation: SM6115 -> 90, the landscape Air Y Pro -> 0.
+    case "$dtb" in
+      sm6115-mangmi-air-y)     want=0 ;;
+      sm8250-mangmi-air-y-pro) want=0 ;;
+      sm6115-*)                want=90 ;;
+      *)                       want="" ;;
+    esac
+    ln_any=$(grep -n "^if \[ \"\${saved_entry}\" = \"$id\" \]; then set rotation=" "$cfg" | cut -d: -f1)
+    if [ -n "$want" ]; then
+      ln_ov=$(grep -n "^if \[ \"\${saved_entry}\" = \"$id\" \]; then set rotation=$want; fi$" "$cfg" | cut -d: -f1)
+      [ -n "$ln_ov" ] && [ "$ln_ov" -gt "$ln_rot" ] && [ "$ln_ov" -lt "$ln_term" ] \
+        && ok "grub-$lc.cfg rotates the menu $want for $id, before the terminal" \
+        || bad "grub-$lc.cfg has no rotation=$want override for $id between the default and terminal_output"
+    else
+      [ -z "$ln_any" ] && ok "grub-$lc.cfg keeps the default rotation for $id" \
+        || bad "grub-$lc.cfg overrides rotation for $id, which needs the 270 default"
+    fi
+  done < "$BOARDS"
   grep -q '^set menu_color_normal=cyan/blue$' "$cfg" \
     && ok "grub-$lc.cfg sets menu_color_normal" \
     || bad "grub-$lc.cfg does not set menu_color_normal"

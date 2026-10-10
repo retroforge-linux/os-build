@@ -121,6 +121,33 @@ while IFS=$'\t' read -r id name dtb bootargs; do
 done < "$BOARDS"
 [ "${#pids[@]}" -gt 0 ] || { echo "no board rows in ${BOARDS#"$ROOT"/}" >&2; exit 1; }
 
+# --- per-board GRUB rotation --------------------------------------------------------------------
+# 270 is right for every SM8xxx board in the catalog, and it is NOT derivable from the DTS: the
+# panel node's `rotation = <N>` is 90 on some of those boards and 270 on others (Pocket DMG, RP5,
+# Pocket Max, ...) while all of them want GRUB's 270, because the two count different things.
+# The only boards that want something else are ROCKNIX's SM4450 and SM6115 builds, whose device
+# options carry GRUB_ROTATION="90" against the same GRUB rotation patch (every other SoC there
+# leaves it at the default). So the override is keyed on the SoC, by DTB name prefix, mirroring
+# that table — a new SoC that needs one adds a case here, not a catalog column that would drift.
+# Only the odd ones out produce a line, keyed on the SAVED entry (the console block below says why
+# a fresh card cannot be helped).
+soc_grub_rotation() {  # <dtb basename> -> GRUB rotation for a non-default board, or "" for the 270 default
+  case "$1" in
+    # The two landscape-native panels in the fleet (1280x960, no DTS rotation): nothing to rotate.
+    # The Air Y row must come before the sm6115-* one.
+    sm6115-mangmi-air-y)     echo 0 ;;
+    sm8250-mangmi-air-y-pro) echo 0 ;;
+    sm6115-*)                echo 90 ;;
+    *)                       echo "" ;;
+  esac
+}
+ROT_OVERRIDES=""
+for i in "${!pids[@]}"; do
+  r="$(soc_grub_rotation "${pdtbs[$i]}")"
+  [ -n "$r" ] || continue
+  ROT_OVERRIDES+="if [ \"\${saved_entry}\" = \"${pids[$i]}\" ]; then set rotation=$r; fi"$'\n'
+done
+
 emit_entry() {  # <id> <name> <dtb> <board bootargs>
   local eid=$1 ename=$2 edtb=$3 ebootargs=$4
   cat <<EOF
@@ -277,6 +304,11 @@ fi
 # The colours are read by the normal module each time it paints the menu, so their placement does
 # not matter the way rotation's does; they are here to keep the whole console block in one place.
 set rotation=270
+# SoCs whose panels sit the other way round for GRUB (SM6115 — the MANGMI Air X — wants 90, as in
+# ROCKNIX). Only a board that has been chosen once can be honoured here: on a fresh card nothing
+# says which board this is, so the first menu paints upside-down on them; every boot after the
+# choice is right.
+$ROT_OVERRIDES
 set menu_color_normal=cyan/blue
 set menu_color_highlight=white/blue
 
