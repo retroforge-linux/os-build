@@ -278,9 +278,17 @@ func _setup_input_boost() -> void:
 	# in the menus keeps a 60 Hz input response; 50 ms while a game covers the shell, where the
 	# shell only has to notice the Guide button. Input still switches to full rate (above).
 	var in_game_state := load("res://assets/state/states/in_game.tres") as State
-	in_game_state.state_entered.connect(func(_from): _set_idle_pacing(true))
-	in_game_state.state_exited.connect(func(_to): _set_idle_pacing(false))
+	in_game_state.state_entered.connect(func(_from): _set_in_game(true))
+	in_game_state.state_exited.connect(func(_to): _set_in_game(false))
 	_set_idle_pacing(false)
+
+
+## The in-game state is current only while the game has the foreground: opening the quick bar
+## or the in-game menu over it pushes another state (state_exited), closing it re-enters.
+func _set_in_game(in_game: bool) -> void:
+	_set_idle_pacing(in_game)
+	if _display:
+		_display.set_backgrounded(in_game)
 
 
 const IDLE_SLEEP_MENU_USEC := 16666

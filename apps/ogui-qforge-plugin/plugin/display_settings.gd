@@ -8,7 +8,9 @@ extends RefCounted
 ##    (QFORGE_GAMESCOPE_NESTED_W/H, exported by qforge-session), "Native" the output size.
 ##  - Reduced UI resolution: the shell itself renders at its 1280x800 design size and is scaled
 ##    up (Godot viewport stretch) instead of drawing every frame at the output size. Default from
-##    the board profile (QFORGE_UI_VIEWPORT_RENDER).
+##    the board profile (QFORGE_UI_VIEWPORT_RENDER). While a game has the foreground the shell
+##    always renders at the design size (set_backgrounded): it is only an overlay then, and goes
+##    back to the chosen size the moment it is brought up over the game.
 ##
 ## Both are stored in OGUI's settings (section "qforge"); absent = the profile default.
 
@@ -29,6 +31,7 @@ var logger := Log.get_logger("QForgeDisplay", Log.LEVEL.INFO)
 var tree: SceneTree
 var _resolution: Control  # OGUI Dropdown
 var _reduced_ui: Control  # OGUI Toggle
+var _backgrounded := false  # a game has the foreground; the shell is only an overlay
 
 
 ## Apply the stored (or default) choices; call once at startup, menu or not.
@@ -137,9 +140,19 @@ func reduced_ui_enabled() -> bool:
 	return OS.get_environment("QFORGE_UI_VIEWPORT_RENDER") == "1"
 
 
+## A game took the foreground (true) or the shell was brought back up (false).
+func set_backgrounded(on: bool) -> void:
+	_backgrounded = on
+	apply_reduced_ui(reduced_ui_enabled())
+
+
 func apply_reduced_ui(on: bool) -> void:
+	on = on or _backgrounded
 	var root := tree.root
-	root.content_scale_mode = Window.CONTENT_SCALE_MODE_VIEWPORT if on else Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	var mode := Window.CONTENT_SCALE_MODE_VIEWPORT if on else Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+	if root.content_scale_mode == mode:
+		return
+	root.content_scale_mode = mode
 	logger.info("UI renders at %s" % (str(root.content_scale_size) + ", scaled to " + str(root.size) if on else "the output size"))
 
 
