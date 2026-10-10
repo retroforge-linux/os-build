@@ -79,6 +79,7 @@ vars=(
     QFORGE_HW_FAN
     QFORGE_HW_GPU_DEVFREQ
     QFORGE_HW_LED_GROUPS
+    QFORGE_CPU_SCHEDULERS
 )
 
 for var in "${vars[@]}"; do

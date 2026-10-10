@@ -133,6 +133,55 @@ o.set_cpu_scheduler("lavd")
 check("re-choosing the same scheduler is a no-op", o.calls, ["start"])
 
 # ----------------------------------------------------------------------------------- report ---
+# ---------------------------------------------------------- board allow-list (device-env) ---
+# The Air X profile narrows the choice to the stock scheduler (QFORGE_CPU_SCHEDULERS=none): scx_lavd
+# measured harmful there. The list comes from device-env; lavd must then be neither offered nor
+# settable, and a persisted lavd must not be restored.
+import pathlib, tempfile
+tmpd = pathlib.Path(tempfile.mkdtemp())
+fake_env = tmpd / "device-env"
+def board(value):
+    fake_env.write_text("#!/bin/sh\necho QFORGE_DEVICE_ID=x\necho QFORGE_CPU_SCHEDULERS=%s\n" % value)
+    fake_env.chmod(0o755)
+    pd.DEVICE_ENV = fake_env
+    return pd.board_cpu_schedulers()
+check("board list: 'none' parses to {none}", board("none"), {"none"})
+check("board list: empty means every scheduler", board("''"), None)
+check("board list: unreadable device-env means every scheduler",
+      (setattr(pd, "DEVICE_ENV", tmpd / "missing") or pd.board_cpu_schedulers()), None)
+real_sysfs, real_bin = pd.SCX_SYSFS, pd.SCX_BINARY
+pd.SCX_SYSFS, pd.SCX_BINARY = tmpd, fake_env      # both exist: sched_ext "available"
+narrow = pd.QforgePower.__new__(pd.QforgePower)
+narrow.board_schedulers = {"none"}
+check("a board allowing only none offers only none", narrow.available_cpu_schedulers(), ["none"])
+wide = pd.QforgePower.__new__(pd.QforgePower)
+wide.board_schedulers = None
+check("a board with no list offers both", wide.available_cpu_schedulers(), ["none", "lavd"])
+narrow.cpu_scheduler, narrow.scheduler_live = "none", "none"
+try:
+    narrow.set_cpu_scheduler("lavd"); got = "accepted"
+except ValueError:
+    got = "refused"
+check("lavd is refused where the board does not allow it", got, "refused")
+narrow.cpu_scheduler = "lavd"            # persisted from an older image
+narrow.restore_cpu_scheduler()
+check("a persisted lavd is not restored on such a board", (narrow.cpu_scheduler, narrow.scheduler_live), ("none", "none"))
+pd.SCX_SYSFS, pd.SCX_BINARY = real_sysfs, real_bin
+
+# --------------------------------------------------------------- EAS follows the governor ---
+# schedutil+EAS packed game threads onto the A53s (95% missed frames on the Air X), so powerd
+# writes sched_energy_aware=0 after every governor change unless [cpu] energy_aware=on.
+eas = tmpd / "sched_energy_aware"
+pd.EAS_SYSCTL = eas
+gov = pd.QforgePower.__new__(pd.QforgePower)
+gov.cpu_policies, gov.cpu_governor = [], "schedutil"
+eas.write_text("1\n"); gov.cpu_energy_aware = False; gov.apply_cpu_governor()
+check("EAS is switched off after a governor change by default", eas.read_text().strip(), "0")
+eas.write_text("0\n"); gov.cpu_energy_aware = True; gov.apply_cpu_governor()
+check("[cpu] energy_aware=on leaves EAS on", eas.read_text().strip(), "1")
+eas.unlink(); gov.cpu_energy_aware = False; gov.apply_cpu_governor()
+check("a kernel without the EAS sysctl is left alone", eas.exists(), False)
+
 failed = [n for s, n in results if s != "PASS"]
 for status, name in results:
     print(f"{status} {name}")

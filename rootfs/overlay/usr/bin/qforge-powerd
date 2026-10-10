@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import configparser
 import os
+import shlex
 import shutil
 import signal
 import socket
@@ -51,6 +52,17 @@ CUSTOM_CURVE = "custom"
 # Measured the better choice for frame-time consistency on these SoCs (see kernel/kernel.config);
 # overridable with [cpu] governor= in the config.
 DEFAULT_CPU_GOVERNOR = "ondemand"
+# Energy-aware scheduling. The kernel turns EAS on by itself whenever schedutil drives an
+# asymmetric (big.LITTLE) CPU with an energy model, and EAS packs a game's threads onto the little
+# cores: on the MANGMI Air X (SM6115, A53 + A73) a 60 fps frame loop with ~6 ms of work per frame
+# missed 95% of its deadlines on schedutil+EAS (work ran at 36 ms, on the A53s), against 1% on
+# ondemand and 1-2% on schedutil with EAS off (HW-measured 2026-10-10). So powerd writes
+# kernel.sched_energy_aware=0 after every governor change unless [cpu] energy_aware=on.
+EAS_SYSCTL = Path(os.environ.get("QFORGE_POWERD_EAS_SYSCTL", "/proc/sys/kernel/sched_energy_aware"))
+# The board profile can narrow the scheduler choice (QFORGE_CPU_SCHEDULERS, space-separated, from
+# device-env). The Air X profile allows only "none": scx_lavd placed one of two game threads on
+# the A53s and it missed 76-86% of its frames whatever the governor.
+DEVICE_ENV = Path(os.environ.get("QFORGE_POWERD_DEVICE_ENV", "/usr/lib/qforge/device-env"))
 FAN_SAFE_PWM = 128
 # Fallback only: the factory config carries curve_stops. It matters when an /etc file from an
 # older image is layered over a newer /usr, which is exactly the case an OTA produces.
@@ -212,6 +224,22 @@ def sd_notify(message):
         pass
 
 
+def board_cpu_schedulers():
+    """The board profile's QFORGE_CPU_SCHEDULERS (device-env), as a set; None when the profile
+    sets none (every scheduler allowed) or device-env cannot be run."""
+    try:
+        out = subprocess.run([str(DEVICE_ENV)], check=False, text=True, timeout=10,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for line in out.splitlines():
+        if line.startswith("QFORGE_CPU_SCHEDULERS="):
+            words = shlex.split(line.split("=", 1)[1])
+            value = " ".join(words).split()
+            return set(value) if value else None
+    return None
+
+
 def ints_from_file(path):
     return sorted(int(v) for v in read_text(path).split() if v.isdigit())
 
@@ -350,6 +378,8 @@ class QforgePower:
         self.fan_config = {}
         self.suspend_config = {}
         self.cpu_governor = DEFAULT_CPU_GOVERNOR
+        self.cpu_energy_aware = False
+        self.board_schedulers = board_cpu_schedulers()
         # cpu_scheduler is the PERSISTED CHOICE; scheduler_live is what is actually loaded right
         # now. They differ only when the kernel ejects lavd underneath us or a start is still in
         # flight -- see reconcile_scheduler_live().
@@ -401,6 +431,9 @@ class QforgePower:
         cpu_governor = parser.get("cpu", "governor", fallback=DEFAULT_CPU_GOVERNOR).strip()
         if not cpu_governor:
             raise ValueError("empty [cpu] governor")
+        energy_aware = parser.get("cpu", "energy_aware", fallback="off").strip().lower()
+        if energy_aware not in ("on", "off"):
+            raise ValueError(f"[cpu] energy_aware must be on or off, not {energy_aware!r}")
         for section in parser.sections():
             if not section.startswith("fan_curve."):
                 continue
@@ -461,7 +494,7 @@ class QforgePower:
             "fan_safe_pwm": fan_safe_pwm,
         }
         return (cpu_governor, fan_curves, curve_name, curve_points, fan_config,
-                suspend_config)
+                suspend_config, energy_aware == "on")
 
     def load_config(self):
         try:
@@ -476,6 +509,7 @@ class QforgePower:
             self.fan_curve_points,
             self.fan_config,
             self.suspend_config,
+            self.cpu_energy_aware,
         ) = parsed
 
     def discover_gpu(self):
@@ -529,6 +563,9 @@ class QforgePower:
         # The manager hides its CpuScheduler1 interface entirely when this is the answer.
         if not (SCX_SYSFS.is_dir() and SCX_BINARY.exists()):
             return ["none"]
+        allowed = getattr(self, "board_schedulers", None)
+        if allowed:
+            return [s for s in CPU_SCHEDULERS if s == "none" or s in allowed]
         return list(CPU_SCHEDULERS)
 
     def systemctl(self, *args, timeout=SCX_TIMEOUT):
@@ -741,6 +778,18 @@ class QforgePower:
         them, and the suspend clamp restores whatever was in force."""
         for policy in self.cpu_policies:
             self.write_governor(policy, self.cpu_governor)
+        self.apply_energy_aware()
+
+    def apply_energy_aware(self):
+        """After every governor change: the kernel re-enables EAS whenever schedutil comes up on
+        an asymmetric CPU, so the sysctl has to follow the governor, not just boot. The file only
+        exists on kernels that can do EAS, and refusing a write (no energy model, a governor EAS
+        does not run with) is fine: then EAS is off anyway."""
+        if not EAS_SYSCTL.exists():
+            return
+        want = "1" if getattr(self, "cpu_energy_aware", False) else "0"
+        if read_text(EAS_SYSCTL) != want and try_write(EAS_SYSCTL, want):
+            print(f"qforge-powerd: sched_energy_aware={want}", file=sys.stderr)
 
     def apply_boot_cpu_governor(self):
         """The boot governor, once per boot. The marker is written even when a policy refused:
