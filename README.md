@@ -52,6 +52,11 @@ simply does nothing. QForge runs from the card and does not touch your Android i
 | Retroid Pocket 6 | SM8550 | `retroid-pocket-6` |
 | Retroid Pocket Mini | SM8250 | `retroid-pocket-mini` |
 | Retroid Pocket Mini V2 | SM8250 | `retroid-pocket-mini-v2` |
+| MANGMI Air Y Pro | SM8250 | `mangmi-air-y-pro` |
+| MANGMI Air X MQ65 | SM6115 | `mangmi-air-x-mq65` |
+| MANGMI Air X MQ66 | SM6115 | `mangmi-air-x-mq66` |
+| MANGMI Air X MQ66B | SM6115 | `mangmi-air-x-mq66b` |
+| MANGMI Air Y | SM6115 | `mangmi-air-y` |
 
 <!-- END AUTO-GENERATED -->
 
@@ -62,6 +67,10 @@ layer supports, not a claim about QForge builds.
 > **SM8250 boards have no sensor DSP.** The `slpi.mbn` firmware for that SoC is published in no
 > open source, so every Snapdragon 865 board is without its accelerometer — no auto-rotation.
 
+> **SM6115 (MANGMI Air X, Air Y) and the MANGMI Air Y Pro are ports in progress** — brought over from
+> ROCKNIX's trees on 2026-10-09 and not yet booted on QForge. Its Steam story is also different: Valve's arm64 client
+> builds after 2026-04-15 need ARMv8.1 LSE atomics, which the Air X's Cortex-A73/A53 cores lack.
+
 One image serves every device: the running system identifies the board and configures itself.
 
 ## For developers
@@ -69,7 +78,7 @@ One image serves every device: the running system identifies the board and confi
 ### What it is
 
 An immutable, A/B-updatable aarch64 Linux distribution built on SteamOS 3 "Holo" packages, on
-Qualcomm mobile silicon (**SM8250 / SM8550 / SM8650**). The root is read-only, bootstrapped from
+Qualcomm mobile silicon (**SM6115 / SM8250 / SM8550 / SM8650**). The root is read-only, bootstrapped from
 packages into a sealed Btrfs image; updates are RAUC bundles installed to the inactive slot behind a
 custom `qforge-bootctl` bootloader backend. No Steam client, no x86 emulation, no Android container.
 

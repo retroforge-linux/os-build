@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+#
+# MANGMI Air Y Pro SPI MCU joypad -- `mangmi,air-y-pro-joypad`, kernel/patches/0755 (the Air Y Pro
+# variant of the Pocket Max driver). 50-mangmi_air_y_pro.yaml is the device config that references
+# it. Claims only what the default translation gets wrong or cannot see (see
+# sm8250-pocket_max_mcu.yaml for the argument); ROCKNIX's map for this pad restates the sticks,
+# bumpers, hat D-pad and stick clicks, which the default already produces, and those rows are gone.
+#
+#   KEY_BACK / BTN_MODE   The `...` button -> Guide and the home button -> QuickAccess, the same
+#                         pairing as the Pocket Max, for the same MCU family and the same two
+#                         GPIO keys (the driver's mcu_gpio_btns table). Not yet pressed on this
+#                         board; if the Air Y Pro's labels argue otherwise, swap them here, not in
+#                         the driver.
+#   Face buttons          The driver's Air Y Pro keymap reports Nintendo labels (the south
+#                         button is BTN_EAST, east is BTN_SOUTH, north is BTN_WEST, west is
+#                         BTN_NORTH); the four rows put each code back on its position, exactly
+#                         as ROCKNIX's map does.
+#   L2 / R2               Digital on this board (BTN_TL2 / BTN_TR2 key events, no ADC channel),
+#                         offered as full-scale triggers so games see the same control as on the
+#                         Pocket Max's analog pair. Row shape taken from ROCKNIX's map.
+version: 2
+kind: CapabilityMap
+name: MANGMI Air Y Pro MCU joypad
+id: sm8250_air_y_pro_mcu
+
+mapping:
+    - name: Guide
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: KEY_BACK
+                value_type: button
+      target_event:
+          gamepad:
+              button: Guide
+    - name: QuickAccess
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_MODE
+                value_type: button
+      target_event:
+          gamepad:
+              button: QuickAccess
+    - name: South Button
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_EAST
+                value_type: button
+      target_event:
+          gamepad:
+              button: South
+    - name: East Button
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_SOUTH
+                value_type: button
+      target_event:
+          gamepad:
+              button: East
+    - name: North Button
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_WEST
+                value_type: button
+      target_event:
+          gamepad:
+              button: North
+    - name: West Button
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_NORTH
+                value_type: button
+      target_event:
+          gamepad:
+              button: West
+    - name: Right Trigger
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_TR2
+                value_type: trigger
+      target_event:
+          gamepad:
+              trigger:
+                  name: RightTrigger
+    - name: Left Trigger
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_TL2
+                value_type: trigger
+      target_event:
+          gamepad:
+              trigger:
+                  name: LeftTrigger

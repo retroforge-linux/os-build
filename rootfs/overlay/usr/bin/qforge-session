@@ -29,8 +29,15 @@ CONF=/etc/qforge/session.conf
 # to a generic landscape 1920x1080.
 if [ -z "${QFORGE_GAMESCOPE_W:-}" ] || [ -z "${QFORGE_GAMESCOPE_H:-}" ]; then
   if [ -n "${QFORGE_PANEL_NATIVE_WIDTH:-}" ] && [ -n "${QFORGE_PANEL_NATIVE_HEIGHT:-}" ]; then
-    QFORGE_GAMESCOPE_W=$QFORGE_PANEL_NATIVE_HEIGHT   # swap portrait native -> landscape logical
-    QFORGE_GAMESCOPE_H=$QFORGE_PANEL_NATIVE_WIDTH
+    if [ "${QFORGE_PANEL_ORIENTATION:-portrait}" = landscape ]; then
+      # A landscape-native panel (MANGMI Air Y Pro): the native mode IS the logical canvas, and
+      # with no connector orientation to honour gamescope rotates nothing.
+      QFORGE_GAMESCOPE_W=$QFORGE_PANEL_NATIVE_WIDTH
+      QFORGE_GAMESCOPE_H=$QFORGE_PANEL_NATIVE_HEIGHT
+    else
+      QFORGE_GAMESCOPE_W=$QFORGE_PANEL_NATIVE_HEIGHT   # swap portrait native -> landscape logical
+      QFORGE_GAMESCOPE_H=$QFORGE_PANEL_NATIVE_WIDTH
+    fi
   else
     QFORGE_GAMESCOPE_W=1920; QFORGE_GAMESCOPE_H=1080
   fi

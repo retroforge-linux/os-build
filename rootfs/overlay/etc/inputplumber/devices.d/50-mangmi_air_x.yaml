@@ -1,0 +1,58 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+#
+# MANGMI Air X MQ65 / MQ66 / MQ66B (sm6115-mangmi-air-x-*.dts). The pad is a serdev MCU on its own
+# driver -- `JOYSTICK_MANGMI`, kernel/patches/0760, ported from ROCKNIX's SM6115 tree -- that
+# nothing upstream describes, so the capability map is ours
+# (capability_maps.d/sm6115-air_x_mcu.yaml, id sm6115_air_x_mcu). Only the shape of this file
+# follows upstream's ARM configs; 50-mangmi_pocket_max.yaml carries the fuller argument for the
+# conventions below (model match, file name, xbox-elite target, no keyboard target).
+#
+# THE MATCH IS ON DEVICETREE `model`. The three variants differ only in panel and touchscreen, so
+# one config lists all three model strings rather than shipping three copies.
+#
+# ROCKNIX runs this pad as a ds5 + keyboard pair with an empty match list. Here it is an
+# xbox-elite like every other board we ship, so the M1/M2 back buttons (BTN_C/BTN_Z in the
+# driver, mapped to the paddles) survive the target, and nothing in the composite produces a
+# keyboard capability.
+version: 1
+kind: CompositeDevice
+name: MANGMI Air X
+
+maximum_sources: 0
+
+options:
+    auto_manage: true
+
+matches:
+    - udev:
+          sys_path: /sys/firmware/devicetree/base
+          attributes:
+              - name: model
+                value: MANGMI Air X MQ65
+    - udev:
+          sys_path: /sys/firmware/devicetree/base
+          attributes:
+              - name: model
+                value: MANGMI Air X MQ66
+    - udev:
+          sys_path: /sys/firmware/devicetree/base
+          attributes:
+              - name: model
+                value: MANGMI Air X MQ66B
+
+# The MCU joypad plus the board's pwm-vibrator, so rumble routes through the same composite
+# device as the buttons.
+source_devices:
+    - group: gamepad
+      capability_map_id: sm6115_air_x_mcu
+      evdev:
+          name: MANGMI Air X Joypad
+          phys_path: mangmi-air-x/input0
+          handler: event*
+    - group: gamepad
+      evdev:
+          name: pwm-vibrator
+          handler: event*
+
+target_devices:
+    - xbox-elite

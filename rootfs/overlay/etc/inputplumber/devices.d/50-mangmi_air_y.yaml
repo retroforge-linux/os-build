@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/composite_device_v1.json
+#
+# MANGMI Air Y (sm6115-mangmi-air-y.dts). The Air X's serdev MCU joypad -- `JOYSTICK_MANGMI`,
+# kernel/patches/0760, which carries both boards as variants -- with digital L2/R2 and no M1/M2.
+# Nothing upstream describes it, so the capability map is ours (capability_maps.d/
+# sm6115-air_y_mcu.yaml, id sm6115_air_y_mcu). Conventions as in 50-mangmi_air_x.yaml and
+# 50-mangmi_pocket_max.yaml: model match, upstream's file-name style, xbox-elite target, no
+# keyboard target (ROCKNIX runs it as ds5 + keyboard).
+version: 1
+kind: CompositeDevice
+name: MANGMI Air Y
+
+maximum_sources: 0
+
+options:
+    auto_manage: true
+
+matches:
+    - udev:
+          sys_path: /sys/firmware/devicetree/base
+          attributes:
+              - name: model
+                value: MANGMI Air Y
+
+source_devices:
+    - group: gamepad
+      capability_map_id: sm6115_air_y_mcu
+      evdev:
+          name: MANGMI Air Y Joypad
+          phys_path: mangmi-air-y/input0
+          handler: event*
+    - group: gamepad
+      evdev:
+          name: pwm-vibrator
+          handler: event*
+
+target_devices:
+    - xbox-elite

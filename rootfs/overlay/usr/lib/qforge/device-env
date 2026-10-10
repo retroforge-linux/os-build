@@ -37,6 +37,11 @@ case "$model" in
     "AYN Thor")                  profile=ayn-thor ;;
     "AYN Thor Lite")             profile=ayn-thor-lite ;;
     "KONKR Pocket FIT")          profile=konkr-pocket-fit ;;
+    "MANGMI Air X MQ65")         profile=mangmi-air-x-mq65 ;;
+    "MANGMI Air X MQ66")         profile=mangmi-air-x-mq66 ;;
+    "MANGMI Air X MQ66B")        profile=mangmi-air-x-mq66b ;;
+    "MANGMI Air Y")              profile=mangmi-air-y ;;
+    "MANGMI Air Y Pro")          profile=mangmi-air-y-pro ;;
     "MANGMI Pocket Max")         profile=mangmi-pocket-max ;;
     "Retroid Pocket 5")          profile=retroid-pocket-5 ;;
     "Retroid Pocket 6")          profile=retroid-pocket-6 ;;
@@ -59,6 +64,7 @@ vars=(
     QFORGE_SUSPEND_MODE
     QFORGE_PRIMARY_CONNECTOR
     QFORGE_PANEL_TYPE
+    QFORGE_PANEL_ORIENTATION
     QFORGE_PANEL_NATIVE_WIDTH
     QFORGE_PANEL_NATIVE_HEIGHT
     QFORGE_PANEL_REFRESH_RATES

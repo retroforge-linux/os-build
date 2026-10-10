@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/capability_map_v2.json
+#
+# MANGMI Air X serdev MCU joypad -- `JOYSTICK_MANGMI`, kernel/patches/0760. Nothing upstream
+# describes this part, so this map is ours; 50-mangmi_air_x.yaml is the device config that
+# references it.
+#
+# A CAPABILITY MAP CLAIMS ONLY WHAT THE DEFAULT TRANSLATION GETS WRONG OR CANNOT SEE (see
+# sm8250-pocket_max_mcu.yaml for the full argument). ROCKNIX's map for this pad (devices/SM6115/
+# filesystem/usr/share/inputplumber/capability_maps/mangmi_airx.yaml) restates twenty-one rows the
+# default translation already produces -- Guide, Start/Select, bumpers, triggers, sticks, stick
+# clicks, the hat D-pad. Those are gone. What remains is the two things the default cannot know:
+#
+#   Face buttons     The driver reports Nintendo labels: the button in the SOUTH position is
+#                    BTN_EAST (BTN_B), east is BTN_SOUTH (BTN_A), north is BTN_WEST (BTN_Y), west
+#                    is BTN_NORTH (BTN_X). The four rows below put each code back on its physical
+#                    position, exactly as ROCKNIX's map does.
+#
+# No paddle rows: ROCKNIX's map still claims BTN_C / BTN_Z for M1/M2, but the driver revision we
+# carry (ROCKNIX 0009 at its 2026-10-06 state, kernel/patches/0760) never emits those codes -- its
+# Air X key set is A/B/X/Y, TL/TR, THUMBL/THUMBR, SELECT/START/MODE and BTN_BACK, plus the analog
+# triggers on ABS_Z/ABS_RZ, all of which the default translation already handles. Which physical
+# button BTN_BACK is on this board is unknown until it is pressed; map it here once that is known.
+version: 2
+kind: CapabilityMap
+name: MANGMI Air X MCU joypad
+id: sm6115_air_x_mcu
+
+mapping:
+    - name: South Button
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_EAST
+                value_type: button
+      target_event:
+          gamepad:
+              button: South
+    - name: East Button
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_SOUTH
+                value_type: button
+      target_event:
+          gamepad:
+              button: East
+    - name: North Button
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_WEST
+                value_type: button
+      target_event:
+          gamepad:
+              button: North
+    - name: West Button
+      source_events:
+          - evdev:
+                event_type: KEY
+                event_code: BTN_NORTH
+                value_type: button
+      target_event:
+          gamepad:
+              button: West
