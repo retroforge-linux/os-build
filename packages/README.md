@@ -65,44 +65,58 @@ explicit file list — so it is an index, not an input.
 ## CPU baseline (`-march`) for from-source packages
 
 The base `makepkg.conf` ships `CFLAGS="-O2 -pipe -fno-plt -fexceptions …"` with **no `-march`**, so
-everything built from source targets the stock `armv8-a` baseline. `mesa` opts out of that, in its
-own `PKGBUILD`:
+everything built from source targets the stock `armv8-a` baseline. `mesa` states the floor
+explicitly in its own `PKGBUILD` rather than inheriting it, so the contract is visible where the
+bytes are made:
 
 ```
--march=armv8.2-a+fp16+dotprod       # packages/mesa
+-march=armv8-a+crc -moutline-atomics       # packages/mesa — the Cortex-A73/A53 level, see below
 ```
 
 **The floor is set by the OLDEST SoC the image must serve, not the newest.** The overlay is built
 once per architecture and the image is unified across every board, so one built byte has to run on
-all of them. SM8550 (Cortex-X3/A715) and
-SM8650 (X4/A720) are ARMv9-A and would tolerate far more, but **SM8250 (Cortex-A77/A55, ARMv8.2-A)**
-is a planned target and it is what the floor is chosen against. Raising the floor above what the
-oldest board supports does not fail at build time — it produces packages that SIGILL on that device,
-after the pipeline has published them.
+all of them. Raising the floor above what the oldest board supports does not fail at build time — it
+produces packages that SIGILL on that device, after the pipeline has published them. That stopped
+being hypothetical on the first MANGMI Air X boot.
 
-**Why `i8mm` is deliberately absent — VERIFIED, not assumed.** `FEAT_I8MM` is optional from
-ARMv8.2-A and only *mandatory* from ARMv8.6-A, so "v8.2 core" alone does not settle it; it has to be
-checked per core. Neither of SM8250's cores implements it, per the per-core tables in the two
-toolchains that could decide our codegen (mesa builds with gcc; LLVM is the other one in use):
+**The oldest board is now SM6115 (Cortex-A73 + A53, ARMv8.0-A).** Until that port SM8250
+(Cortex-A77/A55, ARMv8.2-A) was the floor, and mesa raised itself to
+`-march=armv8.2-a+fp16+dotprod` — the exact level of those cores, verified per core in the GCC and
+LLVM tables, for inline LSE atomics plus fp16/dotprod in the format-conversion paths (`armv8.2-a`
+implies `armv8.1-a`, i.e. `CAS`/`LDADD` emitted inline instead of `ldxr/stxr` loops; `i8mm`, `bf16`
+and SVE were checked absent on the A55 and left out). The A73 and A53 have none of it:
 
-| core | LLVM `AArch64Processors.td` | GCC `aarch64-cores.def` |
-| --- | --- | --- |
-| Cortex-A77 | `HasV8_2aOps, …FeatureFullFP16, FeatureDotProd, …FeatureLSE` | `V8_2A, (F16, RCPC, DOTPROD, SSBS)` |
-| Cortex-A55 | `HasV8_2aOps, …FeatureFullFP16, FeatureDotProd, …FeatureLSE` | `V8_2A, (F16, RCPC, DOTPROD)` |
+| core | GCC `aarch64-cores.def` | LSE | F16 | DOTPROD |
+| --- | --- | --- | --- | --- |
+| Cortex-A73 / A53 (SM6115) | `V8A, (CRC)` | no | no | no |
+| Cortex-A77 / A55 (SM8250) | `V8_2A, (F16, RCPC, DOTPROD[, SSBS])` | yes | yes | yes |
+| Cortex-X3/A715 (SM8550), X4/A720 (SM8650) | ARMv9-A | yes | yes | yes |
 
-`FeatureMatMulInt8`/`I8MM` appears in neither. `bf16` (also v8.6-mandatory) and SVE are out the same
-way. `armv8.2-a` is the *exact* architecture level of both cores rather than a conservative guess,
-which is also what confirms the LSE claim below.
+The Air X's first boot (2026-10-10) died in turnip on a `casal` during Vulkan device enumeration —
+gamescope SIGILL every 20 s, the panel showing fbcon's cursor — with 3279 unguarded LSE instructions
+in gallium + EGL and 345 in turnip, while every other package in the image was clean.
+`packages/mesa/PKGBUILD` now pins `-march=armv8-a+crc`: ARMv8.0-A plus the CRC32 instructions,
+which is exactly what both of those cores implement and nothing more.
 
-**`dotprod` had to be checked on the LITTLE core, and that is the check that matters.** SM8250 is
-A77 **+ A55**, and a published byte runs on both clusters, so the constraint is the A55 — reasoning
-only about the big core would leave `dotprod` unverified where it is most likely to be missing. Both
-tables list it, and `F16`, on A55 explicitly. Had A55 lacked either, these flags would have been a
-latent SIGILL on the little cores that nothing in the pipeline detects.
+**What the stock baseline costs the newer boards: nothing for atomics, the intrinsics for real.**
+GCC's `-moutline-atomics` (its default, and written out in the mesa recipe) compiles every atomic as a call to a `__aarch64_*` helper that
+tests `__aarch64_have_lse_atomics` (set once at load from the CPU's HWCAP) and runs the LSE
+instruction on a core that has it — so SM8250/8550/8650 keep their LSE atomics, behind a predictable
+branch instead of inline. `fp16` and `dotprod` codegen is lost fleet-wide. If a measurement ever
+shows mesa paying for that, the answer is a second, per-SoC mesa build selected at runtime — never a
+floor the Air X cannot execute.
 
-**`armv8.2-a` also implies `armv8.1-a`**, which brings **LSE atomics** (`CAS`/`LDADD`) in place of
-`ldxr/stxr` retry loops — a win for anything atomic-heavy, emulators with JITs included (though a
-JIT's *emitted* code follows runtime feature detection, not `-march`).
+**How to check a built package, so this is caught before a device is.** Unguarded LSE is visible in
+the binary: an `ldadd`/`cas`/`swp`-family instruction not preceded by the helper's `cbz w16` guard.
+
+```sh
+aarch64-linux-gnu-objdump -d lib.so | awk \
+  '/^[ \t]+[0-9a-f]+:/ { if ($0 ~ /[ \t](ldadd|ldclr|ldeor|ldset|swp|cas|casp|ldumax|ldumin|ldsmax|ldsmin)[a-z]*[ \t]/) { t++; if (prev !~ /cbz[ \t]+w16/) u++ } prev=$0 }
+   END { print t+0 " LSE, " u+0 " unguarded" }'
+```
+
+A clean overlay reads `N LSE, 0 unguarded` for every package (gamescope 13/0, opengamepadui 89/0,
+scx-scheds 84/0; mesa before the fix 3281/3279). Run it on every ELF of a new or bumped package.
 
 **Why these flags live in each `PKGBUILD` and not a shared toolchain file.**
 `packages/inputhash.sh` hashes exactly three things per package — `source.pin`, its declared patches,

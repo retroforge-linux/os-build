@@ -29,7 +29,7 @@ pkgname=(
 )
 pkgver=26.2.4
 _pkgver=${pkgver/[a-z]/-&}
-pkgrel=1
+pkgrel=2
 epoch=1
 pkgdesc="Open-source OpenGL drivers (qforge freedreno-only build)"
 url="https://www.mesa3d.org/"
@@ -167,12 +167,20 @@ build() {
   CFLAGS+=" -g1"
   CXXFLAGS+=" -g1"
 
-  # Raise the ISA floor off the stock armv8-a baseline: fp16 and dotprod for the format-conversion
-  # and compiler paths, plus the implied armv8.1-a LSE atomics. Turnip's own runtime feature checks
-  # are unaffected — this only changes what the compiler may emit ahead of time.
-  # See "CPU baseline" in packages/README.md for the fleet floor and why i8mm is absent.
-  CFLAGS+=" -march=armv8.2-a+fp16+dotprod"
-  CXXFLAGS+=" -march=armv8.2-a+fp16+dotprod"
+  # The ISA floor, stated rather than inherited: the exact level of the OLDEST cores the one image
+  # serves. Since the SM6115 port (MANGMI Air X, Cortex-A73 + A53) that is ARMv8.0-A plus CRC32,
+  # which both cores implement (GCC aarch64-cores.def: cortex-a73 and cortex-a53 are `V8A, (CRC)`).
+  # Until 2026-10-10 this read armv8.2-a+fp16+dotprod, the exact level of the SM8250's A77/A55 --
+  # and armv8.2-a implies armv8.1-a, i.e. INLINE LSE atomics (CAS/LDADD). The Air X's first boot
+  # died in turnip on a `casal` during Vulkan device enumeration: gamescope SIGILL in a loop,
+  # 3279 unguarded LSE instructions in gallium+EGL, 345 in turnip, every other package clean.
+  # -moutline-atomics is GCC's default and is written out so the contract is visible: every atomic
+  # goes through a __aarch64_* helper that picks LSE at RUNTIME from the CPU's HWCAP, so the
+  # SM8250/8550/8650 keep LSE atomics behind one predictable branch. fp16 and dotprod codegen are
+  # the real cost, fleet-wide; a per-SoC mesa build is how to get them back if ever measured to
+  # matter. The check: packages/README.md, "CPU baseline".
+  CFLAGS+=" -march=armv8-a+crc -moutline-atomics"
+  CXXFLAGS+=" -march=armv8-a+crc -moutline-atomics"
 
   arch-meson mesa-$_pkgver build "${meson_options[@]}"
   meson compile -C build
