@@ -26,4 +26,4 @@
 name: mesa
 pkgbuild_local: PKGBUILD
 pkgrel_suffix: 1
-patches: 0001-add-a830-chip-id.patch
+patches: 0001-add-a830-chip-id.patch 0002-tu-implement-VK_QCOM_rotated_copy_commands.patch 0003-wsi-wayland-sort-surface-formats-by-preference.patch 0004-wsi-add-vkCmdBlitImage2-to-the-dispatch-table.patch 0005-wsi-wayland-support-rotated-preTransform.patch 0006-wsi-wayland-add-optional-pre-rotated-presents.patch 0007-wsi-wayland-keep-the-modifier-on-feedback-changes-wh.patch 0008-gallium-add-rotation-to-pipe_blit_info.patch 0009-util-blitter-support-rotated-blits.patch 0010-freedreno-support-rotated-blits.patch 0011-dri-pass-rotation-through-dri2_blit_image.patch 0012-egl-wayland-add-optional-pre-rotated-presents.patch 0013-wsi-wayland-resend-a-rotated-buffer-transform-with-e.patch

@@ -34,3 +34,26 @@ in the PKGBUILD's `prepare()`.
 Patches apply `-p1` against the upstream mesa tree, in the order listed in
 [`../source.pin`](../source.pin)'s `patches:` line. If a declared patch is missing or fails to
 apply, `build-overlay.sh` / `makepkg` fails fast before the package is built.
+
+## Pre-rotated presents (0002-0013), added 2026-10-09
+
+The twelve commits sunshineinabox carries on top of upstream Mesa in ROCKNIX
+(`projects/ROCKNIX/packages/graphics/mesa/patches/0001`-`0012` on `next`, which pins the same
+26.2.4 tarball we do; also the fork at gitlab.freedesktop.org/sunshineinabox/mesa, `89ba0269`).
+In order: `tu` implements `VK_QCOM_rotated_copy_commands`; the Wayland WSI sorts surface
+formats, gets `vkCmdBlitImage2` in its dispatch table, supports a rotated `preTransform`, and
+gains OPTIONAL pre-rotated presents (`vk_wsi_wayland_prerotate` driconf / env, 90/180/270: the
+swapchain image is blitted, rotated, into a panel-oriented buffer at present time and committed
+with the matching `wl_surface.set_buffer_transform`, re-sent on every present); it keeps the
+modifier across feedback changes while doing so. Gallium's blit info learns a rotation, the util
+blitter and freedreno implement it, DRI passes it through `dri2_blit_image`, and EGL's Wayland
+platform gets the same optional pre-rotation (`egl_wayland_prerotate`).
+
+What it is for: a board whose display plane cannot rotate (SM6115) otherwise pays a GPU composite
+per frame in the compositor. With these the CLIENT rotates once at present, cheaply (a transfer
+blit, `VK_QCOM_rotated_copy_commands` on Adreno), and a compositor that honours buffer transforms
+(KWin, sway) scans the buffer out directly. ROCKNIX sets the two variables per board from
+`prerotate_env` in its `001-functions`. Under gamescope the client side is NOT used: gamescope
+rotates layers itself, and its own rotated-blit patches (`packages/gamescope`) use the same
+`VK_QCOM_rotated_copy_commands` from `0002` here. Off unless the variable is set, so every
+other board is unaffected. Applied cleanly on 26.2.4 (checked 2026-10-09).
