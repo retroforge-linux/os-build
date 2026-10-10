@@ -35,6 +35,13 @@
 #         under a hash of its card NAME, so renaming a card lost it (QForge renames same-named ROM
 #         cards, and a metadata scrape will rename them all). Keyed by provider + app id now (for
 #         QForge ROMs, <system>/<file>); a profile saved under the name is still loaded.
+#   0008  ours, for upstream: the home banner's god-rays shader (screen texture with mipmaps,
+#         animated with TIME) and the focused card's god-rays + shine keep the whole UI redrawing
+#         every frame, so low_processor_mode never idles: measured 47 ms of GPU per frame, the
+#         Adreno 610 pinned at 1050 MHz and the shell at ~20 fps doing nothing (Air X, 2026-10-10;
+#         hiding that one node took the shell to zero submits and the GPU to runtime-suspend).
+#         A Settings > General "Animated Effects" toggle (general/animated_effects), off by
+#         default, gates those shaders.
 #
 # The earlier 0006/0007 (plugin store URL as a project setting, set to "" for QForge) were dropped on
 # 2026-10-06: with the store off, OGUI's first-start screen showed an empty catalog. QForge has no
@@ -52,4 +59,4 @@
 name: opengamepadui
 pkgbuild_local: PKGBUILD
 pkgrel_suffix: 1
-patches: 0001-hardware-manager-no-dmi.patch 0002-install-dialogs-rename-custom-maximum-size.patch 0003-performance-menu-hide-unsupported-controls.patch 0004-running-app-exit-before-window.patch 0005-performance-manager-save-default-profiles.patch 0006-performance-menu-power-profiles-without-tdp.patch 0007-performance-manager-profile-key-app-id.patch
+patches: 0001-hardware-manager-no-dmi.patch 0002-install-dialogs-rename-custom-maximum-size.patch 0003-performance-menu-hide-unsupported-controls.patch 0004-running-app-exit-before-window.patch 0005-performance-manager-save-default-profiles.patch 0006-performance-menu-power-profiles-without-tdp.patch 0007-performance-manager-profile-key-app-id.patch 0008-animated-effects-setting.patch

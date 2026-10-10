@@ -1,0 +1,151 @@
+From: qforge
+Subject: [PATCH] feat(Settings): an Animated Effects toggle, off by default, for the god-rays and shine shaders
+
+The home screen's banner carries a god-rays ColorRect whose shader samples
+the screen texture with mipmaps and is animated with TIME, and a focused
+card fades in the same god-rays plus a shine shader. A TIME-driven canvas
+item changes every frame, so while one is visible low_processor_mode never
+gets to idle: the whole interface is redrawn at the display rate, with a
+full-screen copy and mip chain for the screen texture on every draw.
+
+Measured on a MANGMI Air X (Snapdragon 662, Adreno 610, 1080x1920): with
+the banner shader visible OpenGamepadUI submits continuously at ~47 ms of
+GPU time per frame, the GPU sits at its top clock and the shell renders at
+~20 fps while doing nothing. With that one node hidden it submits nothing,
+and the GPU runtime-suspends at its floor clock. The idle cost is the same
+on faster SoCs, only hidden behind the headroom; on a handheld it is
+battery.
+
+Add a Settings > General > Appearance toggle, "Animated Effects", stored
+as general/animated_effects. Off by default: the home banner hides its
+god-rays node (and follows the toggle live), and cards skip the god-rays
+and shine fade-ins; the fade-outs still run for whatever is visible, so
+turning the toggle off while a card is focused cleans up on unfocus.
+
+(qforge: ours, for upstream. Upstream may prefer the default on.)
+---
+diff -ruN a/core/ui/card_ui/home/cardui_home.gd b/core/ui/card_ui/home/cardui_home.gd
+--- a/core/ui/card_ui/home/cardui_home.gd	2026-10-10 06:29:00
++++ b/core/ui/card_ui/home/cardui_home.gd	2026-10-10 06:30:22
+@@ -6,6 +6,7 @@
+ var InstallManager := preload("res://core/global/install_manager.tres")
+ var BoxArtManager := load("res://core/global/boxart_manager.tres") as BoxArtManager
+ var LibraryManager := load("res://core/global/library_manager.tres") as LibraryManager
++var SettingsManager := load("res://core/global/settings_manager.tres") as SettingsManager
+ var state_machine := preload("res://assets/state/state_machines/menu_state_machine.tres") as StateMachine
+ var popup_state_machine := preload("res://assets/state/state_machines/popup_state_machine.tres") as StateMachine
+ var home_state := preload("res://assets/state/states/home.tres") as State
+@@ -23,6 +24,7 @@
+ @onready var container := $%CardContainer as HBoxContainer
+ @onready var banner := $%BannerTexture as TextureRect
+ @onready var library_banner := $%LibraryBanner as Control
++@onready var god_rays := $%GodRaysShader as ColorRect
+ @onready var player := $%AnimationPlayer as AnimationPlayer
+ @onready var scroll_container := $%ScrollContainer as ScrollContainer
+ @onready var library_deck := $%LibraryDeck as LibraryDeck
+@@ -31,6 +33,12 @@
+ 
+ # Called when the node enters the scene tree for the first time.
+ func _ready() -> void:
++	# The animated god-rays banner samples the screen texture with mipmaps and changes every
++	# frame, so while it is visible the whole interface is redrawn at full rate even when idle
++	# (~45 ms of GPU time per frame on an Adreno 610). Off unless enabled in Settings > General.
++	god_rays.visible = SettingsManager.get_value("general", "animated_effects", false) as bool
++	SettingsManager.setting_changed.connect(_on_setting_changed)
++
+ 	# Connect to state entered/exited signals
+ 	home_state.state_entered.connect(_on_state_entered)
+ 	home_state.state_exited.connect(_on_state_exited)
+@@ -82,6 +90,11 @@
+ 	refresh_completed.emit()
+ 	refresh.call_deferred()
+ 
++
++## Applies the animated-effects setting as soon as it is toggled
++func _on_setting_changed(section: String, key: String, value: Variant) -> void:
++	if section == "general" and key == "animated_effects":
++		god_rays.visible = value as bool
+ 
+ func _on_state_entered(_from: State) -> void:
+ 	set_process_input(true)
+diff -ruN a/core/ui/card_ui/home/cardui_home.tscn b/core/ui/card_ui/home/cardui_home.tscn
+--- a/core/ui/card_ui/home/cardui_home.tscn	2026-10-10 06:29:00
++++ b/core/ui/card_ui/home/cardui_home.tscn	2026-10-10 06:29:00
+@@ -106,6 +106,7 @@
+ layout_mode = 1
+ 
+ [node name="GodRaysShader" type="ColorRect" parent="VBoxContainer/BannerTexture"]
++unique_name_in_owner = true
+ material = SubResource("ShaderMaterial_bjg8e")
+ layout_mode = 1
+ anchors_preset = 15
+diff -ruN a/core/ui/card_ui/settings/general_settings_menu.gd b/core/ui/card_ui/settings/general_settings_menu.gd
+--- a/core/ui/card_ui/settings/general_settings_menu.gd	2026-10-10 06:29:00
++++ b/core/ui/card_ui/settings/general_settings_menu.gd	2026-10-10 06:29:00
+@@ -16,6 +16,7 @@
+ @onready var updater := $SoftwareUpdater as SoftwareUpdater
+ @onready var update_timer := $UpdateTimer as Timer
+ @onready var auto_update_toggle := $%AutoUpdateToggle
++@onready var animated_effects_toggle := $%AnimatedEffectsToggle
+ @onready var check_update_button := $%CheckUpdateButton
+ @onready var update_button := $%UpdateButton
+ @onready var themes_container := $%ThemeButtonContainer
+@@ -111,6 +112,13 @@
+ 	update_timer.timeout.connect(_on_autoupdate)
+ 	if auto_update:
+ 		update_timer.start()
++
++	# Configure animated effects (applied by the home screen and cards on their next start)
++	var animated_effects := SettingsManager.get_value("general", "animated_effects", false) as bool
++	animated_effects_toggle.button_pressed = animated_effects
++	var on_animated_effects_toggled := func(toggled: bool):
++		SettingsManager.set_value("general", "animated_effects", toggled)
++	animated_effects_toggle.toggled.connect(on_animated_effects_toggled)
+ 
+ 	# Configure the language dropdown
+ 	var current_locale := SettingsManager.get_value("general", "locale", "en_US") as String
+diff -ruN a/core/ui/card_ui/settings/general_settings_menu.tscn b/core/ui/card_ui/settings/general_settings_menu.tscn
+--- a/core/ui/card_ui/settings/general_settings_menu.tscn	2026-10-10 06:29:00
++++ b/core/ui/card_ui/settings/general_settings_menu.tscn	2026-10-10 06:29:00
+@@ -115,6 +115,13 @@
+ layout_mode = 2
+ text = "Appearance"
+ 
++[node name="AnimatedEffectsToggle" parent="MarginContainer/VBoxContainer/VBoxContainer" instance=ExtResource("6_ghdw1")]
++unique_name_in_owner = true
++layout_mode = 2
++text = "Animated Effects"
++separator_visible = false
++description = "Animated banner and card effects. They redraw the interface every frame, which costs GPU time and battery on a handheld"
++
+ [node name="LanguageDropdown" parent="MarginContainer/VBoxContainer/VBoxContainer" instance=ExtResource("8_r15pa")]
+ unique_name_in_owner = true
+ layout_mode = 2
+diff -ruN a/core/ui/components/card.gd b/core/ui/components/card.gd
+--- a/core/ui/components/card.gd	2026-10-10 06:29:00
++++ b/core/ui/components/card.gd	2026-10-10 06:29:00
+@@ -100,6 +100,11 @@
+ 
+ func _on_focus() -> void:
+ 	highlighted.emit()
++	# The god-rays and shine shaders are animated, so a focused card keeps the interface
++	# redrawing every frame; only use them when animated effects are enabled.
++	var settings := load("res://core/global/settings_manager.tres") as SettingsManager
++	if not settings.get_value("general", "animated_effects", false):
++		return
+ 	_shader_godrays_fade_in()
+ 	_shader_shine_fade_in()
+ 
+@@ -130,8 +135,10 @@
+ 
+ func _on_unfocus() -> void:
+ 	unhighlighted.emit()
+-	_shader_godrays_fade_out()
+-	_shader_shine_fade_out()
++	if god_rays_rect.visible:
++		_shader_godrays_fade_out()
++	if shine_rect.visible:
++		_shader_shine_fade_out()
+ 
+ 
+ func _shader_godrays_fade_out() -> void:
