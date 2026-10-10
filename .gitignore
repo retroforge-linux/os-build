@@ -5,6 +5,10 @@
 # Build outputs
 /out/
 /work/
+# The previous build tree, kept beside the mounted work/ volume (macOS: work/ is a case-sensitive
+# sparse image so overlay builds do not resolve GL/gl.h to src/gl/gl.h) until a full build on the
+# new volume has succeeded. Deleted after that.
+/work.old/
 # build/ IS SOURCE, and everything under it is tracked. It holds the docker build context and the
 # seed fetcher — inputs, not outputs; nothing in the tree writes into it (outputs go to out/ and
 # work/, both ignored above).
