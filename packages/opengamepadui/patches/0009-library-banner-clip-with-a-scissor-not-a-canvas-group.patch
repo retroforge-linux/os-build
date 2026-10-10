@@ -1,0 +1,33 @@
+From: qforge
+Subject: [PATCH] perf(LibraryBanner): clip the collage with a scissor, not a canvas group
+
+The home banner's collage of twelve tilted library tiles sits in a
+TextureRect with clip_children = CLIP_CHILDREN_AND_DRAW. That makes the
+renderer draw the tiles into an offscreen canvas group every frame and
+composite them back through the TextureRect's texture as a mask -- and
+that texture is a GradientTexture2D whose two stops are both opaque
+black, so the mask is the whole rectangle. All it does is clip the
+tilted tiles to the banner's bounds.
+
+clip_contents does exactly that with a scissor rectangle, with no
+offscreen pass. The TextureRect still draws its black texture under the
+tiles, so the banner looks the same.
+
+Measured on a MANGMI Air X (Adreno 610, 1920x1080, OGUI redrawing
+continuously), Godot's own viewport GPU timer: 19.6 -> 13.9 ms per
+frame. The card and icon clip masks are real shape masks (rounded
+corners, icon shapes) and are left alone.
+
+(qforge: ours, for upstream.)
+---
+--- a/core/ui/components/library_banner.tscn
++++ b/core/ui/components/library_banner.tscn
+@@ -21,7 +21,7 @@
+ script = ExtResource("1_yhxxp")
+ 
+ [node name="TextureRect" type="TextureRect" parent="."]
+-clip_children = 2
++clip_contents = true
+ layout_mode = 1
+ anchors_preset = 15
+ anchor_right = 1.0

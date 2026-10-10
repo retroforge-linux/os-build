@@ -42,6 +42,10 @@
 #         hiding that one node took the shell to zero submits and the GPU to runtime-suspend).
 #         A Settings > General "Animated Effects" toggle (general/animated_effects), off by
 #         default, gates those shaders.
+#   0009  ours, for upstream: the home banner's tile collage was clipped with clip_children (an
+#         offscreen canvas group + mask every frame) by an all-opaque gradient, i.e. a plain
+#         rectangle. clip_contents (a scissor) gives the same picture: 19.6 -> 13.9 ms of GPU per
+#         frame on the Adreno 610 at 1920x1080 (Air X, 2026-10-10).
 #
 # The earlier 0006/0007 (plugin store URL as a project setting, set to "" for QForge) were dropped on
 # 2026-10-06: with the store off, OGUI's first-start screen showed an empty catalog. QForge has no
@@ -59,4 +63,4 @@
 name: opengamepadui
 pkgbuild_local: PKGBUILD
 pkgrel_suffix: 1
-patches: 0001-hardware-manager-no-dmi.patch 0002-install-dialogs-rename-custom-maximum-size.patch 0003-performance-menu-hide-unsupported-controls.patch 0004-running-app-exit-before-window.patch 0005-performance-manager-save-default-profiles.patch 0006-performance-menu-power-profiles-without-tdp.patch 0007-performance-manager-profile-key-app-id.patch 0008-animated-effects-setting.patch
+patches: 0001-hardware-manager-no-dmi.patch 0002-install-dialogs-rename-custom-maximum-size.patch 0003-performance-menu-hide-unsupported-controls.patch 0004-running-app-exit-before-window.patch 0005-performance-manager-save-default-profiles.patch 0006-performance-menu-power-profiles-without-tdp.patch 0007-performance-manager-profile-key-app-id.patch 0008-animated-effects-setting.patch 0009-library-banner-clip-with-a-scissor-not-a-canvas-group.patch
