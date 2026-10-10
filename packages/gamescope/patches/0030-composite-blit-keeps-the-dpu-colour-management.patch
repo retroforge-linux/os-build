@@ -1,0 +1,90 @@
+From: qforge
+Subject: [PATCH] composite-blit: keep the DPU's colour management
+
+0027's transfer blit copies layer 0 to the output raw, "like direct
+scanout of that layer". On this stack direct scanout IS colour managed:
+0014 puts the composite's transform in the CRTC CTM and 0018 the whole
+SDR chain in the output LUTs, and a frame the DPU cannot colour manage
+is forced through the composite so the shader applies it. A blit on that
+path would have skipped the shader with the CTM held at the identity --
+night mode silently gone again, exactly what 0014 fixed.
+
+So the DRM backend tells the composite whether a raw copy would be
+colour managed (drm_scanout_is_color_managed()), the blit declines when
+it would not, and a frame that was blitted takes the CTM as a direct
+scanout does. The output LUTs already apply post-blend to a composited
+frame and go on doing so. The pre-rotated plane blits of 0028 were
+already covered: they sit on the direct-scanout path, whose CTM call
+precedes them.
+---
+diff --git a/src/Backends/DRMBackend.cpp b/src/Backends/DRMBackend.cpp
+index 11670a5..d9cb7bf 100644
+--- a/src/Backends/DRMBackend.cpp
++++ b/src/Backends/DRMBackend.cpp
+@@ -4487,6 +4487,11 @@ namespace gamescope
+ 			if ( bDefer && !!( g_uCompositeDebug & CompositeDebugFlag::Markers ) )
+ 				g_uCompositeDebug |= CompositeDebugFlag::Markers_Partial;
+ 
++			// A composite-blit output is a raw copy of layer 0 that the DPU colour manages like
++			// a direct scanout -- so it is only allowed where a direct scanout would be colour
++			// managed (or there is nothing to manage). Otherwise the shader has to apply it.
++			compositeFrameInfo.scanoutIsColorManaged = drm_scanout_is_color_managed( &g_DRM, pFrameInfo->outputLuts );
++
+ 			std::optional oCompositeResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite );
+ 
+ 			m_bWasCompositing = true;
+@@ -4566,8 +4571,9 @@ namespace gamescope
+ 			}
+ 
+ 			// vulkan_composite() has already applied the transform to these pixels, so
+-			// the DPU must not apply it again.
+-			drm_update_crtc_ctm( &g_DRM, false );
++			// the DPU must not apply it again -- unless it only blitted layer 0, which
++			// reaches the panel raw and takes the CTM exactly as a direct scanout does.
++			drm_update_crtc_ctm( &g_DRM, compositeFrameInfo.compositeBlitted );
+ 
+ 			int ret = PrepareScanout( &presentCompFrameInfo, bAsync );
+ 
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 0ce300b..3740a92 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -4768,6 +4768,8 @@ static bool vulkan_composite_blit( CVulkanCmdBuffer *cmdBuffer, const struct Fra
+ 
+ 	if ( bOverride )
+ 		return decline( 0, "composite-blit: not for output overrides (screenshots, upscale cache)" );
++	if ( !frameInfo->scanoutIsColorManaged )
++		return decline( 12, "composite-blit: the display cannot carry the output colour transform, the composite applies it" );
+ 	if ( !g_device.supportsRotatedCopy() )
+ 		return decline( 1, "composite-blit: driver lacks VK_QCOM_rotated_copy_commands" );
+ 	if ( frameInfo->layers.count() != 1 )
+@@ -4899,9 +4901,11 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
+ 	for (uint32_t i = 0; i < EOTF_Count; i++)
+ 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
+ 
++	frameInfo->compositeBlitted = false;
+ 	if ( vulkan_composite_blit( cmdBuffer.get(), frameInfo, compositeImage, uOutputRotation, pOutputOverride != nullptr ) )
+ 	{
+-		// copied by the transfer engine
++		// copied by the transfer engine, nothing applied: the display colour manages it
++		frameInfo->compositeBlitted = true;
+ 	}
+ 	else if ( frameInfo->useFSRLayer0 || frameInfo->useSGSRLayer0 )
+ 	{
+diff --git a/src/rendervulkan.hpp b/src/rendervulkan.hpp
+index 24ad8ce..ae205da 100644
+--- a/src/rendervulkan.hpp
++++ b/src/rendervulkan.hpp
+@@ -305,6 +305,12 @@ struct FrameInfo_t
+ 	// The SDR shaper + 3D LUT are left to the output (msm DPU): set only when every
+ 	// layer is SDR and the shader skips its gamma 2.2 LUTs.
+ 	bool outputLuts;
++	// drm only: a raw copy of layer 0 scanned out gets the composite's colour transform from the
++	// display, or there is none to get, so composite-blit may skip the shader. The DRM backend sets
++	// it from drm_scanout_is_color_managed(); false makes the blit decline.
++	bool scanoutIsColorManaged = true;
++	// set by vulkan_composite(): the output is a (rotated) raw copy of layer 0, nothing applied
++	bool compositeBlitted = false;
+ 
+ 	// Maps output space onto the focused window's own space for absolute input.
+ 	// Not the base layer's transform, whose texture may already be upscaled.

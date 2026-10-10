@@ -25,9 +25,16 @@ root (the `gamescope/` checkout inside makepkg's `$srcdir`) by
 0020-libliftoff-treat-enodev-as-no-fit.patch        (patches the libliftoff SUBMODULE; only with 0021)
 0021-libliftoff-give-planes-the-layer-zpos.patch    (patches the libliftoff SUBMODULE)
 0025-steamcompmgr-elapsed-time-fps-limiter.patch     (ConVar limiter_use_elapsed_time, default on)
+0026-rendervulkan-upscale-cache-compressed.patch        (ROCKNIX fork 0018)
+0027-rendervulkan-composite-blit-rotated-copy.patch     (ROCKNIX fork 0019; --composite-blit, passed by default from etc/qforge/session.conf)
+0028-drmbackend-pre-rotate-layers-the-plane-cannot-rotate.patch   (ROCKNIX fork 0021, re-rolled by hand on 0014/0018)
+0029-rendervulkan-safe-compute-fallback.patch           (ROCKNIX fork 0025)
+0030-composite-blit-keeps-the-dpu-colour-management.patch   (ours: 0027 under 0014/0018)
+0031-composite-blit-build-under-werror-format-security.patch   (ours: one-line build fix for 0027)
 ```
 
-`0008`-`0013` are **retired** (see below). The numbering is kept as-is rather than compacted, so
+`0008`-`0013` are **retired** (see below), and so are `0022`-`0024`, which is why the pre-rotation
+series took `0026`-`0030`. The numbering is kept as-is rather than compacted, so
 older commit messages and memories still resolve.
 
 `0001` — **REUSED 2026-09-12 for `--rotated-output-max-height`** (the number was freed when the
@@ -375,6 +382,69 @@ ConVar `limiter_use_elapsed_time` (default on) restores the divisor gate live wh
 together with `kernel/patches/0390` (real vblank timestamps on command-mode panels): that one fixed
 the cap running fast, this one the stutter when a game cannot hold it. Applies at --fuzz=0 on our
 stack (we do not carry upstream's 0023).
+
+`0019` — **revision swapped 2026-10-09** for the ROCKNIX fork's current copy of the same patch
+(sunshineinabox, fork `0013`, dated 2026-09-10; same `--composite-graphics` flag and
+`GAMESCOPE_COMPOSITE_GRAPHICS` env, same behaviour). The body differs from the 3.16.29 port we
+carried in three places: `insertBarrier()` now counts `VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT` as a
+write (the fragment pass writes the output as an attachment; the old barrier knew only shader and
+transfer writes), `cs_sgsr` sits after the fragment shaders in `meson.build` and `rendervulkan.cpp`,
+and the "on tilers the fragment pass writes tile-linear" comment went. The swap is what lets
+`0026`-`0029` apply at --fuzz=0: they were written against that revision.
+
+`0026`-`0029` — **pre-rotation: rotate with a blit instead of compositing** (sunshineinabox and
+kapdon; ROCKNIX fork `next:projects/ROCKNIX/packages/apps/gamescope/patches` 0018/0019/0021/0025 —
+the gamescope half of what ROCKNIX calls `DEVICE_PRE_ROTATION`; the Mesa half is
+`packages/mesa/patches/0002`-`0013`). Our SM8xxx boards rotate at scanout (`0001`) and never reach
+any of it. It is for a panel the plane cannot rotate — SM6115 (MANGMI Air X), which ROCKNIX runs
+with `--force-composition-rotation` — where stock gamescope composites EVERY frame on the GPU to
+turn it, which on an A610 is most of the frame budget.
+  - `0026` keeps the FSR/SGSR upscale-cache image compressed: the preemptive upscale composites
+    into an override image, the fragment path (`0019`) was off for every override, so that one
+    buffer needed STORAGE usage and turnip left it linear — the buffer that actually reached the
+    plane under FSR.
+  - `0027` adds `--composite-blit` / `GAMESCOPE_COMPOSITE_BLIT=1`: a frame of exactly one
+    unscaled, unoffset sRGB layer at output size with no CTM is copied to the output by the
+    transfer engine, rotated with `VK_QCOM_rotated_copy_commands` (Mesa `0002`) when the output
+    is rotated. Anything else takes the composite shader. Each decline reason is logged once.
+  - `0028` is the DRM backend. With `--composite-blit`, layers the plane cannot rotate are blitted
+    into panel-oriented copies (`pBlitRotatedTex`) and scanned out unrotated in their old
+    placement, so the plane still scales them: overlays first (the base keeps a rotating pipe),
+    then every layer, and every layer where the plane cannot rotate at all (`PrepareScanout()`).
+    Only when the planes cannot take even that are the overlays composited into one layer drawn
+    in panel orientation and scanned out beside the base; a frame that fits no other way is
+    composited whole. The blank Steam overlay plane is painted only where turning a plane on is
+    slow (AMD colour management, `NeedsBlankOverlayPlane()`). **Re-rolled by hand on `0014`/`0018`**:
+    four `Present()` hunks met our CTM/LUT lines. The merge keeps `!drm_scanout_is_color_managed()`
+    after the pre-rotation-aware rotation test, routes both scanout attempts through
+    `PrepareScanout()` after the existing `drm_update_crtc_ctm()` calls, and keeps
+    `drm_scanout_ctm_is_active()`'s promotion to a full composite ahead of `FillPartialFrame`.
+    The patch header lists the four.
+  - `0029` (kapdon) keeps attachment-only outputs compressed on the normal path and, when a
+    graphics pipeline fails, composites with compute into a storage-capable scratch image and
+    copies back, without publishing an unsignaled upscale-cache entry.
+
+`0030` — **a blitted frame keeps the DPU's colour management** (ours, 2026-10-09). `0027`'s copy
+is raw, "like direct scanout of that layer" — true on ROCKNIX, where direct scanout is not colour
+managed. Here it is: `0014` puts the composite's transform in the CRTC CTM and `0018` the whole SDR
+chain in the output LUTs, and a frame the DPU cannot colour manage is forced through the composite
+so the shader applies it. A blit on that path would have skipped the shader with the CTM held at
+the identity — night mode silently gone, the exact failure `0014` closed. `0030` has the DRM
+backend tell the composite whether a raw copy would be colour managed
+(`FrameInfo_t::scanoutIsColorManaged`, from `drm_scanout_is_color_managed()`), the blit declines
+when it would not (decline reason 12), and a frame that was blitted (`compositeBlitted`) takes the
+CTM as a direct scanout does. The output LUTs already apply post-blend to a composited frame and
+go on doing so; the plane blits of `0028` were already covered, they sit on the direct-scanout
+path whose CTM call precedes them. **Not yet HW-validated on any board** — the series went in
+with the SM6115 port and is first exercised when an Air X boots; the regression to watch on the
+SM8xxx boards is night mode with `--composite-blit` on a frame that composites anyway (the issue
+#106 case on SM8250).
+
+`0031` — **`0027` under makepkg's `-Werror=format-security`** (ours, 2026-10-09). The fork's
+`decline()` is a generic lambda; its argument-less reasons instantiate `infof( pszReason )`, a
+non-literal format with no arguments, which Arch's CFLAGS make a hard error (ROCKNIX builds
+without the flag). `if constexpr ( sizeof...( args ) == 0 )` sends those through `"%s"`. Found on
+the first overlay build of the series; the merged `0028` and `0030` compiled clean.
 
 Drop the patch files here with those exact names (or rename and update `source.pin`'s
 `patches:` line). **Until a declared patch is present, `make overlay` / `make base` fail fast**

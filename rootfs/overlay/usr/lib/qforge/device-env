@@ -6,9 +6,9 @@
 # set of QFORGE_* assignments (shell-quoted) on stdout. Consumers eval it:
 #     eval "$(/usr/lib/qforge/device-env)"
 #
-# qforge-session reads the panel/output block. QFORGE_SOC_CLASS has had no reader
-# since device-quirks went (its one quirk was fixed in the kernel); it stays for the
-# next SoC-class workaround. Hardware truth still lives in the DTS — this only
+# qforge-session reads the panel/output block. QFORGE_SOC_CLASS is read by
+# etc/qforge/session.conf, which gives SM6115 --force-composition-rotation (the one
+# SoC-class workaround since device-quirks went). Hardware truth still lives in the DTS — this only
 # re-exports the subset userspace needs plus knobs with no DTS home (fake-output-mm,
 # suspend mode). Panel orientation, rotation-shader and gamepad-quirk are
 # deliberately NOT carried: qforge uses upstream composite rotation (auto-engaged

@@ -1,0 +1,31 @@
+From: qforge
+Subject: [PATCH] composite-blit: build under -Werror=format-security
+
+0027's decline() logs its reason through a generic lambda, so the
+reasons without arguments instantiate infof( pszReason ) -- a
+non-literal format with no arguments, which makepkg's
+-Werror=format-security turns into an error:
+
+  rendervulkan.cpp:4764:37: error: format not a string literal and no
+  format arguments [-Werror=format-security]
+
+ROCKNIX builds without that flag. Route the argument-less
+instantiations through "%s"; the others are unchanged.
+---
+diff --git a/src/rendervulkan.cpp b/src/rendervulkan.cpp
+index 3740a92..a6b4eb9 100644
+--- a/src/rendervulkan.cpp
++++ b/src/rendervulkan.cpp
+@@ -4761,7 +4761,11 @@ static bool vulkan_composite_blit( CVulkanCmdBuffer *cmdBuffer, const struct Fra
+ 		if ( !( s_uLoggedReasons & ( 1u << uBit ) ) )
+ 		{
+ 			s_uLoggedReasons |= 1u << uBit;
+-			vk_log.infof( pszReason, args... );
++			// -Werror=format-security (makepkg's CFLAGS) rejects a non-literal format with no arguments
++			if constexpr ( sizeof...( args ) == 0 )
++				vk_log.infof( "%s", pszReason );
++			else
++				vk_log.infof( pszReason, args... );
+ 		}
+ 		return false;
+ 	};
