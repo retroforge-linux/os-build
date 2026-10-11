@@ -7,6 +7,14 @@ extends RefCounted
 ##
 ## Text fields: tapping one opens OpenGamepadUI's on-screen keyboard.
 ##
+## Search: Enter on the keyboard (R2) submits and closes it, and OGUI then put focus back on the
+## search field -- results unreachable without another press. After a submit, focus goes to the
+## first visible game card instead (B, a cancel, still returns to the field).
+##
+## Pointer after a touch: the pointer stays where the finger lifted, so that control kept its hover
+## highlight while the D-pad moved focus elsewhere -- two highlights. The first gamepad input after
+## a touch sends Godot a pointer move off-screen (pointer_left()), which clears the hover.
+##
 ## OGUI opens it only when the gamepad's South button is released on a focused field
 ## (SearchBar._gui_input, ComponentTextInput._on_gui_input). A tap on the touchscreen reaches
 ## Godot as a left click (gamescope's touch click mode), which focuses the field and nothing
@@ -39,6 +47,49 @@ func setup(tree: SceneTree) -> RefCounted:
 	return self
 
 
+## Pointer bookkeeping, fed from the plugin's _input and its InputPlumber listener.
+var _pointer_hovering := false
+var _parking := false
+
+
+func note_input(event: InputEvent) -> void:
+	if _parking:
+		return
+	if event is InputEventMouseMotion or event is InputEventMouseButton or event is InputEventScreenTouch:
+		_pointer_hovering = true
+
+
+## A gamepad took over: move Godot's idea of the pointer off-screen so hover styles clear.
+func pointer_left() -> void:
+	if not _pointer_hovering:
+		return
+	_pointer_hovering = false
+	var away := InputEventMouseMotion.new()
+	away.position = Vector2(-10000, -10000)
+	away.global_position = away.position
+	_parking = true
+	Input.parse_input_event(away)
+	Input.flush_buffered_events()
+	_parking = false
+
+
+## After a search submit: OGUI's KeyboardInstance.close() hands focus back to the search field
+## with call_deferred; take it on to the first visible result after that.
+func _focus_first_result() -> void:
+	await _tree.process_frame
+	await _tree.process_frame
+	var best: Control = null
+	for node in _tree.root.find_children("*", "Control", true, false):
+		if not (node is GameCard and node.is_visible_in_tree() and node.focus_mode != Control.FOCUS_NONE):
+			continue
+		var c := node as Control
+		if best == null or c.global_position.y < best.global_position.y - 1 \
+				or (absf(c.global_position.y - best.global_position.y) <= 1 and c.global_position.x < best.global_position.x):
+			best = c
+	if best:
+		best.grab_focus()
+
+
 func _on_popup_changed(_from: State, to: State) -> void:
 	if to == null or to == osk_state or keyboard.context == null:
 		return
@@ -61,6 +112,10 @@ func detach() -> void:
 
 
 func _watch(node: Node) -> void:
+	if node is SearchBar and node.get("keyboard_context"):
+		var on_submit := _focus_first_result
+		if not node.keyboard_context.submitted.is_connected(on_submit):
+			node.keyboard_context.submitted.connect(on_submit)
 	if node is Toggle:
 		if node.is_node_ready():
 			_connect_toggle(node)

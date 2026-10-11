@@ -317,6 +317,8 @@ func _watch_input_plumber(device) -> void:
 
 func _on_input_plumber_event(event: String, value: float) -> void:
 	_boost()
+	if _touch_keyboard:
+		_touch_keyboard.pointer_left()
 	if event == "ui_guide" and value == 1.0 and _overlay:
 		_overlay.expect_ui()
 
@@ -339,6 +341,8 @@ func _set_idle_pacing(in_game: bool) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if _touch_keyboard:
+		_touch_keyboard.note_input(event)
 	if _boost_timer == null:
 		return
 	if event is InputEventMouseMotion and (event as InputEventMouseMotion).relative.length() < 1.0:
