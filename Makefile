@@ -80,9 +80,17 @@ TESTS_DIR  := tests
 $(shell mkdir -p work)
 
 # --- where each stage runs ----------------------------------------------------
+# Container runtime: docker where it is installed, otherwise podman (the Fedora build box runs
+# rootless podman). Exported so the host scripts (build/lib-container.sh) make the same choice.
+# Under podman every run disables SELinux labelling: on an enforcing host a container cannot read
+# an unlabelled bind mount, and relabelling (:z) would rewrite the labels of the checkout.
+QFORGE_CONTAINER ?= $(if $(shell command -v docker 2>/dev/null),docker,podman)
+export QFORGE_CONTAINER
+CTR_RUN  := $(QFORGE_CONTAINER) run$(if $(filter podman,$(QFORGE_CONTAINER)), --security-opt label=disable)
+BUSYBOX  := docker.io/library/busybox
 # Container: repo bind-mounted at /src. INBUILD is the plain run; DOCKER lets a
 # recipe insert `-e VAR` flags (which must precede the image name) before the image.
-DOCKER   := docker run --rm -v $(CURDIR):/src -w /src
+DOCKER   := $(CTR_RUN) --rm -v $(CURDIR):/src -w /src
 INBUILD := $(DOCKER) $(BUILD_IMG)
 
 # --- signing material, which lives OUTSIDE the repo ---------------------------
@@ -447,6 +455,7 @@ test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-ui.sh
 	bash $(TESTS_DIR)/test-mkroot.sh
 	bash $(TESTS_DIR)/test-lib-pins.sh
+	bash $(TESTS_DIR)/test-lib-container.sh
 	bash $(TESTS_DIR)/test-verify-lock.sh
 	bash $(TESTS_DIR)/test-mkimage.sh
 	bash $(TESTS_DIR)/test-mesa-source.sh
@@ -486,13 +495,13 @@ test-disk: | $(BUILD_STAMP) ## Run the select-target + carve suites, which need 
 # ==============================================================================
 # No --target: `full` is the last stage in build/Dockerfile, so a plain build selects it.
 $(BUILD_STAMP): build/Dockerfile
-	docker build -t $(BUILD_IMG) -f build/Dockerfile build
+	$(QFORGE_CONTAINER) build -t $(BUILD_IMG) -f build/Dockerfile build
 	@mkdir -p $(@D) && touch $@
 
 # The signing stage alone. Both stamps key off the same Dockerfile, so editing it rebuilds
 # whichever images you actually use rather than coupling them.
 $(SIGN_STAMP): build/Dockerfile
-	docker build --target signing -t $(SIGN_IMG) -f build/Dockerfile build
+	$(QFORGE_CONTAINER) build --target signing -t $(SIGN_IMG) -f build/Dockerfile build
 	@mkdir -p $(@D) && touch $@
 
 # ==============================================================================
@@ -876,12 +885,12 @@ deploy: $(STEAMCL) ## Install the stage-1 steamcl tree onto ESP=<mountpoint>
 # the artifacts from inside a throwaway container as root, like clean-base. (out/.build-image.stamp
 # is host-owned and deliberately kept so the toolchain image isn't rebuilt.)
 clean: ## Remove built artifacts (out/), keep firmware/base caches + toolchain stamp
-	docker run --rm -v $(CURDIR)/out:/wo busybox rm -rf /wo/Image /wo/Image.gz /wo/dtbs /wo/modroot /wo/images /wo/boot /wo/initramfs.cpio.gz
+	$(CTR_RUN) --rm -v $(CURDIR)/out:/wo $(BUSYBOX) rm -rf /wo/Image /wo/Image.gz /wo/dtbs /wo/modroot /wo/images /wo/boot /wo/initramfs.cpio.gz
 
 # work/base is root-owned (the bootstrap's pacman writes it as root inside a container), so a
 # plain rm fails for the build user — remove it from inside a throwaway container as root.
 clean-base: ## Remove the (root-owned) bootstrapped root tree
-	docker run --rm -v $(CURDIR)/work:/wb busybox rm -rf /wb/base
+	$(CTR_RUN) --rm -v $(CURDIR)/work:/wb $(BUSYBOX) rm -rf /wb/base
 	rm -f $(BASE_STAMP) work/.base-mode-*   # drop the recency + mode markers too, else the next build skips a gone base
 
 clean-overlay: ## Remove the built (arch-scoped) overlay pacman repo + build tree
@@ -891,7 +900,7 @@ clean-overlay: ## Remove the built (arch-scoped) overlay pacman repo + build tre
 # one is root-owned (its build runs as root in the build image), so like clean-base this removes
 # it from inside a throwaway container. Only ever costs speed: the next build is a cold one.
 clean-ccache: ## Remove the kernel + overlay compiler caches (work/ccache)
-	docker run --rm -v $(CURDIR)/work:/wb busybox rm -rf /wb/ccache
+	$(CTR_RUN) --rm -v $(CURDIR)/work:/wb $(BUSYBOX) rm -rf /wb/ccache
 
 # THE CACHES THIS DELIBERATELY DOES *NOT* REMOVE, all of which surprise people:
 #
@@ -921,5 +930,5 @@ distclean: clean clean-base ## clean + drop fetched firmware + kernel tree (KEEP
 	# work/kernel is root-owned (the kernel build's modules_install runs as root in the build
 	# image), so remove it from inside a throwaway container like clean/clean-base — a host-side
 	# rm fails with permission errors. firmware/* are fetched on the host, so a plain rm is fine.
-	docker run --rm -v $(CURDIR)/work:/wb busybox rm -rf /wb/kernel
+	$(CTR_RUN) --rm -v $(CURDIR)/work:/wb $(BUSYBOX) rm -rf /wb/kernel
 	rm -rf firmware/linux-fw firmware/qcom-fw firmware/extra-fw

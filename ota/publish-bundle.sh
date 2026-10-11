@@ -35,6 +35,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/build/lib-container.sh"
 
 HOST="${QFORGE_OTA_HOST:-updates.qforge.invalid}"
 USER_="${QFORGE_OTA_USER:-ubuntu}"
@@ -100,9 +101,9 @@ rauc_info() { # <extra rauc args...>  — the bundle path is resolved per backen
   if command -v rauc >/dev/null 2>&1; then
     ( cd "$ROOT" && rauc info --conf="$CONF_REL" --keyring="$KEYRING_REL" "$@" "$BUNDLE_ABS" )
   else
-    command -v docker >/dev/null 2>&1 || die "neither rauc nor docker is available; cannot verify the signature, so nothing will be published"
+    command -v "$QFORGE_CONTAINER" >/dev/null 2>&1 || die "neither rauc nor $QFORGE_CONTAINER is available; cannot verify the signature, so nothing will be published"
     # The bundle's directory is mounted read-only at /bundle so a path outside the repo still works.
-    docker run --rm -v "$ROOT":/src -v "$(dirname "$BUNDLE_ABS")":/bundle:ro -w /src qforge-build \
+    ctr run --rm -v "$ROOT":/src -v "$(dirname "$BUNDLE_ABS")":/bundle:ro -w /src qforge-build \
       -c "rauc info --conf=$CONF_REL --keyring=$KEYRING_REL $* /bundle/$NAME"
   fi
 }

@@ -18,6 +18,9 @@
 # builder cannot come from a different snapshot than the packages, and bumping the snapshot without
 # re-hashing its tarball fails the fetch instead of quietly building against the old one.
 
+# The container runtime (docker or podman) for every script that sources this one.
+. "$(dirname "${BASH_SOURCE[0]}")/lib-container.sh"
+
 if ! declare -F die >/dev/null 2>&1; then
   die() { printf '[lib-pins] ERROR: %s\n' "$1" >&2; exit 1; }
 fi
@@ -74,7 +77,7 @@ pins_builder_desc() { printf '%s/system.rootfs.zst sha256:%s\n' "$(pins_snapshot
 pins_builder_ensure() {
   local snap sha ref tarball tmp cname
   snap="$(pins_snapshot)"; sha="$(pins_builder_sha)"; ref="$(pins_builder_ref)"
-  if docker image inspect "$ref" >/dev/null 2>&1; then
+  if ctr image inspect "$ref" >/dev/null 2>&1; then
     printf '%s\n' "$ref"; return 0
   fi
   command -v zstd >/dev/null 2>&1 || die "zstd not found on build host"
@@ -94,18 +97,18 @@ pins_builder_ensure() {
 
   tmp="qforge/builder-import:$sha"
   echo "[lib-pins] importing builder: $ref" >&2
-  zstd -dc "$tarball" | docker import --platform linux/arm64 - "$tmp" >/dev/null \
-    || die "docker import of the builder rootfs failed"
+  zstd -dc "$tarball" | ctr import --platform linux/arm64 - "$tmp" >/dev/null \
+    || die "$QFORGE_CONTAINER import of the builder rootfs failed"
 
   # arm64 binfmt so the imported image can execute at all under qemu.
-  if ! docker run --rm --platform linux/arm64 "$tmp" /usr/bin/true >/dev/null 2>&1; then
+  if ! ctr run --rm --platform linux/arm64 "$tmp" /usr/bin/true >/dev/null 2>&1; then
     echo "[lib-pins] registering arm64 binfmt (qemu) via tonistiigi/binfmt" >&2
-    docker run --privileged --rm tonistiigi/binfmt --install arm64 >&2
+    ctr run --privileged --rm docker.io/tonistiigi/binfmt --install arm64 >&2
   fi
 
   cname="qforge-builder-import-${sha:0:12}"
-  docker rm -f "$cname" >/dev/null 2>&1 || true
-  if ! docker run --name "$cname" --platform linux/arm64 -e SNAPSHOT="$snap" "$tmp" \
+  ctr rm -f "$cname" >/dev/null 2>&1 || true
+  if ! ctr run --name "$cname" --platform linux/arm64 -e SNAPSHOT="$snap" "$tmp" \
       bash -euo pipefail -c '
         printf "Server = %s/\$repo/os/\$arch\n" "$SNAPSHOT" > /etc/pacman.d/mirrorlist
         pacman -Sy --noconfirm >&2
@@ -115,12 +118,12 @@ pins_builder_ensure() {
         [ -z "$drift" ] || { printf "installed at a version the snapshot does not carry:\n%s\n" "$drift" >&2; exit 1; }
         rm -rf /var/lib/pacman/sync/*
       ' >&2; then
-    docker rm -f "$cname" >/dev/null 2>&1 || true
-    docker rmi "$tmp" >/dev/null 2>&1 || true
+    ctr rm -f "$cname" >/dev/null 2>&1 || true
+    ctr rmi "$tmp" >/dev/null 2>&1 || true
     die "builder rootfs does not match the pinned snapshot $snap"
   fi
-  docker commit "$cname" "$ref" >/dev/null
-  docker rm "$cname" >/dev/null
-  docker rmi "$tmp" >/dev/null
+  ctr commit "$cname" "$ref" >/dev/null
+  ctr rm "$cname" >/dev/null
+  ctr rmi "$tmp" >/dev/null
   printf '%s\n' "$ref"
 }

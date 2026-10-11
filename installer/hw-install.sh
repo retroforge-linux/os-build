@@ -39,6 +39,7 @@ log()  { printf '[%s] %s\n' "$PROG" "$1" >&2; }
 die()  { printf '[%s] ERROR: %s\n' "$PROG" "$1" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT/build/lib-container.sh"
 # shellcheck source=lib-hwstage.sh
 . "$ROOT/installer/lib-hwstage.sh"
 
@@ -138,11 +139,11 @@ log "bundle: ${BUNDLE#"$ROOT"/} ($(du -h "$BUNDLE" | cut -f1))"
 CONTAINER=qforge-hw-http
 BUNDLE_NAME="$(basename "$BUNDLE")"
 
-DOCKER_CMD=(docker run -d --rm --name "$CONTAINER" -p "$PORT:80"
-            -v "$BUNDLE:/usr/share/nginx/html/$BUNDLE_NAME:ro" nginx:alpine)
+DOCKER_CMD=(ctr run -d --rm --name "$CONTAINER" -p "$PORT:80"
+            -v "$BUNDLE:/usr/share/nginx/html/$BUNDLE_NAME:ro" docker.io/library/nginx:alpine)
 if [ "$SERVE" = 1 ]; then
-  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  "${DOCKER_CMD[@]}" >/dev/null || die "cannot start nginx (is docker up?)"
+  ctr rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  "${DOCKER_CMD[@]}" >/dev/null || die "cannot start nginx (is $QFORGE_CONTAINER up?)"
   log "serving $BUNDLE_NAME on :$PORT as container $CONTAINER"
 fi
 
@@ -281,12 +282,12 @@ if [ "$SERVE" = 1 ]; then
   cat <<EOF
 
 The bundle is served by container $CONTAINER; stop it with
-  docker rm -f $CONTAINER
+  $QFORGE_CONTAINER rm -f $CONTAINER
 EOF
 else
   cat <<EOF
 
 --no-serve: nothing is listening on :$PORT. Start it with
-  ${DOCKER_CMD[*]}
+  $(ctr_run_cmdline) ${DOCKER_CMD[*]:2}
 EOF
 fi

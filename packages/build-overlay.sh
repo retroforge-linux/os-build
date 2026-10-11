@@ -79,7 +79,7 @@ if [ ${#PINS[@]} -eq 0 ]; then
   exit 0
 fi
 
-command -v docker >/dev/null 2>&1 || { echo "docker required for overlay build" >&2; exit 1; }
+ctr_require "the overlay build"
 DEVEL_REF="$(pins_builder_ref)"
 
 pin_field() { sed -n "s/^$2:[[:space:]]*//p" "$1" | head -1; }
@@ -339,7 +339,7 @@ else
 fi
 for name in "${BUILD_NAMES[@]}"; do
   echo "[overlay] === build $name (isolated container) ===" >&2
-  docker run --rm --platform linux/arm64 \
+  ctr run --rm --platform linux/arm64 \
     -e HOSTUID="$(id -u)" -e HOSTGID="$(id -g)" -e PKG="$name" -e USE_CCACHE="$USE_CCACHE" \
     -v "$STAGE":/stage -v "$REPO_DIR":/repo "${CCACHE_MOUNT[@]}" "$DEVEL_REF" \
     bash -euo pipefail -c '
@@ -413,7 +413,7 @@ if [ "$DO_INDEX" -eq 0 ]; then
   echo "[overlay] --no-index: skipping the repo db (caller will index the assembled repo)" >&2
 else
 echo "[overlay] indexing repo db" >&2
-docker run --rm --platform linux/arm64 \
+ctr run --rm --platform linux/arm64 \
   -e HOSTUID="$(id -u)" -e HOSTGID="$(id -g)" -e ARCH="$ARCH" \
   -v "$REPO_DIR":/repo "$DEVEL_REF" \
   bash -euo pipefail -c '

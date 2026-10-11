@@ -23,7 +23,7 @@
 # Build the full image with a plain `docker build` (it is the last stage, so it is the default
 # target); `make test-signing` builds `--target signing`.
 
-FROM ubuntu:26.04 AS signing
+FROM docker.io/library/ubuntu:26.04 AS signing
 
 ENV DEBIAN_FRONTEND=noninteractive
 

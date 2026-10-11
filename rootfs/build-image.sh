@@ -16,9 +16,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+. "$ROOT/build/lib-container.sh"
 OUT="$ROOT/out"
 FW="$ROOT/firmware/qcom-fw"
-DK=(docker run --rm -v "$ROOT":/src -w /src qforge-build)
+DK=(ctr run --rm -v "$ROOT":/src -w /src qforge-build)
 
 [ -f "$OUT/Image" ] \
   || { echo "no kernel: out/Image — run kernel/build.sh first" >&2; exit 1; }
@@ -42,7 +43,7 @@ fi
 # 3. assemble the read-only Btrfs root. Forward the TEST-ONLY credential env (a no-op
 # unless QFORGE_DEV=1) so a dev card can carry Wi-Fi + SSH creds; see assemble-rootfs.sh.
 # Env flags must precede the image name, so spell this docker run out rather than reuse DK.
-docker run --rm -v "$ROOT":/src -w /src \
+ctr run --rm -v "$ROOT":/src -w /src \
   -e QFORGE_DEV -e QFORGE_WIFI -e QFORGE_WIFI_SSID -e QFORGE_WIFI_PSK -e QFORGE_SSH_PUBKEY \
   -e QFORGE_DEBUG \
   qforge-build rootfs/assemble-rootfs.sh "$BASE_CTR"

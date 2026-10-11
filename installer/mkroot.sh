@@ -112,7 +112,7 @@ REF="$(pins_builder_ref)"
 SNAPSHOT="$(pins_snapshot)"
 [ -f "$PACMANCONF" ] || die "no bootstrap pacman config: $PACMANCONF"
 [ -f "$OSRELEASE" ]  || die "no os-release declaration: $OSRELEASE"
-command -v docker >/dev/null 2>&1 || die "docker required for the root bootstrap"
+ctr_require "the root bootstrap"
 
 # The from-source overlay repo is REQUIRED, not optional: installer/pkgs.list names gamescope, which
 # exists in no holo repo at all. Refuse here, on the host, rather than 20 emulated minutes in.
@@ -489,7 +489,7 @@ pins_builder_ensure >/dev/null
 # tmpfiles directories in it.
 log "clearing the target root -> ${DEST#"$ROOT"/}"
 mkdir -p "$ROOT/work"
-docker run --rm -v "$ROOT/work":/wb "$REF" sh -c 'rm -rf /wb/installer-base && mkdir -m0755 /wb/installer-base'
+ctr run --rm -v "$ROOT/work":/wb "$REF" sh -c 'rm -rf /wb/installer-base && mkdir -m0755 /wb/installer-base'
 
 if [ -n "$RESOLVE" ]; then
   log "resolving the installer root under arm64: ${PKGS[*]}"
@@ -497,7 +497,7 @@ else
   log "laying down $(wc -l <"$STAGE/install.list") locked packages under arm64"
 fi
 
-docker run --rm --platform linux/arm64 \
+ctr run --rm --platform linux/arm64 \
   -v "$STAGE":/prebuilt:ro \
   -v "$FW_QCOM_DIR":/fw-qcom:ro \
   -v "$FW_LINUX_DIR":/fw-linux:ro \

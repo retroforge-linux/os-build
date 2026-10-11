@@ -310,7 +310,7 @@ script:$(sha256sum "$0" | cut -d' ' -f1)"
 [ -f "$IDPIN" ] || { echo "no UID/GID pin: $IDPIN" >&2; exit 1; }
 EXPECTED_PKGS="$EXPECTED_PKGS
 ids:$(sha256sum "$IDPIN" | cut -d' ' -f1)"
-command -v docker >/dev/null 2>&1 || { echo "docker required for the root bootstrap" >&2; exit 1; }
+ctr_require "the root bootstrap"
 [ -f "$PACMANCONF" ] || { echo "no bootstrap pacman config: $PACMANCONF" >&2; exit 1; }
 [ -f "$OSRELEASE" ]  || { echo "no os-release declaration: $OSRELEASE" >&2; exit 1; }
 
@@ -427,14 +427,14 @@ fi
 # inside a container for exactly this reason).
 echo "[qforge] clearing the target root -> ${DEST#"$ROOT"/}" >&2
 mkdir -p "$ROOT/work"
-docker run --rm -v "$ROOT/work":/wb "$REF" sh -c 'rm -rf /wb/base && mkdir -m0755 /wb/base'
+ctr run --rm -v "$ROOT/work":/wb "$REF" sh -c 'rm -rf /wb/base && mkdir -m0755 /wb/base'
 
 if [ -n "$RESOLVE" ]; then
   echo "[qforge] resolving the root under arm64: ${INSTALL_PKGS[*]}" >&2
 else
   echo "[qforge] laying down $(wc -l <"$PREBUILT_DIR/install.list") locked packages under arm64" >&2
 fi
-docker run --rm --platform linux/arm64 -v "$PREBUILT_DIR":/prebuilt:ro \
+ctr run --rm --platform linux/arm64 -v "$PREBUILT_DIR":/prebuilt:ro \
   -v "$PACMAN_CACHE":/var/cache/pacman/pkg \
   -v "$OVERLAY_REPO":/novarepo:ro \
   -v "$DEST":/target \
