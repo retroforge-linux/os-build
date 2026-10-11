@@ -348,7 +348,7 @@ for name, multi in (("rgb:l1", True), ("rgb:l2", True), ("mmc0::", False), ("lef
     (d / "brightness").write_text("0\n"); (d / "max_brightness").write_text("255\n")
     if multi:
         (d / "multi_index").write_text("red green blue\n"); (d / "multi_intensity").write_text("255 255 255\n")
-found = pd.discover_leds(leds)
+found = pd.discover_leds(leds, hw=tmp / "no-hw-map")
 check("led: only multicolor LEDs are found", [p.name for p in found], ["rgb:l1", "rgb:l2"])
 pd.apply_leds(found, (0, 96, 255), 64)
 check("led: colour written", (leds / "rgb:l1" / "multi_intensity").read_text().strip(), "0 96 255")
@@ -360,6 +360,36 @@ bad = configparser.ConfigParser(); bad.read_string("[led]\ncolor=1,2\n")
 raises("led: a two-channel colour is rejected", lambda: pd.parse_led_config(bad))
 empty = configparser.ConfigParser()
 check("led: no [led] section means the defaults", pd.parse_led_config(empty)["enabled"], True)
+
+# --- the hardware map as the source of the fan and LEDs (docs/hardware-map.md) ----------------
+hw = tmp / "hw"
+(hw / "leds" / "ring").mkdir(parents=True, exist_ok=True)
+(hw / "leds" / "power").mkdir(parents=True, exist_ok=True)
+plain = leds / "power-led"; plain.mkdir(parents=True, exist_ok=True)
+(plain / "brightness").write_text("0\n"); (plain / "max_brightness").write_text("1\n")
+os.symlink(leds / "rgb:l2", hw / "leds" / "ring" / "01")
+os.symlink(leds / "rgb:l1", hw / "leds" / "ring" / "02")
+os.symlink(plain, hw / "leds" / "power" / "01")
+mapped = pd.discover_leds(leds, hw=hw)
+check("hw: LEDs come from the map's groups, in group order", [p.name for p in mapped], ["power-led", "rgb:l2", "rgb:l1"])
+pd.apply_leds(mapped, (0, 96, 255), 255)
+check("hw: a single-colour LED is lit at its own max", (plain / "brightness").read_text().strip(), "1")
+pd.apply_leds(mapped, (0, 0, 0), 255)
+check("hw: black turns a single-colour LED off", (plain / "brightness").read_text().strip(), "0")
+pd.apply_leds(mapped, (10, 20, 30), 128)
+check("hw: brightness scales onto a 0-1 LED", (plain / "brightness").read_text().strip(), "1")
+empty = tmp / "hw-empty"; (empty / "leds").mkdir(parents=True, exist_ok=True)
+check("hw: a map with no LED groups falls back to the RGB scan",
+      [p.name for p in pd.discover_leds(leds, hw=empty)], ["rgb:l1", "rgb:l2"])
+hwmon = tmp / "hwmon"; fan = hwmon / "hwmon7"; fan.mkdir(parents=True, exist_ok=True)
+(fan / "name").write_text("gpio_fan\n"); (fan / "pwm1").write_text("0\n")
+other = hwmon / "hwmon1"; other.mkdir(parents=True, exist_ok=True); (other / "name").write_text("cpu_thermal\n")
+os.symlink(fan, hw / "fan")
+check("hw: the fan is the map's fan link", pd.discover_fan(hw=hw, hwmon_root=hwmon), fan.resolve())
+check("hw: no map -> the first hwmon with pwm1", pd.discover_fan(hw=empty, hwmon_root=hwmon), fan)
+cfg = {"enabled": False, "color": (255, 0, 64), "brightness": 200}
+rt = configparser.ConfigParser(); rt.read_string(pd.render_led_dropin(cfg))
+check("led drop-in: round-trips through the parser", pd.parse_led_config(rt), cfg)
 
 for status, name in results:
     print(f"{status} {name}")

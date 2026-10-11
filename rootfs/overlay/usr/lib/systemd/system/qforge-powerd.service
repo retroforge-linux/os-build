@@ -1,5 +1,8 @@
 [Unit]
-Description=qforge power daemon (fan curve, boot CPU governor, sched_ext)
+Description=qforge power daemon (fan curve, LEDs, boot CPU governor, sched_ext)
+# The fan and LEDs come from the hardware map (/run/qforge/hw); without it powerd scans sysfs.
+Wants=qforge-hw.service
+After=qforge-hw.service
 StartLimitIntervalSec=0
 
 [Service]

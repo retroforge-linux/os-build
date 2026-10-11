@@ -43,7 +43,22 @@ first hwmon with `fan1_input`, the `*gpu*` devfreq, and `power=power-led` when t
 - The OpenGamepadUI plugin's **Quick bar > Hardware** card (`apps/ogui-qforge-plugin/plugin/hardware_card.gd`
   over `hardware_info.gd`) shows battery, charger, temperatures, fan, clocks, backlight and LED
   groups from this tree, hiding whatever the board lacks. No board-specific code.
+- **qforge-powerd** drives the `fan` link's hwmon (a two-speed gpio-fan is switched on/off at
+  the curve's first step) and every LED in `leds/<group>/` (colour on multicolor LEDs, brightness
+  on all; off for suspend). It falls back to scanning sysfs only when the map is absent or names
+  no LEDs. Its D-Bus interface (`org.qforge.Power1`) is how a UI changes them: `FanCurve`,
+  `LedCount`, `LedEnabled`, `LedColor` (R, G, B), `LedBrightness` (0-255), kept in
+  `/etc/qforge/power.conf.d/50-{fan-curves,leds}.conf`. `qforge-powerd.service` starts after
+  `qforge-hw.service`.
+- The plugin's Hardware card also carries the LED controls (Lights, Brightness, colour), through
+  powerd's D-Bus interface only (`power_client.gd`), hidden when `LedCount` is 0.
 - Scripts: `. /run/qforge/hw/hw.env` or read through the links.
+
+## Layering
+
+Board differences live in data: the profile names nodes, hw-map resolves them, the daemons
+(PowerStation, InputPlumber, UPower, and qforge-powerd for fan and LEDs) drive them, and the UI
+talks to the daemons over D-Bus. A new board is a profile (and DTS), not code.
 
 ## Tests
 

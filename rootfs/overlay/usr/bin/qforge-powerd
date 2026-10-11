@@ -46,6 +46,12 @@ CONFIG_FILE = CONFIG_DIR / "power.conf"
 # order, so a 90-*.conf of their own outranks ours.
 CONFIG_DROPIN_DIR = Path(f"{CONFIG_FILE}.d")
 FAN_CURVE_DROPIN = CONFIG_DROPIN_DIR / "50-fan-curves.conf"
+# The LED setting set over D-Bus (LedEnabled/LedColor/LedBrightness), rewritten whole like the curve.
+LED_DROPIN = CONFIG_DROPIN_DIR / "50-leds.conf"
+# The board's hardware map (/usr/lib/qforge/hw-map, docs/hardware-map.md): which hwmon is the fan
+# and which LEDs make up which group. powerd drives what it names and only scans sysfs itself
+# when the map is absent (an image without it, or hw-map not run yet).
+HW_RUN = Path(os.environ.get("QFORGE_HW_RUN", "/run/qforge/hw"))
 # The curve powerd itself writes, as opposed to a factory one. The name is what makes
 # FanCurveIsCustom answerable, and what ResetFanCurve deletes.
 CUSTOM_CURVE = "custom"
@@ -141,6 +147,13 @@ XML = f"""
     <property name="FanCurveMinPwm" type="u" access="read"/>
     <property name="FanCurveMaxPwm" type="u" access="read"/>
     <property name="FanCurveIsCustom" type="b" access="read"/>
+    <!-- The board's LEDs (the hardware map's LED groups; without one, the RGB LEDs). LedCount 0
+         means there is nothing to light. LedColor is R, G, B (0-255); single-colour LEDs follow
+         LedBrightness and are off only for black. Kept in power.conf.d/50-leds.conf. -->
+    <property name="LedCount" type="u" access="read"/>
+    <property name="LedEnabled" type="b" access="readwrite"/>
+    <property name="LedColor" type="au" access="readwrite"/>
+    <property name="LedBrightness" type="u" access="readwrite"/>
     <!-- Deletes what powerd wrote and returns to the factory curve. Does not touch an
          operator's own override in the /etc file. -->
     <method name="ResetFanCurve"/>
@@ -337,11 +350,40 @@ def parse_led_config(parser):
     return {"enabled": enabled == "on", "color": color, "brightness": brightness}
 
 
-def discover_leds(root=Path("/sys/class/leds")):
-    """The board's multicolor (RGB) LEDs: the Air X/Y joystick rings are ten rgb:l<n> (and
-    rgb:r<n>) multi-LEDs over aw20036 channels. Plain single-channel LEDs (mmc activity, the
-    rings' raw channels) are left alone."""
+def discover_leds(root=Path("/sys/class/leds"), hw=None):
+    """The LEDs powerd lights. With a hardware map, every LED of every group it names
+    (hw/leds/<group>/NN -> /sys/class/leds/<led>), single-colour ones included. Without one, the
+    multicolor (RGB) LEDs: the Air X/Y stick rings are rgb:l<n> / rgb:r<n> multi-LEDs over
+    aw20036 channels; plain single-channel LEDs (mmc activity, the rings' raw channels) are left
+    alone there because nothing says they are for show."""
+    hw = HW_RUN if hw is None else hw
+    if (hw / "leds").is_dir():
+        found = []
+        for group in sorted((hw / "leds").iterdir()):
+            for link in sorted(group.iterdir()):
+                led = link.resolve()
+                if (led / "brightness").exists() and led not in found:
+                    found.append(led)
+        if found:
+            return found
     return sorted(p for p in root.glob("*") if (p / "multi_intensity").exists() and (p / "multi_index").exists())
+
+
+def discover_fan(hw=None, hwmon_root=Path("/sys/class/hwmon")):
+    """The fan's hwmon directory, if it can be driven (pwm1). The hardware map's `fan` link
+    first; otherwise a hwmon named pwmfan, then the first hwmon with a pwm1."""
+    hw = HW_RUN if hw is None else hw
+    if (hw / "fan").exists():
+        fan = (hw / "fan").resolve()
+        if (fan / "pwm1").exists():
+            return fan
+    for path in sorted(hwmon_root.glob("hwmon*")):
+        if read_text(path / "name") == "pwmfan" and (path / "pwm1").exists():
+            return path
+    for path in sorted(hwmon_root.glob("hwmon*")):
+        if (path / "pwm1").exists():
+            return path
+    return None
 
 
 def led_intensity(multi_index, color):
@@ -351,9 +393,32 @@ def led_intensity(multi_index, color):
 
 
 def apply_leds(leds, color, brightness):
+    """Colour for multicolor LEDs, brightness for all. A single-colour LED has no colour of its
+    own: it is lit at the brightness unless the colour is black."""
     for led in leds:
-        write_text(led / "multi_intensity", led_intensity(read_text(led / "multi_index"), color))
-        write_text(led / "brightness", clamp(brightness, 0, int(read_text(led / "max_brightness", "255") or 255)))
+        top = int(read_text(led / "max_brightness", "255") or 255)
+        if (led / "multi_intensity").exists():
+            write_text(led / "multi_intensity", led_intensity(read_text(led / "multi_index"), color))
+            level = brightness
+        else:
+            level = brightness if any(color) else 0
+        # brightness is 0-255 on the D-Bus side; scale onto LEDs with a smaller range
+        write_text(led / "brightness", clamp(round(level * top / 255), 0, top))
+
+
+def render_led_dropin(config):
+    """The whole LED drop-in, for the setting made over D-Bus."""
+    r, g, b = config["color"]
+    return "\n".join([
+        "# Written by qforge-powerd (org.qforge.Power1 LedEnabled/LedColor/LedBrightness).",
+        "# Deleting this file returns the LEDs to the factory [led] setting.",
+        "",
+        "[led]",
+        f"enabled={'on' if config['enabled'] else 'off'}",
+        f"color={r},{g},{b}",
+        f"brightness={config['brightness']}",
+        "",
+    ])
 
 
 def resample_curve(curve, stops):
@@ -418,16 +483,7 @@ def require_section(parser, section):
 
 
 def fan_safe_once():
-    fan_hwmon = None
-    for path in Path("/sys/class/hwmon").glob("hwmon*"):
-        if read_text(path / "name") == "pwmfan" and (path / "pwm1").exists():
-            fan_hwmon = path
-            break
-    if not fan_hwmon:
-        for path in Path("/sys/class/hwmon").glob("hwmon*"):
-            if (path / "pwm1").exists():
-                fan_hwmon = path
-                break
+    fan_hwmon = discover_fan()
     if not fan_hwmon:
         return
     enable = fan_hwmon / "pwm1_enable"
@@ -458,10 +514,10 @@ class QforgePower:
         self.suspend_save = {}
         self.connection = None
         self.led_config = {"enabled": False, "color": (0, 0, 0), "brightness": 0}
+        self.leds = []
         self.load_config()
         self.discover()
         self.load_state()
-        self.leds = discover_leds()
         self.set_leds(True)
         if self.fan_pwm:
             current = read_text(self.fan_pwm)
@@ -485,6 +541,7 @@ class QforgePower:
         self.fan_binary = is_two_speed_fan(self.fan_hwmon)
         self.fan_on = False
         self.temp_paths = self.discover_temps()
+        self.leds = discover_leds()
 
     def parse_config(self, include_user=True):
         fan_curves = {}
@@ -598,13 +655,7 @@ class QforgePower:
         return None
 
     def discover_fan_hwmon(self):
-        for path in Path("/sys/class/hwmon").glob("hwmon*"):
-            if read_text(path / "name") == "pwmfan" and (path / "pwm1").exists():
-                return path
-        for path in Path("/sys/class/hwmon").glob("hwmon*"):
-            if (path / "pwm1").exists():
-                return path
-        return None
+        return discover_fan()
 
     def discover_temps(self):
         control = []
@@ -782,6 +833,8 @@ class QforgePower:
         governor is not re-applied: after boot it is the power profile's (PowerStation)."""
         self.load_config()
         self.discover()
+        if not getattr(self, "suspended", False):
+            self.set_leds(True)
 
     def write_fan_dropin(self, pwms):
         """Rebuild the drop-in for a custom curve, or remove it when `pwms` is None."""
@@ -796,6 +849,27 @@ class QforgePower:
         else:
             FAN_CURVE_DROPIN.unlink(missing_ok=True)
         self.reload_config()
+
+    def set_led(self, enabled=None, color=None, brightness=None):
+        """Change one part of the LED setting and keep it: the drop-in is rewritten whole and the
+        config reloaded, so what D-Bus reports is what an operator's Reload would give."""
+        config = dict(self.led_config)
+        if enabled is not None:
+            config["enabled"] = bool(enabled)
+        if color is not None:
+            if len(color) != 3:
+                raise ValueError("LedColor needs three values (R, G, B)")
+            config["color"] = tuple(clamp(int(c), 0, 255) for c in color)
+        if brightness is not None:
+            config["brightness"] = clamp(int(brightness), 0, 255)
+        CONFIG_DROPIN_DIR.mkdir(parents=True, exist_ok=True)
+        temporary = LED_DROPIN.with_name(f".{LED_DROPIN.name}.new")
+        temporary.write_text(render_led_dropin(config))
+        os.replace(temporary, LED_DROPIN)
+        self.reload_config()
+
+    def led_changed(self):
+        return {name: self.get_property(name) for name in ("LedEnabled", "LedColor", "LedBrightness")}
 
     def fan_curve_changed(self):
         return {
@@ -880,7 +954,7 @@ class QforgePower:
     def set_leds(self, on):
         """Nothing else lights the RGB LEDs: InputPlumber 0.81 parses a fixed LED colour but never
         applies it, and our xbox-elite target carries no LED output. Off for suspend."""
-        if not self.leds:
+        if not getattr(self, "leds", None):
             return
         lit = on and self.led_config["enabled"]
         apply_leds(self.leds, self.led_config["color"], self.led_config["brightness"] if lit else 0)
@@ -1095,6 +1169,14 @@ class QforgePower:
             return GLib.Variant("u", self.fan_config["max_pwm"])
         if prop == "FanCurveIsCustom":
             return GLib.Variant("b", self.fan_curve_name == CUSTOM_CURVE)
+        if prop == "LedCount":
+            return GLib.Variant("u", len(self.leds))
+        if prop == "LedEnabled":
+            return GLib.Variant("b", self.led_config["enabled"])
+        if prop == "LedColor":
+            return GLib.Variant("au", list(self.led_config["color"]))
+        if prop == "LedBrightness":
+            return GLib.Variant("u", self.led_config["brightness"])
         raise KeyError(prop)
 
     def set_property(self, prop, value):
@@ -1105,6 +1187,15 @@ class QforgePower:
         elif prop == "FanCurve":
             self.set_fan_curve(list(value))
             changed = self.fan_curve_changed()
+        elif prop == "LedEnabled":
+            self.set_led(enabled=value.get_boolean())
+            changed = self.led_changed()
+        elif prop == "LedColor":
+            self.set_led(color=list(value))
+            changed = self.led_changed()
+        elif prop == "LedBrightness":
+            self.set_led(brightness=value.get_uint32())
+            changed = self.led_changed()
         else:
             raise KeyError(prop)
         self.save_state()
@@ -1126,6 +1217,8 @@ class QforgePower:
             "fan_curve_custom": self.get_property("FanCurveIsCustom"),
             "temperature": self.get_property("Temperature"),
             "suspended": GLib.Variant("b", self.suspended),
+            "leds": GLib.Variant("as", [str(led) for led in self.leds]),
+            "led_enabled": self.get_property("LedEnabled"),
         }
 
     def emit_properties(self, changed, path=OBJECT_PATH, iface=IFACE):
