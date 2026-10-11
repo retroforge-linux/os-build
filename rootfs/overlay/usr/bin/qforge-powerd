@@ -7,6 +7,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 import warnings
 from pathlib import Path
@@ -157,6 +158,16 @@ XML = f"""
     <!-- Deletes what powerd wrote and returns to the factory curve. Does not touch an
          operator's own override in the /etc file. -->
     <method name="ResetFanCurve"/>
+    <!-- Fan test (the plugin's Quick bar > Fan test): run the fan at a fixed duty, pausing the
+         curve. On a fan that can only be switched (gpio-fan) the duty is made by pulsing it at
+         `hz`; on a PWM fan the duty goes to pwm1 and `hz` is ignored. Stops by itself after
+         FAN_TEST_MAX_SECS or above FAN_TEST_MAX_TEMP. FanTest is "" when no test runs. -->
+    <method name="FanTestStart">
+      <arg type="u" name="duty_percent" direction="in"/>
+      <arg type="u" name="hz" direction="in"/>
+    </method>
+    <method name="FanTestStop"/>
+    <property name="FanTest" type="s" access="read"/>
   </interface>
 </node>
 """
@@ -237,20 +248,39 @@ def sd_notify(message):
         pass
 
 
-def board_cpu_schedulers():
-    """The board profile's QFORGE_CPU_SCHEDULERS (device-env), as a set; None when the profile
-    sets none (every scheduler allowed) or device-env cannot be run."""
+def board_profile():
+    """The board profile's fields (device-env's KEY=value output), {} when it cannot be run."""
     try:
         out = subprocess.run([str(DEVICE_ENV)], check=False, text=True, timeout=10,
                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout
     except (OSError, subprocess.SubprocessError):
-        return None
+        return {}
+    fields = {}
     for line in out.splitlines():
-        if line.startswith("QFORGE_CPU_SCHEDULERS="):
-            words = shlex.split(line.split("=", 1)[1])
-            value = " ".join(words).split()
-            return set(value) if value else None
-    return None
+        if "=" in line and line.startswith("QFORGE_"):
+            key, value = line.split("=", 1)
+            try:
+                fields[key] = " ".join(shlex.split(value))
+            except ValueError:
+                continue
+    return fields
+
+
+def board_cpu_schedulers():
+    """The board profile's QFORGE_CPU_SCHEDULERS (device-env), as a set; None when the profile
+    sets none (every scheduler allowed) or device-env cannot be run."""
+    value = board_profile().get("QFORGE_CPU_SCHEDULERS", "").split()
+    return set(value) if value else None
+
+
+# Profile fields that set [fan] keys for this board (what its fan needs, e.g. a duty it does not
+# stall at). They sit between the factory config and the operator's: /etc and drop-ins win.
+BOARD_FAN_KEYS = {"QFORGE_FAN_MIN_PWM": "min_pwm", "QFORGE_FAN_OFF_BELOW": "off_below"}
+
+
+def board_fan_config(profile):
+    return {key: profile[field] for field, key in BOARD_FAN_KEYS.items()
+            if profile.get(field, "").strip().isdigit()}
 
 
 def ints_from_file(path):
@@ -325,6 +355,69 @@ def binary_fan_on(curve, temp, was_on, on_pwm, hysteresis):
     if was_on:
         return exact(temp + hysteresis) >= on_pwm
     return exact(temp) >= on_pwm
+
+
+FAN_TEST_MAX_SECS = 600
+FAN_TEST_MAX_TEMP = 85
+
+
+class FanTest:
+    """A fixed fan duty for listening tests. Software PWM on a switch-only fan (a thread toggling
+    pwm1 between 0 and max), a plain pwm1 write on a PWM fan."""
+
+    def __init__(self, pwm_path, max_pwm, switch_only, duty, hz):
+        self.pwm_path, self.max_pwm, self.switch_only = pwm_path, max_pwm, switch_only
+        self.duty = clamp(int(duty), 0, 100)
+        self.hz = clamp(int(hz), 1, 500)
+        self.started = time.monotonic()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def describe(self):
+        if self.switch_only and 0 < self.duty < 100:
+            return f"{self.duty}% at {self.hz} Hz (software PWM)"
+        return f"{self.duty}% ({'switch' if self.switch_only else 'PWM'} fan)"
+
+    def start(self):
+        if self.switch_only and 0 < self.duty < 100:
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+        else:
+            on = self.duty >= 100 if self.switch_only else True
+            level = (self.max_pwm if on else 0) if self.switch_only else round(self.duty * 255 / 100)
+            write_text(self.pwm_path, level)
+
+    def _run(self):
+        period = 1.0 / self.hz
+        on_t, off_t = period * self.duty / 100.0, period * (100 - self.duty) / 100.0
+        try:
+            with open(self.pwm_path, "w", buffering=1) as f:
+                while not self._stop.is_set():
+                    f.write(f"{self.max_pwm}\n"); f.flush()
+                    if self._stop.wait(on_t):
+                        break
+                    f.write("0\n"); f.flush()
+                    self._stop.wait(off_t)
+        except OSError as exc:
+            print(f"qforge-powerd: fan test pulse failed: {exc}", file=sys.stderr)
+
+    def stop(self):
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=1)
+
+    def expired(self, temp):
+        return time.monotonic() - self.started > FAN_TEST_MAX_SECS or (temp and temp >= FAN_TEST_MAX_TEMP)
+
+
+def fan_stopped(off_below, temp, is_stopped, restart_margin=3):
+    """Whether a PWM fan should stand still: below off_below (C), until temp reaches off_below +
+    restart_margin again. off_below 0 (the default) never stops it; no temperature never does."""
+    if not off_below or not temp:
+        return False
+    if is_stopped:
+        return temp < off_below + restart_margin
+    return temp < off_below
 
 
 def is_two_speed_fan(hwmon, thermal_root=Path("/sys/class/thermal")):
@@ -515,6 +608,7 @@ class QforgePower:
         self.connection = None
         self.led_config = {"enabled": False, "color": (0, 0, 0), "brightness": 0}
         self.leds = []
+        self.fan_test = None
         self.load_config()
         self.discover()
         self.load_state()
@@ -546,7 +640,12 @@ class QforgePower:
     def parse_config(self, include_user=True):
         fan_curves = {}
         parser = configparser.ConfigParser()
-        config_files = [FACTORY_CONFIG_FILE]
+        if not parser.read([FACTORY_CONFIG_FILE]):
+            raise FileNotFoundError(FACTORY_CONFIG_FILE)
+        board = board_fan_config(board_profile())
+        if board:
+            parser.read_dict({"fan": board})
+        config_files = []
         if include_user:
             if CONFIG_FILE.exists():
                 config_files.append(CONFIG_FILE)
@@ -554,8 +653,7 @@ class QforgePower:
             # a 90- of theirs outranks us. Later files win key-by-key, so a drop-in holding
             # only `[fan] curve=` overrides that key and inherits the rest of [fan].
             config_files.extend(sorted(CONFIG_DROPIN_DIR.glob("*.conf")))
-        if not parser.read(config_files):
-            raise FileNotFoundError(FACTORY_CONFIG_FILE)
+        parser.read(config_files)
         self.led_config = parse_led_config(parser)
         cpu_governor = parser.get("cpu", "governor", fallback=DEFAULT_CPU_GOVERNOR).strip()
         if not cpu_governor:
@@ -592,6 +690,10 @@ class QforgePower:
         # below that it turns off again.
         fan_config["switch_on_pwm"] = clamp(parser.getint("fan", "switch_on_pwm", fallback=77), 1, 255)
         fan_config["switch_hysteresis"] = clamp(parser.getint("fan", "switch_hysteresis", fallback=6), 0, 30)
+        # PWM fans: below off_below (C) the fan stops instead of idling at min_pwm; 0 = never.
+        # It restarts off_below + 3, and with a kick (fan_kick_pwm) so it spins up from standstill.
+        fan_config["off_below"] = clamp(parser.getint("fan", "off_below", fallback=0), 0, 120)
+        fan_config["kick_pwm"] = clamp(parser.getint("fan", "kick_pwm", fallback=128), 0, 255)
         fan_config["min_pwm"] = clamp(fan_config["min_pwm"], 0, 255)
         fan_config["max_pwm"] = clamp(fan_config["max_pwm"], fan_config["min_pwm"], 255)
         fan_config["curve_stops"] = parse_curve_stops(
@@ -1064,11 +1166,42 @@ class QforgePower:
             return self.fan_config["min_pwm"]
         return self.quantize_pwm(curve_pwm(curve, temp))
 
+    def fan_test_start(self, duty, hz):
+        if not self.fan_pwm:
+            raise RuntimeError("no fan")
+        self.fan_test_stop(emit=False)
+        if self.fan_enable and self.fan_enable.exists():
+            write_text(self.fan_enable, "1")
+        self.fan_test = FanTest(self.fan_pwm, self.fan_config["max_pwm"], self.fan_binary, duty, hz)
+        self.fan_test.start()
+        print(f"qforge-powerd: fan test {self.fan_test.describe()}", file=sys.stderr)
+        self.emit_fan_test()
+
+    def fan_test_stop(self, emit=True):
+        if self.fan_test:
+            self.fan_test.stop()
+            self.fan_test = None
+            self.last_pwm = 0 if self.fan_binary else self.last_pwm
+            print("qforge-powerd: fan test stopped, curve resumes", file=sys.stderr)
+            if emit:
+                self.emit_fan_test()
+
+    def emit_fan_test(self):
+        if self.connection:
+            self.emit_properties({"FanTest": self.get_property("FanTest")})
+
     def fan_tick(self):
         try:
             if not self.fan_pwm:
                 sd_notify("WATCHDOG=1")
                 return True
+            if self.fan_test:
+                # the curve is paused; only the test's own limits end it
+                if self.fan_test.expired(self.read_temp()):
+                    self.fan_test_stop()
+                else:
+                    sd_notify("WATCHDOG=1")
+                    return True
             if self.fan_enable and self.fan_enable.exists():
                 write_text(self.fan_enable, "1")
 
@@ -1094,11 +1227,19 @@ class QforgePower:
                         self.fan_on = True  # no temperature: fail safe
                     self.last_pwm = self.fan_config["max_pwm"] if self.fan_on else 0
                 else:
-                    if target > self.last_pwm:
-                        next_pwm = min(target, self.last_pwm + self.fan_config["ramp_up"])
+                    stopped = fan_stopped(self.fan_config["off_below"], temp and self.smoothed_temp,
+                                          self.last_pwm == 0)
+                    if stopped:
+                        self.last_pwm = 0
+                    elif self.last_pwm == 0 and self.fan_config["off_below"]:
+                        # from standstill: a short kick, then the curve takes over next tick
+                        self.last_pwm = max(target, self.fan_config["kick_pwm"])
                     else:
-                        next_pwm = max(target, self.last_pwm - self.fan_config["ramp_down"])
-                    self.last_pwm = clamp(next_pwm, self.fan_config["min_pwm"], self.fan_config["max_pwm"])
+                        if target > self.last_pwm:
+                            next_pwm = min(target, self.last_pwm + self.fan_config["ramp_up"])
+                        else:
+                            next_pwm = max(target, self.last_pwm - self.fan_config["ramp_down"])
+                        self.last_pwm = clamp(next_pwm, self.fan_config["min_pwm"], self.fan_config["max_pwm"])
 
             write_text(self.fan_pwm, self.last_pwm)
             if self.connection:
@@ -1169,6 +1310,8 @@ class QforgePower:
             return GLib.Variant("u", self.fan_config["max_pwm"])
         if prop == "FanCurveIsCustom":
             return GLib.Variant("b", self.fan_curve_name == CUSTOM_CURVE)
+        if prop == "FanTest":
+            return GLib.Variant("s", self.fan_test.describe() if self.fan_test else "")
         if prop == "LedCount":
             return GLib.Variant("u", len(self.leds))
         if prop == "LedEnabled":
@@ -1218,6 +1361,7 @@ class QforgePower:
             "temperature": self.get_property("Temperature"),
             "suspended": GLib.Variant("b", self.suspended),
             "leds": GLib.Variant("as", [str(led) for led in self.leds]),
+            "fan_test": self.get_property("FanTest"),
             "led_enabled": self.get_property("LedEnabled"),
         }
 
@@ -1230,7 +1374,7 @@ class QforgePower:
             GLib.Variant("(sa{sv}as)", (iface, changed, [])),
         )
 
-    def handle_method_call(self, _conn, _sender, _path, iface, method, _params, invocation):
+    def handle_method_call(self, _conn, _sender, _path, iface, method, params, invocation):
         if iface != IFACE:
             invocation.return_dbus_error(f"{BUS_NAME}.Error.UnknownInterface", iface)
             return
@@ -1254,7 +1398,21 @@ class QforgePower:
             self.emit_properties(self.fan_curve_changed())
             invocation.return_value(None)
             return
+        if method == "FanTestStart":
+            duty, hz = params.unpack()
+            try:
+                self.fan_test_start(duty, hz)
+            except Exception as exc:
+                invocation.return_dbus_error(f"{BUS_NAME}.Error.FanTestFailed", str(exc))
+                return
+            invocation.return_value(None)
+            return
+        if method == "FanTestStop":
+            self.fan_test_stop()
+            invocation.return_value(None)
+            return
         if method == "Suspend":
+            self.fan_test_stop()
             self.suspend()
             invocation.return_value(None)
             return
@@ -1332,6 +1490,7 @@ def main():
     )
 
     def stop(_signum, _frame):
+        power.fan_test_stop(emit=False)
         power.fan_safe()
         loop.quit()
 

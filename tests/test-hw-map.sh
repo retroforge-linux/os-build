@@ -90,5 +90,13 @@ run env && ok "runs with nothing to map" || bad "exit $?"
 [ -z "$(find "$T/run/hw" -type l)" ] && ok "no links" || bad "links: $(find "$T/run/hw" -type l)"
 grep -q '^QFORGE_HW_BATTERY=.*$' "$T/run/hw/hw.env" && ok "hw.env still written" || bad "no hw.env"
 
+# =================================================================================================
+CASE="pwm fan without a tachometer"
+rm -rf "$S"; mkdir -p "$S/class"
+mk class/hwmon/hwmon3/name cpu_thermal
+mk class/hwmon/hwmon9/name pwmfan
+mk class/hwmon/hwmon9/pwm1 0
+run env && [ "$(target fan)" = class/hwmon/hwmon9 ] && ok "a hwmon with only pwm1 is the fan (Air X/Y pwm-fan)" || bad "fan -> $(target fan)"
+
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

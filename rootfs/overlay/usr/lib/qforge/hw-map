@@ -16,7 +16,7 @@
 #   /run/qforge/hw/thermal/<role> -> /sys/class/thermal/thermal_zoneN      (temp, in millidegrees)
 #                                    roles: cpu gpu battery skin, each only when a zone fits
 #   /run/qforge/hw/thermal/all/<type> -> every zone, by its type name
-#   /run/qforge/hw/fan            -> /sys/class/hwmon/hwmonN               (fan1_input, rpm)
+#   /run/qforge/hw/fan            -> /sys/class/hwmon/hwmonN               (fan1_input rpm, pwm1)
 #   /run/qforge/hw/gpu            -> the GPU's devfreq directory            (cur_freq, min/max_freq)
 #   /run/qforge/hw/cpu            -> /sys/devices/system/cpu                (cpufreq/policy*/...)
 #   /run/qforge/hw/leds/<group>/NN -> /sys/class/leds/<led>, NN = 01.. in natural order
@@ -131,13 +131,14 @@ thermal_role cpu     "$QFORGE_HW_THERMAL_CPU"     '^(cpu|soc)'
 thermal_role gpu     "$QFORGE_HW_THERMAL_GPU"     '^gpu'
 thermal_role battery "$QFORGE_HW_THERMAL_BATTERY" '^batt'
 thermal_role skin    "$QFORGE_HW_THERMAL_SKIN"    '(skin|xo-therm|quiet|case)'
-# --- fan: the profile's hwmon name, else the first hwmon with a fan1_input --------------------
+# --- fan: the profile's hwmon name, else the first hwmon with a fan1_input or a pwm1 ---------
+# (a pwm-fan without a tachometer -- the Air X/Y -- has pwm1 and no fan1_input)
 fan=""
 for h in "$SYS"/class/hwmon/hwmon*/; do
     h=${h%/}; [ -d "$h" ] || continue
     if [ -n "$QFORGE_HW_FAN" ]; then
         [ "$(attr "$h" name)" = "$QFORGE_HW_FAN" ] && { fan=$h; break; }
-    elif [ -r "$h/fan1_input" ]; then fan=$h; break; fi
+    elif [ -r "$h/fan1_input" ] || [ -e "$h/pwm1" ]; then fan=$h; break; fi
 done
 [ -n "$fan" ] && link fan "$fan" && note QFORGE_HW_FAN "$(attr "$fan" name)" || note QFORGE_HW_FAN ""
 

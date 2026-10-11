@@ -391,6 +391,27 @@ cfg = {"enabled": False, "color": (255, 0, 64), "brightness": 200}
 rt = configparser.ConfigParser(); rt.read_string(pd.render_led_dropin(cfg))
 check("led drop-in: round-trips through the parser", pd.parse_led_config(rt), cfg)
 
+# --- PWM fan: off below a temperature; per-board fan values; the fan test -----------------------
+check("off_below 0 never stops the fan", pd.fan_stopped(0, 30, False), False)
+check("below off_below the fan stops", pd.fan_stopped(60, 55, False), True)
+check("a stopped fan stays stopped until off_below + 3", pd.fan_stopped(60, 62, True), True)
+check("... and restarts at off_below + 3", pd.fan_stopped(60, 63, True), False)
+check("no temperature never stops the fan", pd.fan_stopped(60, 0, False), False)
+check("board fan keys: digits only, mapped to [fan] keys",
+      pd.board_fan_config({"QFORGE_FAN_MIN_PWM": "80", "QFORGE_FAN_OFF_BELOW": "", "QFORGE_X": "1"}),
+      {"min_pwm": "80"})
+pwm = tmp / "fanpwm1"; pwm.write_text("0\n")
+t = pd.FanTest(pwm, 255, True, 100, 25); t.start()
+check("fan test: 100% on a switch-only fan is plain on", pwm.read_text().strip(), "255")
+check("fan test: describe full", t.describe(), "100% (switch fan)")
+t = pd.FanTest(pwm, 255, False, 40, 25); t.start()
+check("fan test: a PWM fan gets the duty on pwm1", pwm.read_text().strip(), "102")
+t = pd.FanTest(pwm, 255, True, 40, 25)
+check("fan test: switch fan duty is software PWM", t.describe(), "40% at 25 Hz (software PWM)")
+t.start(); import time as _t; _t.sleep(0.2); t.stop()
+check("fan test: the pulse thread stops", t._thread.is_alive(), False)
+check("fan test: clamps", (pd.FanTest(pwm, 255, True, 400, 9999).duty, pd.FanTest(pwm, 255, True, 400, 9999).hz), (100, 500))
+
 for status, name in results:
     print(f"{status} {name}")
 sys.exit(1 if any(s.startswith("FAIL") for s, _ in results) else 0)
