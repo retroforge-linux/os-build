@@ -11,6 +11,20 @@ extends VBoxContainer
 ##
 ## Under the LED row: on/off, brightness and colour for the board's LEDs, through qforge-powerd
 ## (power_client.gd), which keeps the setting. Hidden on a board whose powerd reports no LEDs.
+## The controls carry OGUI FocusGroups on the quick bar's focus stack: the quick bar card hands
+## gamepad focus to the first FocusGroup it finds in its content when A opens it. Without one, A
+## only expanded the card and moving down left it (and closed the menu).
+
+const FOCUS_GROUP := "res://core/systems/input/focus_group.tscn"
+const QB_FOCUS_STACK := "res://core/ui/card_ui/quick_bar/quick_bar_menu_focus.tres"
+
+
+## An OGUI FocusGroup over `container`'s focusable children, on the quick bar's focus stack.
+static func add_focus_group(container: Control) -> Node:
+	var group: Node = (load(FOCUS_GROUP) as PackedScene).instantiate()
+	group.set("focus_stack", load(QB_FOCUS_STACK))
+	container.add_child(group)
+	return group
 
 const REFRESH_SECS := 2.0
 const ROWS := [
@@ -113,6 +127,7 @@ func _build_led_controls() -> VBoxContainer:
 	var colors := HFlowContainer.new()
 	for entry in LED_COLORS:
 		var button := Button.new()
+		button.focus_mode = Control.FOCUS_ALL
 		button.custom_minimum_size = Vector2(44, 44)
 		button.tooltip_text = entry[0]
 		var swatch := StyleBoxFlat.new()
@@ -126,6 +141,13 @@ func _build_led_controls() -> VBoxContainer:
 				power.set_led_color(rgb))
 		colors.add_child(button)
 	box.add_child(colors)
+	var controls_group := add_focus_group(box)
+	# first child: the quick bar card focuses the FIRST FocusGroup its depth-first search meets,
+	# and the swatches' group (inside the HFlow) must not be it
+	box.move_child(controls_group, 0)
+	var colors_group := add_focus_group(colors)
+	controls_group.set("focus_neighbor_bottom", colors_group)
+	colors_group.set("focus_neighbor_top", controls_group)
 	return box
 
 

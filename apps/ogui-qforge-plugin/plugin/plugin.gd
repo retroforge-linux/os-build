@@ -28,6 +28,7 @@ var _emulators_button: Control
 var _emulators_page: Control
 var _game_settings_page: Control
 var _hardware_card: Control
+var _fan_test_card: Control
 ## Input boost (see _input): how long the UI renders every frame after the last input.
 const INPUT_BOOST_SECS := 1.5
 var _boost_timer: Timer
@@ -82,9 +83,10 @@ func unload() -> void:
 		_overlay.detach()
 	if _touch_keyboard:
 		_touch_keyboard.detach()
-	if is_instance_valid(_hardware_card):
-		var qb_card := _hardware_card.find_parent("QuickBarCard*")
-		(qb_card if qb_card else _hardware_card).queue_free()
+	for card in [_hardware_card, _fan_test_card]:
+		if is_instance_valid(card):
+			var qb_card: Node = card.find_parent("QuickBarCard*")
+			(qb_card if qb_card else card).queue_free()
 
 
 ## Game settings > QForge (the gear on a ROM's launch menu): per-game options.
@@ -259,6 +261,11 @@ func _add_hardware_card() -> void:
 	qb.add_child_menu(card, icon, null, "Hardware")
 	_hardware_card = card
 	logger.info("Quick bar > Hardware added")
+	var fan_card = load(plugin_base.path_join("fan_test_card.gd")).new()
+	fan_card.setup(plugin_base)
+	qb.add_child_menu(fan_card, icon, null, "Fan test")
+	_fan_test_card = fan_card
+	logger.info("Quick bar > Fan test added")
 
 
 ## Settings > Display: Game resolution and Reduced UI resolution (display_settings.gd). The stored
