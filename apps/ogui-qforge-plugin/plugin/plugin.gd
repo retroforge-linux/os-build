@@ -321,10 +321,13 @@ func _watch_input_plumber(device) -> void:
 			target.input_event.connect(_on_input_plumber_event)
 
 
+## Runs inside InputPlumberInstance.process(), which is bound while it emits: nothing here may
+## reach code that calls back into it. The pointer park injects an input event (every _input
+## handler runs), so it goes after process() returns.
 func _on_input_plumber_event(event: String, value: float) -> void:
 	_boost()
 	if _touch_keyboard:
-		_touch_keyboard.pointer_left()
+		_touch_keyboard.pointer_left.call_deferred()
 	if event == "ui_guide" and value == 1.0 and _overlay:
 		_overlay.expect_ui()
 
