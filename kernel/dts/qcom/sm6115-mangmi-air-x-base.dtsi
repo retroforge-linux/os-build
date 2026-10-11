@@ -57,7 +57,7 @@
 	fan: pwm-fan {
 		compatible = "pwm-fan";
 		pwms = <&fan_pwm 0 66666667 0>;	/* 15 Hz */
-		/* the kernel's own thermal fallback (active trips below), if powerd is not running */
+		/* not in any cooling map: qforge-powerd owns the fan (see the thermal note below) */
 		cooling-levels = <0 102 153 204 255>;
 		#cooling-cells = <2>;
 	};
@@ -1705,78 +1705,65 @@
 	clock-frequency = <19200000>;
 };
 
+/*
+ * Thermal: the kernel throttles, qforge-powerd runs the fan.
+ *
+ * ROCKNIX bound only the fan to these zones -- the CPU zones' passive trips (alert0/alert1,
+ * 90/95 C) named the fan and nothing else, so the cpufreq cooling devices existed but were bound
+ * to no zone and a hot CPU was never throttled (an all-core load sat at 93-95 C on the Air Y,
+ * 2026-10-11). Its 70 C "active" fan trips and the battery zone's bang-bang fan also fought
+ * qforge-powerd over pwm1 once the fan became a real PWM fan (duty jumping 204/122/158/255 within
+ * seconds). Now the passive trips throttle the cluster they measure (cpu0123: the A53s, cpu0's
+ * policy; cpu45/cpu67: the A73s, cpu4's policy) and the GPU, and the fan belongs to powerd alone
+ * (its curve, its fail-safe 50% on exit; pwm-fan runs the fan at full speed from probe until
+ * powerd takes over).
+ */
 &{/thermal-zones/gpu-thermal} {
 	cooling-maps {
 		map0 {
 			trip = <&gpu_alert0>;
-			cooling-device =
-				<&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>,
-				<&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
-		};
-		map1 {
-			trip = <&gpu_fan>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			cooling-device = <&gpu THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 		};
 	};
-
-	trips { gpu_fan: gpu-fan { temperature = <70000>; hysteresis = <10000>; type = "active"; }; };
 };
 
 &{/thermal-zones/cpu0123-thermal} {
 	cooling-maps {
 		map0 {
 			trip = <&cpu0123_alert0>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 		};
 		map1 {
 			trip = <&cpu0123_alert1>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
-		};
-		map2 {
-			trip = <&cpu0123_fan>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			cooling-device = <&cpu0 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 		};
 	};
-
-	trips { cpu0123_fan: cpu0123-fan { temperature = <70000>; hysteresis = <10000>; type = "active"; }; };
 };
 
 &{/thermal-zones/cpu45-thermal} {
 	cooling-maps {
 		map0 {
 			trip = <&cpu45_alert0>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 		};
 		map1 {
 			trip = <&cpu45_alert1>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
-		};
-		map2 {
-			trip = <&cpu45_fan>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 		};
 	};
-
-	trips { cpu45_fan: cpu45-fan { temperature = <70000>; hysteresis = <10000>; type = "active"; }; };
 };
 
 &{/thermal-zones/cpu67-thermal} {
 	cooling-maps {
 		map0 {
 			trip = <&cpu67_alert0>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 		};
 		map1 {
 			trip = <&cpu67_alert1>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
-		};
-		map2 {
-			trip = <&cpu67_fan>;
-			cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+			cooling-device = <&cpu4 THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
 		};
 	};
-
-	trips { cpu67_fan: cpu67-fan { temperature = <70000>; hysteresis = <10000>; type = "active"; }; };
 };
 
 / {
@@ -1818,18 +1805,12 @@
 			thermal-sensors = <&fuel_gauge>;
 			linux,governor = "bang_bang";
 
+			/* reporting only: the fan is qforge-powerd's (see the thermal note above) */
 			trips {
-				battery_fan_on: battery-fan-on {
-					temperature = <40000>;
+				battery_hot: battery-hot {
+					temperature = <60000>;
 					hysteresis = <5000>;
-					type = "active";
-				};
-			};
-
-			cooling-maps {
-				map0 {
-					trip = <&battery_fan_on>;
-					cooling-device = <&fan THERMAL_NO_LIMIT THERMAL_NO_LIMIT>;
+					type = "hot";
 				};
 			};
 		};
