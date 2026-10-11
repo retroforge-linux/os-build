@@ -34,6 +34,7 @@ var _boost_timer: Timer
 var _display: RefCounted  # display_settings.gd
 var _overlay: RefCounted  # overlay_hiding.gd
 var _osk_nav: RefCounted  # osk_navigation.gd
+var _touch_keyboard: RefCounted  # touch_keyboard.gd
 var _watch: RefCounted  # rom_watch.gd
 var _rescan_timer: Timer
 var _rescanning := false
@@ -60,6 +61,7 @@ func _ready() -> void:
 	_apply_render_mode()
 	_overlay = load(plugin_base.path_join("overlay_hiding.gd")).new().setup(get_tree())
 	_osk_nav = load(plugin_base.path_join("osk_navigation.gd")).new().setup(get_tree())
+	_touch_keyboard = load(plugin_base.path_join("touch_keyboard.gd")).new().setup(get_tree())
 	_setup_input_boost()
 
 
@@ -78,6 +80,8 @@ func unload() -> void:
 		_display.detach()
 	if _overlay:
 		_overlay.detach()
+	if _touch_keyboard:
+		_touch_keyboard.detach()
 	if is_instance_valid(_hardware_card):
 		var qb_card := _hardware_card.find_parent("QuickBarCard*")
 		(qb_card if qb_card else _hardware_card).queue_free()
