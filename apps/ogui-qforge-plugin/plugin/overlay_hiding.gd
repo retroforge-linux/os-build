@@ -10,7 +10,9 @@ extends RefCounted
 ##
 ## The window is shown again before anything is drawn in it: when the in-game state is left (a
 ## menu, the quick bar, the keyboard, or the game ended) and while an in-game toast is up.
-## xprop runs as a separate process so the main loop never waits on it.
+## xprop runs as a separate process so the main loop never waits on it. It takes 60-80 ms on an
+## A53, so the window is shown already on the Guide PRESS (expect_ui): OGUI opens its menu on the
+## release, by which time the window is back in the frame. If no menu follows, it hides again.
 
 const OPACITY := "_NET_WM_WINDOW_OPACITY"
 
@@ -22,6 +24,7 @@ var _toast: Node  # OGUI's InGameNotification
 var _in_game := false
 var _hidden := false
 var _toast_showing := false
+var _expecting_ui := false
 
 
 func setup(tree: SceneTree) -> RefCounted:
@@ -53,6 +56,18 @@ func _on_toast_gone() -> void:
 	_update()
 
 
+## Guide was pressed in game: a menu is likely on the release. Show the window now; hide it again
+## after a second if the game still has the foreground.
+func expect_ui() -> void:
+	if not _in_game or _expecting_ui:
+		return
+	_expecting_ui = true
+	_update()
+	Engine.get_main_loop().create_timer(1.0).timeout.connect(func():
+		_expecting_ui = false
+		_update())
+
+
 func set_in_game(in_game: bool) -> void:
 	_in_game = in_game
 	_update()
@@ -66,7 +81,7 @@ func detach() -> void:
 func _update() -> void:
 	if _window == 0:
 		return
-	var hide := _in_game and not _toast_showing
+	var hide := _in_game and not _toast_showing and not _expecting_ui
 	if hide == _hidden:
 		return
 	_hidden = hide

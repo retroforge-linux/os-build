@@ -14,6 +14,7 @@ const RESCAN_INTERVAL := 5.0
 
 var library_manager := load("res://core/global/library_manager.tres") as LibraryManager
 var launch_manager := load("res://core/global/launch_manager.tres") as LaunchManager
+var input_plumber := load("res://core/systems/input/input_plumber.tres") as InputPlumberInstance
 var tabs_state := load("res://core/ui/card_ui/library/library_tabs_state.tres") as TabContainerState
 var menu_state_machine := load("res://assets/state/state_machines/menu_state_machine.tres") as StateMachine
 var launcher_state := load("res://assets/state/states/game_launcher.tres") as State
@@ -285,6 +286,26 @@ func _setup_input_boost() -> void:
 	in_game_state.state_entered.connect(func(_from): _set_in_game(true))
 	in_game_state.state_exited.connect(func(_to): _set_in_game(false))
 	_set_idle_pacing(false)
+	# The gamepad reaches OGUI as InputPlumber D-Bus signals, which OGUI turns into a chain of
+	# Godot input events, one main-loop pass per hop (Guide -> ogui_guide -> ogui_menu -> state).
+	# OGUI marks those events handled, so _input below never sees them and every hop slept the
+	# full idle pace -- the in-game menu took ~200 ms of sleeping to open (Air Y, 2026-10-11).
+	# Boost from the signal itself: the pass that receives it no longer sleeps.
+	for device in input_plumber.get_composite_devices():
+		_watch_input_plumber(device)
+	input_plumber.composite_device_added.connect(_watch_input_plumber)
+
+
+func _watch_input_plumber(device) -> void:
+	for target in device.dbus_devices:
+		if not target.input_event.is_connected(_on_input_plumber_event):
+			target.input_event.connect(_on_input_plumber_event)
+
+
+func _on_input_plumber_event(event: String, value: float) -> void:
+	_boost()
+	if event == "ui_guide" and value == 1.0 and _overlay:
+		_overlay.expect_ui()
 
 
 ## The in-game state is current only while the game has the foreground: opening the quick bar
@@ -310,6 +331,12 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and (event as InputEventMouseMotion).relative.length() < 1.0:
 		return
 	if event is InputEventJoypadMotion and absf((event as InputEventJoypadMotion).axis_value) < 0.2:
+		return
+	_boost()
+
+
+func _boost() -> void:
+	if _boost_timer == null:
 		return
 	OS.low_processor_usage_mode = false
 	_boost_timer.start()
