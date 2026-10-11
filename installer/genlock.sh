@@ -197,7 +197,7 @@ BUILDER="$(pins_builder_desc)"
 #     split PKGBUILD (mesa emits three).
 # There is no 'stripped' class here: the installer keeps its pacman and is never sealed.
 EOF
-  printf '%s' "$rows" | sort
+  printf '%s' "$rows" | LC_ALL=C sort  # one order on every host, as rootfs/genmanifest.sh
 } >"$LOCK"
 
 echo "[qforge] wrote ${LOCK#"$ROOT"/}: $(printf '%s' "$rows" | grep -c .) rows ($prebuilts prebuilt)" >&2
