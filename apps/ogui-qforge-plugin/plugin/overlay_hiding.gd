@@ -9,7 +9,8 @@ extends RefCounted
 ## it): the window is not painted and the pipe stays free.
 ##
 ## The window is shown again before anything is drawn in it: when the in-game state is left (a
-## menu, the quick bar, the keyboard, or the game ended) and while an in-game toast is up.
+## menu, the quick bar, the keyboard, or the game ended), while an in-game toast is up, and while
+## the volume indicator is (gamescope sends the volume keys to the shell even in game).
 ## xprop runs as a separate process so the main loop never waits on it. It takes 60-80 ms on an
 ## A53, so the window is shown already on the Guide PRESS (expect_ui): OGUI opens its menu on the
 ## release, by which time the window is back in the frame. If no menu follows, it hides again.
@@ -18,9 +19,12 @@ const OPACITY := "_NET_WM_WINDOW_OPACITY"
 
 var gamescope := load("res://core/systems/gamescope/gamescope.tres") as GamescopeInstance
 var notification_manager := load("res://core/global/notification_manager.tres") as NotificationManager
+var audio_manager := load("res://core/global/audio_manager.tres") as AudioManager
 var logger := Log.get_logger("QForgeOverlay", Log.LEVEL.INFO)
 var _window := 0
 var _toast: Node  # OGUI's InGameNotification
+var _volume: Node  # OGUI's VolumeIndicator
+var _volume_showing := false
 var _in_game := false
 var _hidden := false
 var _toast_showing := false
@@ -40,7 +44,21 @@ func setup(tree: SceneTree) -> RefCounted:
 	notification_manager.notification_queued.connect(_on_toast_queued)
 	if _toast and _toast.get("effect"):
 		_toast.effect.slide_out_finished.connect(_on_toast_gone)
+	_volume = tree.root.find_child("VolumeIndicator", true, false)
+	audio_manager.volume_changed.connect(_on_volume_shown)
+	if _volume and _volume.get("timer"):
+		_volume.timer.timeout.connect(_on_volume_gone)
 	return self
+
+
+func _on_volume_shown(_value: float) -> void:
+	_volume_showing = true
+	_update()
+
+
+func _on_volume_gone() -> void:
+	_volume_showing = false
+	_update()
 
 
 func _on_toast_queued(_notify) -> void:
@@ -81,7 +99,7 @@ func detach() -> void:
 func _update() -> void:
 	if _window == 0:
 		return
-	var hide := _in_game and not _toast_showing and not _expecting_ui
+	var hide := _in_game and not _toast_showing and not _volume_showing and not _expecting_ui
 	if hide == _hidden:
 		return
 	_hidden = hide
