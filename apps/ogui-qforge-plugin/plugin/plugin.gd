@@ -33,6 +33,7 @@ const INPUT_BOOST_SECS := 1.5
 var _boost_timer: Timer
 var _display: RefCounted  # display_settings.gd
 var _overlay: RefCounted  # overlay_hiding.gd
+var _osk_nav: RefCounted  # osk_navigation.gd
 var _watch: RefCounted  # rom_watch.gd
 var _rescan_timer: Timer
 var _rescanning := false
@@ -58,6 +59,7 @@ func _ready() -> void:
 	_add_hardware_card()
 	_apply_render_mode()
 	_overlay = load(plugin_base.path_join("overlay_hiding.gd")).new().setup(get_tree())
+	_osk_nav = load(plugin_base.path_join("osk_navigation.gd")).new().setup(get_tree())
 	_setup_input_boost()
 
 
