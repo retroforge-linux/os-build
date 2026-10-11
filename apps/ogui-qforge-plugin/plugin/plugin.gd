@@ -36,6 +36,7 @@ var _display: RefCounted  # display_settings.gd
 var _overlay: RefCounted  # overlay_hiding.gd
 var _osk_nav: RefCounted  # osk_navigation.gd
 var _touch_keyboard: RefCounted  # touch_keyboard.gd
+var _buttons: RefCounted  # button_layout.gd
 var _watch: RefCounted  # rom_watch.gd
 var _rescan_timer: Timer
 var _rescanning := false
@@ -63,6 +64,9 @@ func _ready() -> void:
 	_overlay = load(plugin_base.path_join("overlay_hiding.gd")).new().setup(get_tree())
 	_osk_nav = load(plugin_base.path_join("osk_navigation.gd")).new().setup(get_tree())
 	_touch_keyboard = load(plugin_base.path_join("touch_keyboard.gd")).new().setup(get_tree())
+	_buttons = load(plugin_base.path_join("button_layout.gd")).new().setup(get_tree())
+	if not _buttons.attach():
+		logger.warn("OGUI controller settings layout not found; no Nintendo layout toggle")
 	_setup_input_boost()
 
 
@@ -83,6 +87,8 @@ func unload() -> void:
 		_overlay.detach()
 	if _touch_keyboard:
 		_touch_keyboard.detach()
+	if _buttons:
+		_buttons.detach()
 	for card in [_hardware_card, _fan_test_card]:
 		if is_instance_valid(card):
 			var qb_card: Node = card.find_parent("QuickBarCard*")
