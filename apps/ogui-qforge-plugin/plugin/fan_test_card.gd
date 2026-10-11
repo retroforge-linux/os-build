@@ -42,14 +42,14 @@ func _ready() -> void:
 	_duty.min_value = 0
 	_duty.max_value = 100
 	_duty.step = 5
-	_duty.value = 50
+	_duty.value = 40
 	_rate = (load("res://core/ui/components/slider.tscn") as PackedScene).instantiate()
 	_rate.text = "Pulse rate (Hz)"
 	add_child(_rate)
 	_rate.min_value = 5
 	_rate.max_value = 1000
 	_rate.step = 5
-	_rate.value = 100
+	_rate.value = 15  # the Air X/Y fan's best rate (listening test, 2026-10-11)
 
 	_apply = Timer.new()
 	_apply.one_shot = true

@@ -41,9 +41,12 @@
 	/*
 	 * The fan's supply switch hangs on TLMM GPIO 92, which has no PWM function of its own
 	 * (no gcc_gp/pdm mux on that pin), so ROCKNIX ran it as a two-state gpio-fan: off or full.
-	 * QForge pulses it with the kernel's hrtimer GPIO PWM at 100 Hz and drives it as a normal
-	 * pwm-fan (hwmon pwm1 0-255). Listening test on the Air Y (2026-10-11): 25 Hz and 100 Hz both
-	 * give clearly lower speeds down to ~35% duty; 5 Hz is audible stop-and-go.
+	 * QForge pulses it with the kernel's hrtimer GPIO PWM and drives it as a normal pwm-fan (hwmon
+	 * pwm1 0-255). The fan has no speed input: pulsing its supply is the only lever. Listening tests
+	 * on the Air Y (2026-10-11, Quick bar > Fan test): 5-10 Hz is stop-and-go and usable only from
+	 * ~50%; 15 Hz was the best, smooth at 40% duty (period 66.67 ms below). The trade-off: the
+	 * lower the rate, the wider the usable duty range (the fan coasts through longer gaps), until
+	 * it becomes audible stop-and-go; 15 Hz is the lowest rate that stays smooth.
 	 */
 	fan_pwm: fan-pwm {
 		compatible = "pwm-gpio";
@@ -53,7 +56,7 @@
 
 	fan: pwm-fan {
 		compatible = "pwm-fan";
-		pwms = <&fan_pwm 0 10000000 0>;
+		pwms = <&fan_pwm 0 66666667 0>;	/* 15 Hz */
 		/* the kernel's own thermal fallback (active trips below), if powerd is not running */
 		cooling-levels = <0 102 153 204 255>;
 		#cooling-cells = <2>;
