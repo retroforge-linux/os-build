@@ -47,7 +47,7 @@ func _ready() -> void:
 	_rate.text = "Pulse rate (Hz)"
 	add_child(_rate)
 	_rate.min_value = 5
-	_rate.max_value = 200
+	_rate.max_value = 1000
 	_rate.step = 5
 	_rate.value = 100
 

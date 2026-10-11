@@ -18,6 +18,7 @@ extends RefCounted
 const OPACITY := "_NET_WM_WINDOW_OPACITY"
 
 var gamescope := load("res://core/systems/gamescope/gamescope.tres") as GamescopeInstance
+const Spawn := preload("spawn.gd")
 var notification_manager := load("res://core/global/notification_manager.tres") as NotificationManager
 var audio_manager := load("res://core/global/audio_manager.tres") as AudioManager
 var logger := Log.get_logger("QForgeOverlay", Log.LEVEL.INFO)
@@ -105,5 +106,5 @@ func _update() -> void:
 	_hidden = hide
 	var id := "0x%x" % _window
 	var args := ["-id", id, "-f", OPACITY, "32c", "-set", OPACITY, "0"] if hide else ["-id", id, "-remove", OPACITY]
-	if OS.create_process("xprop", args) < 0:
+	if Spawn.run("xprop", args) < 0:
 		logger.warn("xprop failed; shell window opacity not changed")

@@ -8,6 +8,7 @@ extends RefCounted
 ## bar shows); writes run as a separate process so the UI never waits on them.
 
 const DEST := ["--system", "org.qforge.Power", "/org/qforge/Power", "org.qforge.Power1"]
+const Spawn := preload("spawn.gd")
 
 
 ## {count, enabled, color: [r, g, b], brightness}, or {} when powerd is not there.
@@ -66,12 +67,12 @@ static func parse_fan(text: String) -> Dictionary:
 
 
 func fan_test_start(duty_percent: int, hz: int) -> void:
-	OS.create_process("busctl", ["--system", "call", "org.qforge.Power", "/org/qforge/Power",
-		"org.qforge.Power1", "FanTestStart", "uu", str(clampi(duty_percent, 0, 100)), str(clampi(hz, 1, 500))])
+	Spawn.run("busctl", ["--system", "call", "org.qforge.Power", "/org/qforge/Power",
+		"org.qforge.Power1", "FanTestStart", "uu", str(clampi(duty_percent, 0, 100)), str(clampi(hz, 1, 2000))])
 
 
 func fan_test_stop() -> void:
-	OS.create_process("busctl", ["--system", "call", "org.qforge.Power", "/org/qforge/Power",
+	Spawn.run("busctl", ["--system", "call", "org.qforge.Power", "/org/qforge/Power",
 		"org.qforge.Power1", "FanTestStop"])
 
 
@@ -90,4 +91,4 @@ func set_led_brightness(level: int) -> void:
 func _write(prop: String, value: Array) -> void:
 	var args := ["--system", "set-property", "org.qforge.Power", "/org/qforge/Power", "org.qforge.Power1", prop]
 	args.append_array(value)
-	OS.create_process("busctl", args)
+	Spawn.run("busctl", args)

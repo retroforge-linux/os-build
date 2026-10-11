@@ -410,7 +410,7 @@ t = pd.FanTest(pwm, 255, True, 40, 25)
 check("fan test: switch fan duty is software PWM", t.describe(), "40% at 25 Hz (software PWM)")
 t.start(); import time as _t; _t.sleep(0.2); t.stop()
 check("fan test: the pulse thread stops", t._thread.is_alive(), False)
-check("fan test: clamps", (pd.FanTest(pwm, 255, True, 400, 9999).duty, pd.FanTest(pwm, 255, True, 400, 9999).hz), (100, 500))
+check("fan test: clamps", (pd.FanTest(pwm, 255, True, 400, 9999).duty, pd.FanTest(pwm, 255, True, 400, 9999).hz), (100, 2000))
 
 for status, name in results:
     print(f"{status} {name}")
