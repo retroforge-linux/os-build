@@ -338,6 +338,29 @@ hw, th = fake_fan("pwmfan", "pwm-fan", 1)
 check("2-speed detect: pwm-fan never", pd.is_two_speed_fan(hw, th), False)
 check("2-speed detect: no fan", pd.is_two_speed_fan(None, th), False)
 
+# --- RGB LEDs (powerd [led]) ------------------------------------------------------------------
+check("led: channels follow multi_index", pd.led_intensity("red green blue", (0, 96, 255)), "0 96 255")
+check("led: other channel order", pd.led_intensity("blue red green", (1, 2, 3)), "3 1 2")
+check("led: unknown channel gets 0", pd.led_intensity("red white", (9, 9, 9)), "9 0")
+leds = tmp / "leds"
+for name, multi in (("rgb:l1", True), ("rgb:l2", True), ("mmc0::", False), ("left_red_1", False)):
+    d = leds / name; d.mkdir(parents=True, exist_ok=True)
+    (d / "brightness").write_text("0\n"); (d / "max_brightness").write_text("255\n")
+    if multi:
+        (d / "multi_index").write_text("red green blue\n"); (d / "multi_intensity").write_text("255 255 255\n")
+found = pd.discover_leds(leds)
+check("led: only multicolor LEDs are found", [p.name for p in found], ["rgb:l1", "rgb:l2"])
+pd.apply_leds(found, (0, 96, 255), 64)
+check("led: colour written", (leds / "rgb:l1" / "multi_intensity").read_text().strip(), "0 96 255")
+check("led: brightness written", (leds / "rgb:l2" / "brightness").read_text().strip(), "64")
+check("led: plain LED untouched", (leds / "mmc0::" / "brightness").read_text().strip(), "0")
+lp = configparser.ConfigParser(); lp.read(pathlib.Path(root) / "rootfs/overlay/usr/share/qforge/power.conf")
+check("led: factory config parses", pd.parse_led_config(lp), {"enabled": True, "color": (0, 96, 255), "brightness": 64})
+bad = configparser.ConfigParser(); bad.read_string("[led]\ncolor=1,2\n")
+raises("led: a two-channel colour is rejected", lambda: pd.parse_led_config(bad))
+empty = configparser.ConfigParser()
+check("led: no [led] section means the defaults", pd.parse_led_config(empty)["enabled"], True)
+
 for status, name in results:
     print(f"{status} {name}")
 sys.exit(1 if any(s.startswith("FAIL") for s, _ in results) else 0)

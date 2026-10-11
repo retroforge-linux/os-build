@@ -324,6 +324,38 @@ def is_two_speed_fan(hwmon, thermal_root=Path("/sys/class/thermal")):
     return False
 
 
+def parse_led_config(parser):
+    """[led]: the colour and brightness powerd gives the board's RGB LEDs (on|off, R,G,B, 0-255)."""
+    enabled = parser.get("led", "enabled", fallback="on").strip().lower()
+    if enabled not in ("on", "off"):
+        raise ValueError(f"[led] enabled must be on or off, not {enabled!r}")
+    parts = [p.strip() for p in parser.get("led", "color", fallback="0,96,255").split(",")]
+    if len(parts) != 3:
+        raise ValueError("[led] color must be R,G,B")
+    color = tuple(clamp(int(p), 0, 255) for p in parts)
+    brightness = clamp(parser.getint("led", "brightness", fallback=64), 0, 255)
+    return {"enabled": enabled == "on", "color": color, "brightness": brightness}
+
+
+def discover_leds(root=Path("/sys/class/leds")):
+    """The board's multicolor (RGB) LEDs: the Air X/Y joystick rings are ten rgb:l<n> (and
+    rgb:r<n>) multi-LEDs over aw20036 channels. Plain single-channel LEDs (mmc activity, the
+    rings' raw channels) are left alone."""
+    return sorted(p for p in root.glob("*") if (p / "multi_intensity").exists() and (p / "multi_index").exists())
+
+
+def led_intensity(multi_index, color):
+    """multi_intensity in the order multi_index lists the channels; unknown channels get 0."""
+    by_name = {"red": color[0], "green": color[1], "blue": color[2]}
+    return " ".join(str(by_name.get(name, 0)) for name in multi_index.split())
+
+
+def apply_leds(leds, color, brightness):
+    for led in leds:
+        write_text(led / "multi_intensity", led_intensity(read_text(led / "multi_index"), color))
+        write_text(led / "brightness", clamp(brightness, 0, int(read_text(led / "max_brightness", "255") or 255)))
+
+
 def resample_curve(curve, stops):
     return [curve_pwm(curve, stop) for stop in stops]
 
@@ -425,9 +457,12 @@ class QforgePower:
         self.suspend_fan_active = False
         self.suspend_save = {}
         self.connection = None
+        self.led_config = {"enabled": False, "color": (0, 0, 0), "brightness": 0}
         self.load_config()
         self.discover()
         self.load_state()
+        self.leds = discover_leds()
+        self.set_leds(True)
         if self.fan_pwm:
             current = read_text(self.fan_pwm)
             self.last_pwm = int(current) if current.isdigit() else self.fan_config["min_pwm"]
@@ -464,6 +499,7 @@ class QforgePower:
             config_files.extend(sorted(CONFIG_DROPIN_DIR.glob("*.conf")))
         if not parser.read(config_files):
             raise FileNotFoundError(FACTORY_CONFIG_FILE)
+        self.led_config = parse_led_config(parser)
         cpu_governor = parser.get("cpu", "governor", fallback=DEFAULT_CPU_GOVERNOR).strip()
         if not cpu_governor:
             raise ValueError("empty [cpu] governor")
@@ -841,9 +877,18 @@ class QforgePower:
         BOOT_GOVERNOR_MARKER.parent.mkdir(parents=True, exist_ok=True)
         BOOT_GOVERNOR_MARKER.touch()
 
+    def set_leds(self, on):
+        """Nothing else lights the RGB LEDs: InputPlumber 0.81 parses a fixed LED colour but never
+        applies it, and our xbox-elite target carries no LED output. Off for suspend."""
+        if not self.leds:
+            return
+        lit = on and self.led_config["enabled"]
+        apply_leds(self.leds, self.led_config["color"], self.led_config["brightness"] if lit else 0)
+
     def suspend(self):
         if self.suspend_save:
             return
+        self.set_leds(False)
         self.suspended = True
         self.suspend_fan_active = False
         self.suspend_save = {"cpu": [], "gpu": {}}
@@ -871,6 +916,7 @@ class QforgePower:
         self.fan_tick()
 
     def resume(self):
+        self.set_leds(True)
         self.suspended = False
         self.suspend_fan_active = False
         self.smoothed_temp = 0.0
