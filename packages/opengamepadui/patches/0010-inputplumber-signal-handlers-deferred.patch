@@ -1,0 +1,140 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: qforge <qforge@invalid>
+Date: Sat, 10 Oct 2026 23:06:23 -0700
+Subject: [PATCH 08/11] fix(InputPlumber): run InputPlumber signal handlers
+ deferred
+
+InputPlumberInstance.process() emits composite_device_added, started and,
+through its DBusDevices, input_event while the instance is mutably bound.
+Any handler that calls back into it panics in godot-rust ("Gd<T>::bind()
+failed, already bound") and the call returns nil:
+
+ - pressing A on Settings > Controller > Gamepad Settings enters the state
+   inside the input_event handler; is_running() fails and the menu shows
+   "InputPlumber service not available" (117 times in one session, Air Y);
+ - InputIconProcessor._input asks get_composite_device() for the device
+   name of every gamepad action, gets nil, and the icon manager falls back
+   to the default mapping with an empty device name, warning each time.
+
+Connecting the handlers CONNECT_DEFERRED runs them from the message queue
+at the end of the same frame, after process() has returned, in order.
+---
+ core/systems/input/input_icon_manager.gd             |  4 ++--
+ core/systems/input/input_manager.gd                  | 10 +++++++---
+ core/systems/input/overlay_mode_input_manager.gd     |  6 +++---
+ core/ui/card_ui/card_ui.gd                           |  2 +-
+ core/ui/card_ui/gamepad/gamepad_settings.gd          |  2 +-
+ core/ui/card_ui_overlay_mode/card_ui_overlay_mode.gd |  2 +-
+ 6 files changed, 15 insertions(+), 11 deletions(-)
+
+diff --git a/core/systems/input/input_icon_manager.gd b/core/systems/input/input_icon_manager.gd
+index e0cb5c1..5dd74cb 100644
+--- a/core/systems/input/input_icon_manager.gd
++++ b/core/systems/input/input_icon_manager.gd
+@@ -156,10 +156,10 @@ func _init():
+ 	# Listen for InputPlumber device change events
+ 	var on_comp_device_added := func(_device: CompositeDevice):
+ 		_on_joy_connection_changed(true)
+-	input_plumber.composite_device_added.connect(on_comp_device_added)
++	input_plumber.composite_device_added.connect(on_comp_device_added, CONNECT_DEFERRED)
+ 	var on_comp_device_removed := func(_path: String):
+ 		_on_joy_connection_changed(false)
+-	input_plumber.composite_device_removed.connect(on_comp_device_removed)
++	input_plumber.composite_device_removed.connect(on_comp_device_removed, CONNECT_DEFERRED)
+ 	
+ 	# Listen for Godot joypad change events
+ 	var on_godot_joy_changed := func(_device: int, connected: bool):
+diff --git a/core/systems/input/input_manager.gd b/core/systems/input/input_manager.gd
+index 305290f..b2d076f 100644
+--- a/core/systems/input/input_manager.gd
++++ b/core/systems/input/input_manager.gd
+@@ -64,8 +64,10 @@ func _init() -> void:
+ 
+ # Called when the node enters the scene tree for the first time.
+ func _ready() -> void:
+-	input_plumber.composite_device_added.connect(_watch_dbus_device)
+-	input_plumber.started.connect(_init_inputplumber)
++	# Deferred: InputPlumberInstance emits its signals from inside process(), while it is bound;
++	# a handler that calls back into it (is_running, get_composite_device...) panics there.
++	input_plumber.composite_device_added.connect(_watch_dbus_device, CONNECT_DEFERRED)
++	input_plumber.started.connect(_init_inputplumber, CONNECT_DEFERRED)
+ 	_init_inputplumber()
+ 
+ 
+@@ -362,7 +364,9 @@ func _watch_dbus_device(device: CompositeDevice) -> void:
+ 		logger.debug("Adding watch for " + device.name + " " + target.dbus_path)
+ 		logger.debug(str(target.get_instance_id()))
+ 		logger.debug(str(target.get_rid()))
+-		target.input_event.connect(_on_dbus_input_event.bind(device.dbus_path))
++		# Deferred (same frame): the actions this turns into reach UI code that calls back into
++		# InputPlumberInstance, which is still bound while it emits this signal.
++		target.input_event.connect(_on_dbus_input_event.bind(device.dbus_path), CONNECT_DEFERRED)
+ 
+ 
+ func _on_dbus_input_event(event: String, value: float, dbus_path: String) -> void:
+diff --git a/core/systems/input/overlay_mode_input_manager.gd b/core/systems/input/overlay_mode_input_manager.gd
+index 360a621..0949bf3 100644
+--- a/core/systems/input/overlay_mode_input_manager.gd
++++ b/core/systems/input/overlay_mode_input_manager.gd
+@@ -16,8 +16,8 @@ var base_state = preload("res://assets/state/states/in_game.tres") as State
+ 
+ # Called when the node enters the scene tree for the first time.
+ func _ready() -> void:
+-	input_plumber.composite_device_added.connect(_watch_dbus_device)
+-	input_plumber.started.connect(_init_inputplumber)
++	input_plumber.composite_device_added.connect(_watch_dbus_device, CONNECT_DEFERRED)
++	input_plumber.started.connect(_init_inputplumber, CONNECT_DEFERRED)
+ 	_init_inputplumber()
+ 
+ 
+@@ -362,7 +362,7 @@ func _watch_dbus_device(device: CompositeDevice) -> void:
+ 			logger.debug("Adding watch for " + device.name + " " + target.dbus_path)
+ 			logger.debug(str(target.get_instance_id()))
+ 			logger.debug(str(target.get_rid()))
+-			target.input_event.connect(_on_dbus_input_event.bind(device.dbus_path))
++			target.input_event.connect(_on_dbus_input_event.bind(device.dbus_path), CONNECT_DEFERRED)
+ 
+ 
+ func _on_dbus_input_event(event: String, value: float, dbus_path: String) -> void:
+diff --git a/core/ui/card_ui/card_ui.gd b/core/ui/card_ui/card_ui.gd
+index a3f68c2..0ec4e4c 100644
+--- a/core/ui/card_ui/card_ui.gd
++++ b/core/ui/card_ui/card_ui.gd
+@@ -161,7 +161,7 @@ func _ready() -> void:
+ 		logger.debug("Setting intercept mode to: " + str(intercept_mode))
+ 		device.intercept_mode = intercept_mode
+ 		device.set_intercept_activation(PackedStringArray(["Gamepad:Button:Guide"]), "Gamepad:Button:Guide")
+-	input_plumber.composite_device_added.connect(on_device_changed)
++	input_plumber.composite_device_added.connect(on_device_changed, CONNECT_DEFERRED)
+ 
+ 	# Set the theme if one was set
+ 	var theme_path := settings_manager.get_value("general", "theme", "res://assets/themes/card_ui-darksoul.tres") as String
+diff --git a/core/ui/card_ui/gamepad/gamepad_settings.gd b/core/ui/card_ui/gamepad/gamepad_settings.gd
+index f86ef12..1961350 100644
+--- a/core/ui/card_ui/gamepad/gamepad_settings.gd
++++ b/core/ui/card_ui/gamepad/gamepad_settings.gd
+@@ -92,7 +92,7 @@ func _ready() -> void:
+ 	state_machine.state_changed.connect(on_state_changed)
+ 
+ 	# Ensure new devices are set to the correct profile when added
+-	input_plumber.composite_device_added.connect(_set_gamepad_profile)
++	input_plumber.composite_device_added.connect(_set_gamepad_profile, CONNECT_DEFERRED)
+ 	#input_plumber.composite_device_changed.connect(_set_gamepad_profile) #TODO: fixme?
+ 
+ 
+diff --git a/core/ui/card_ui_overlay_mode/card_ui_overlay_mode.gd b/core/ui/card_ui_overlay_mode/card_ui_overlay_mode.gd
+index 8165121..cd6bf40 100644
+--- a/core/ui/card_ui_overlay_mode/card_ui_overlay_mode.gd
++++ b/core/ui/card_ui_overlay_mode/card_ui_overlay_mode.gd
+@@ -201,7 +201,7 @@ func _setup_overlay_mode(args: PackedStringArray) -> void:
+ 		logger.debug("Setting intercept mode to: " + str(intercept_mode))
+ 		device.intercept_mode = intercept_mode
+ 		device.set_intercept_activation(PackedStringArray(["Gamepad:Button:Guide", "Gamepad:Button:East"]), "Gamepad:Button:QuickAccess2")
+-	input_plumber.composite_device_added.connect(on_device_changed)
++	input_plumber.composite_device_added.connect(on_device_changed, CONNECT_DEFERRED)
+ 
+ 
+ # Removes specified child elements from the given Node.
+-- 
+2.55.0
+

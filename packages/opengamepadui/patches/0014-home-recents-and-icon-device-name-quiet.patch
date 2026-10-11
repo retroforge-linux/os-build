@@ -1,0 +1,75 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: qforge <qforge@invalid>
+Date: Sat, 10 Oct 2026 23:10:38 -0700
+Subject: [PATCH] fix(Home, Input Icons): no warnings for recents without a
+ library item or joypad-less actions
+
+ - The home screen looked every recent app up with get_app_by_name, which
+   warns when none is found: apps no library provides (an emulator or Steam
+   started on its own) and ROMs whose plugin library has not loaded yet
+   warned on every refresh. has_app() is asked first.
+ - InputIconProcessor took Input.get_joy_name() for every action without
+   an InputPlumber path. OGUI's own actions (the guide chain's ogui_menu...)
+   come from no joypad, so the device name flipped to "" and back, each flip
+   a refresh and a "No input icon mapping found for device: " warning. An
+   empty name now keeps the last device.
+---
+ core/systems/input/input_icon_manager.gd   | 6 ++++--
+ core/systems/input/input_icon_processor.gd | 7 +++++--
+ core/ui/card_ui/home/cardui_home.gd        | 4 ++++
+ 3 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/core/systems/input/input_icon_manager.gd b/core/systems/input/input_icon_manager.gd
+index 5dd74cb..1d3e7a8 100644
+--- a/core/systems/input/input_icon_manager.gd
++++ b/core/systems/input/input_icon_manager.gd
+@@ -329,8 +329,10 @@ func load_matching_mapping(device_name: String) -> InputIconMapping:
+ 		var mapping := load(mapping_path) as InputIconMapping
+ 		return mapping
+ 	
+-	# Last resort, fallback to default icon mapping
+-	logger.warn("No input icon mapping found for device: " + device_name)
++	# Last resort, fallback to default icon mapping. No device yet (startup, before any
++	# input) is not worth a warning per icon.
++	if not device_name.is_empty():
++		logger.warn("No input icon mapping found for device: " + device_name)
+ 	var mapping_path := DEFAULT_MAPPING
+ 	var mapping := load(mapping_path) as InputIconMapping
+ 	return mapping
+diff --git a/core/systems/input/input_icon_processor.gd b/core/systems/input/input_icon_processor.gd
+index 2acdd30..78d42e4 100644
+--- a/core/systems/input/input_icon_processor.gd
++++ b/core/systems/input/input_icon_processor.gd
+@@ -26,9 +26,12 @@ func _input(event: InputEvent) -> void:
+ 				var device := input_plumber.get_composite_device(dbus_path)
+ 				if device:
+ 					device_name = device.name
+-			# Otherwise, use the detected device name
++			# Otherwise, use the detected device name. OGUI's own actions (ogui_menu from the
++			# guide chain...) come from no joypad: keep the last device rather than "".
+ 			else:
+-				device_name = Input.get_joy_name(event.device)
++				var joy_name := Input.get_joy_name(event.device)
++				if not joy_name.is_empty():
++					device_name = joy_name
+ 		"InputEventJoypadMotion":
+ 			if abs(event.axis_value) > DEADZONE:
+ 				input_type = InputIconManager.InputType.GAMEPAD
+diff --git a/core/ui/card_ui/home/cardui_home.gd b/core/ui/card_ui/home/cardui_home.gd
+index ad34c74..909af60 100644
+--- a/core/ui/card_ui/home/cardui_home.gd
++++ b/core/ui/card_ui/home/cardui_home.gd
+@@ -165,6 +165,10 @@ func _update_recent_apps() -> void:
+ 	var items: Array[LibraryItem] = []
+ 	for n in recent_apps:
+ 		var name: String = n
++		# Recents can name apps no library provides (any more, or not yet loaded): skip them
++		# without get_app_by_name's warning on every refresh.
++		if not LibraryManager.has_app(name):
++			continue
+ 		var library_item: LibraryItem = LibraryManager.get_app_by_name(name)
+ 		if library_item == null:
+ 			continue
+-- 
+2.55.0
+

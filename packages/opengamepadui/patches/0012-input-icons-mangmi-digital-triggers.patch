@@ -1,0 +1,64 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: qforge <qforge@invalid>
+Date: Sat, 10 Oct 2026 23:07:05 -0700
+Subject: [PATCH 10/11] fix(Input Icons): MANGMI pads, digital triggers, no
+ Sync row
+
+ - No icon mapping matched "MANGMI Air X/Y" (the InputPlumber composite
+   device name), so every icon refresh warned and fell back to the default
+   mapping. Their face buttons are Xbox-labelled; the Xbox Series mapping
+   now matches "MANGMI".
+ - Boards with digital L2/R2 report Gamepad:Button:LeftTrigger/RightTrigger,
+   which had no joypad path: Gamepad Settings showed text and warned.
+ - Gamepad Settings warned "Unhandled capability: Sync" for the event
+   framing capability; it is skipped.
+---
+ assets/gamepad/icon_mappings/xboxseries.tres | 2 +-
+ core/systems/input/events/event.gd           | 3 +++
+ core/ui/card_ui/gamepad/gamepad_settings.gd  | 3 +++
+ 3 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/assets/gamepad/icon_mappings/xboxseries.tres b/assets/gamepad/icon_mappings/xboxseries.tres
+index 74bf195..b0bc537 100644
+--- a/assets/gamepad/icon_mappings/xboxseries.tres
++++ b/assets/gamepad/icon_mappings/xboxseries.tres
+@@ -35,7 +35,7 @@
+ [resource]
+ script = ExtResource("1_b6rct")
+ name = "XBox Series"
+-device_names = PackedStringArray("Xbox Series")
++device_names = PackedStringArray("Xbox Series", "MANGMI")
+ diagram = ExtResource("1_ev5wy")
+ north = ExtResource("17_sgpdy")
+ south = ExtResource("28_wmep3")
+diff --git a/core/systems/input/events/event.gd b/core/systems/input/events/event.gd
+index c996fe2..05ddeed 100644
+--- a/core/systems/input/events/event.gd
++++ b/core/systems/input/events/event.gd
+@@ -222,6 +222,9 @@ static func get_joypad_path(cap: String) -> String:
+ 		# Triggers
+ 		"Gamepad:Trigger:LeftTrigger": "joypad/lt",
+ 		"Gamepad:Trigger:RightTrigger": "joypad/rt",
++		# Digital triggers (InputPlumber offers these as buttons on boards without an ADC)
++		"Gamepad:Button:LeftTrigger": "joypad/lt",
++		"Gamepad:Button:RightTrigger": "joypad/rt",
+ 		# Paddles
+ 		"Gamepad:Button:LeftPaddle1": "joypad/left_paddle_1",
+ 		"Gamepad:Button:LeftPaddle2": "joypad/left_paddle_2",
+diff --git a/core/ui/card_ui/gamepad/gamepad_settings.gd b/core/ui/card_ui/gamepad/gamepad_settings.gd
+index 1961350..8641df2 100644
+--- a/core/ui/card_ui/gamepad/gamepad_settings.gd
++++ b/core/ui/card_ui/gamepad/gamepad_settings.gd
+@@ -241,6 +241,9 @@ func populate_mappings_for(device: CompositeDevice) -> void:
+ 	var touchpad_events := PackedStringArray()
+ 	for capability: String in capabilities:
+ 		logger.debug("Capability: " + capability)
++		# Event framing, not an input anyone maps.
++		if capability == "Sync":
++			continue
+ 		if capability.begins_with("Gamepad:Button"):
+ 			if not capability in button_events:
+ 				button_events.append(capability)
+-- 
+2.55.0
+

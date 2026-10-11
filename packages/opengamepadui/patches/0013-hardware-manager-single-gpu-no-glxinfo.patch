@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: qforge <qforge@invalid>
+Date: Sat, 10 Oct 2026 23:07:23 -0700
+Subject: [PATCH 11/11] fix(HardwareManager): a board with one GPU needs no
+ glxinfo
+
+get_gpu_info ran glxinfo -B to find the active GPU's PCI ids and match
+them against the DRM cards. An SoC board has no glxinfo (no X11 client
+tools) and its platform DRM device has no PCI ids, so every call logged
+"Failed to run glxinfo" and "Could not identify active GPU" and left the
+card unset. With a single card there is nothing to choose: it is the
+active one, and the APU checks after it run as before.
+---
+ core/systems/hardware/hardware_manager.gd | 27 ++++++++++++++---------
+ 1 file changed, 16 insertions(+), 11 deletions(-)
+
+diff --git a/core/systems/hardware/hardware_manager.gd b/core/systems/hardware/hardware_manager.gd
+index 9a777e7..e656a28 100644
+--- a/core/systems/hardware/hardware_manager.gd
++++ b/core/systems/hardware/hardware_manager.gd
+@@ -87,17 +87,22 @@ func get_gpu_info() -> GPUInfo:
+ 		logger.error("GPU Card subdata could not be derived.")
+ 		return gpu_info
+ 
+-	var active_gpu_data := get_active_gpu_device()
+-	if active_gpu_data.size() == 0:
+-		logger.debug("Found GPU:", gpu_info)
+-		logger.error("Could not identify active GPU.")
+-		return gpu_info
+-
+-	for card in cards:
+-		if card.vendor_id == active_gpu_data[0] and card.device_id == active_gpu_data[1]:
+-			gpu_info.card = card
+-		elif card.subvendor_id == active_gpu_data[0] and card.subdevice_id == active_gpu_data[1]:
+-			gpu_info.card = card
++	# One GPU: it is the active one. glxinfo (X11, PCI ids) is only needed to pick among
++	# several; an SoC board has neither it nor PCI ids on its platform DRM device.
++	if cards.size() == 1:
++		gpu_info.card = cards[0]
++	else:
++		var active_gpu_data := get_active_gpu_device()
++		if active_gpu_data.size() == 0:
++			logger.debug("Found GPU:", gpu_info)
++			logger.error("Could not identify active GPU.")
++			return gpu_info
++
++		for card in cards:
++			if card.vendor_id == active_gpu_data[0] and card.device_id == active_gpu_data[1]:
++				gpu_info.card = card
++			elif card.subvendor_id == active_gpu_data[0] and card.subdevice_id == active_gpu_data[1]:
++				gpu_info.card = card
+ 
+ 	if not gpu_info.card:
+ 		logger.debug("Found GPU:", gpu_info)
+-- 
+2.55.0
+

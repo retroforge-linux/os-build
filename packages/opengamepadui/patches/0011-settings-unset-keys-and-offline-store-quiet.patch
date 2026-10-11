@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: qforge <qforge@invalid>
+Date: Sat, 10 Oct 2026 23:06:45 -0700
+Subject: [PATCH 09/11] fix(Settings): no errors for unset settings or an
+ offline plugin store
+
+ - SettingsManager.get_value with no default (or a null one) made
+   ConfigFile log "Couldn't find the given section ... and no default was
+   given" for every unset key; game_launch_settings reads six per game.
+   Unset is answered with the default without asking ConfigFile.
+ - erase_section_key on an unset key logged "Cannot erase nonexistent key"
+   (and emitted setting_changed for nothing). Now a no-op.
+ - The plugin store menu emitted plugin_store_loaded(null) when the store
+   could not be reached, and its own handler failed to take the null as a
+   Dictionary. Offline, the menu keeps what it shows.
+---
+ core/global/settings_manager.gd               | 6 ++++++
+ core/ui/card_ui/settings/plugin_store_menu.gd | 3 +++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/core/global/settings_manager.gd b/core/global/settings_manager.gd
+index 6f456b6..3e7c628 100644
+--- a/core/global/settings_manager.gd
++++ b/core/global/settings_manager.gd
+@@ -35,6 +35,10 @@ func reload() -> void:
+ 
+ 
+ func get_value(section: String, key: String, default: Variant = null) -> Variant:
++	# ConfigFile treats a null default as "none given" and logs an error for every unset key;
++	# an unset setting is normal here, so answer the default without asking it.
++	if not _config.has_section_key(section, key):
++		return default
+ 	return _config.get_value(section, key, default)
+ 
+ 
+@@ -58,6 +62,8 @@ func set_library_value(item: LibraryItem, key: String, value: Variant, persist:
+ 
+ 
+ func erase_section_key(section: String, key: String, persist: bool = true) -> void:
++	if not _config.has_section_key(section, key):
++		return
+ 	_config.erase_section_key(section, key)
+ 	if persist:
+ 		save()
+diff --git a/core/ui/card_ui/settings/plugin_store_menu.gd b/core/ui/card_ui/settings/plugin_store_menu.gd
+index 631b49b..43e8c58 100644
+--- a/core/ui/card_ui/settings/plugin_store_menu.gd
++++ b/core/ui/card_ui/settings/plugin_store_menu.gd
+@@ -25,6 +25,9 @@ func _ready() -> void:
+ func load_plugin_store_items():
+ 	# Fetch available plugins from the plugin store
+ 	var plugin_items = await plugin_loader.get_plugin_store_items()
++	# null when the store could not be reached (offline): keep what is shown.
++	if not plugin_items is Dictionary:
++		return
+ 	plugin_store_loaded.emit(plugin_items)
+ 
+ 
+-- 
+2.55.0
+

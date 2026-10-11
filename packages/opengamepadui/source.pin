@@ -46,6 +46,23 @@
 #         offscreen canvas group + mask every frame) by an all-opaque gradient, i.e. a plain
 #         rectangle. clip_contents (a scissor) gives the same picture: 19.6 -> 13.9 ms of GPU per
 #         frame on the Adreno 610 at 1920x1080 (Air X, 2026-10-10).
+#   0010  ours, for upstream: InputPlumberInstance emits its signals (input_event through its
+#         DBusDevices, composite_device_added, started) from inside process() while bound, so a
+#         handler calling back into it panics in godot-rust and gets nil. Pressing A on Gamepad
+#         Settings made is_running() fail ("InputPlumber service not available"), and the icon
+#         processor's get_composite_device() failed on every gamepad action (empty device name,
+#         default icons). 130+ panics a session (Air Y, 2026-10-11). Handlers connected deferred.
+#   0011  ours, for upstream: SettingsManager.get_value without a default logged a ConfigFile
+#         error per unset key (six per game in the launch settings), erase on an unset key
+#         another; the plugin store menu took the offline null as a Dictionary and errored.
+#   0012  ours, for upstream: MANGMI pads matched no icon mapping (a warning per icon refresh);
+#         the Xbox Series mapping takes "MANGMI". Digital L2/R2 (Gamepad:Button:*Trigger) get the
+#         trigger icons, and Gamepad Settings stops warning about the Sync capability.
+#   0013  ours, for upstream: one GPU needs no glxinfo to be found active (absent on SoC boards:
+#         "Failed to run glxinfo" + "Could not identify active GPU" on every query).
+#   0014  ours, for upstream: the home screen warned for each recent app no library provides
+#         (an emulator started on its own, Steam, a ROM before its plugin library loads) on every
+#         refresh; the icon processor flipped the device name to "" on OGUI's own actions.
 #
 # The earlier 0006/0007 (plugin store URL as a project setting, set to "" for QForge) were dropped on
 # 2026-10-06: with the store off, OGUI's first-start screen showed an empty catalog. QForge has no
@@ -63,4 +80,4 @@
 name: opengamepadui
 pkgbuild_local: PKGBUILD
 pkgrel_suffix: 1
-patches: 0001-hardware-manager-no-dmi.patch 0002-install-dialogs-rename-custom-maximum-size.patch 0003-performance-menu-hide-unsupported-controls.patch 0004-running-app-exit-before-window.patch 0005-performance-manager-save-default-profiles.patch 0006-performance-menu-power-profiles-without-tdp.patch 0007-performance-manager-profile-key-app-id.patch 0008-animated-effects-setting.patch 0009-library-banner-clip-with-a-scissor-not-a-canvas-group.patch
+patches: 0001-hardware-manager-no-dmi.patch 0002-install-dialogs-rename-custom-maximum-size.patch 0003-performance-menu-hide-unsupported-controls.patch 0004-running-app-exit-before-window.patch 0005-performance-manager-save-default-profiles.patch 0006-performance-menu-power-profiles-without-tdp.patch 0007-performance-manager-profile-key-app-id.patch 0008-animated-effects-setting.patch 0009-library-banner-clip-with-a-scissor-not-a-canvas-group.patch 0010-inputplumber-signal-handlers-deferred.patch 0011-settings-unset-keys-and-offline-store-quiet.patch 0012-input-icons-mangmi-digital-triggers.patch 0013-hardware-manager-single-gpu-no-glxinfo.patch 0014-home-recents-and-icon-device-name-quiet.patch
