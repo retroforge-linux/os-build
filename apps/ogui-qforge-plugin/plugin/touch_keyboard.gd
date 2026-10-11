@@ -1,5 +1,11 @@
 extends RefCounted
-## Tapping a text field opens OpenGamepadUI's on-screen keyboard.
+## Touch for OpenGamepadUI's text fields and toggles.
+##
+## Toggles: OGUI's Toggle flips only on ui_accept (the gamepad's A); a tap reaches Godot as a
+## left click, which the row's panel swallowed (the switch itself ignores the mouse). A tap on the
+## row now does what A does. Every toggle in OGUI's settings, and ours.
+##
+## Text fields: tapping one opens OpenGamepadUI's on-screen keyboard.
 ##
 ## OGUI opens it only when the gamepad's South button is released on a focused field
 ## (SearchBar._gui_input, ComponentTextInput._on_gui_input). A tap on the touchscreen reaches
@@ -26,7 +32,7 @@ func setup(tree: SceneTree) -> RefCounted:
 	for node in tree.root.find_children("*", "LineEdit", true, false):
 		_watch(node)
 	for node in tree.root.find_children("*", "Control", true, false):
-		if node is ComponentTextInput:
+		if node is ComponentTextInput or node is Toggle:
 			_watch(node)
 	tree.node_added.connect(_watch)
 	popup_state_machine.state_changed.connect(_on_popup_changed)
@@ -55,7 +61,12 @@ func detach() -> void:
 
 
 func _watch(node: Node) -> void:
-	if node is SearchBar:
+	if node is Toggle:
+		if node.is_node_ready():
+			_connect_toggle(node)
+		else:
+			node.ready.connect(func(): _connect_toggle(node), CONNECT_ONE_SHOT)
+	elif node is SearchBar:
 		_connect(node, node, true)
 	elif node is ComponentTextInput:
 		# line_edit and keyboard_context are @onready: wait for the node if it is not ready yet.
@@ -71,6 +82,29 @@ func _connect(field: LineEdit, owner: Node, is_search: bool) -> void:
 	var handler := _on_field_input.bind(owner, is_search)
 	if not field.gui_input.is_connected(handler):
 		field.gui_input.connect(handler)
+
+
+func _connect_toggle(toggle: Toggle) -> void:
+	# The switch ignores the mouse (mouse_filter IGNORE) and the PanelContainer around the row
+	# stops it, so a click lands on the panel, never on the Toggle itself.
+	var on_row := _on_toggle_row_input.bind(toggle)
+	for target in [toggle, toggle.get("panel")]:
+		if target is Control and not (target as Control).gui_input.is_connected(on_row):
+			(target as Control).gui_input.connect(on_row)
+
+
+func _flip(toggle: Toggle, state: bool) -> void:
+	toggle.button_pressed = state
+	toggle.toggled.emit(state)
+	toggle.button_down.emit()
+	toggle.pressed.emit()
+	toggle.button_up.emit()
+
+
+func _on_toggle_row_input(event: InputEvent, toggle: Toggle) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		_flip(toggle, not toggle.button_pressed)
+
 
 
 func _on_field_input(event: InputEvent, owner: Node, is_search: bool) -> void:

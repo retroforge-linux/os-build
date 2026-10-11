@@ -8,6 +8,9 @@ extends VBoxContainer
 ## the quick bar never goes looking for a SectionLabel child to read and free: that lookup crashed
 ## OGUI when the label was found (the label freed mid-call) and threw when it was not (null base).
 ## Refreshes every REFRESH_SECS while the quick bar shows it; idle otherwise.
+##
+## Under the LED row: on/off, brightness and colour for the board's LEDs, through qforge-powerd
+## (power_client.gd), which keeps the setting. Hidden on a board whose powerd reports no LEDs.
 
 const REFRESH_SECS := 2.0
 const ROWS := [
@@ -25,6 +28,17 @@ var info  # hardware_info.gd
 var _values := {}  # row key -> value Label
 var _rows := {}    # row key -> row container
 var _timer: Timer
+var power  # power_client.gd
+var _led_box: VBoxContainer
+var _led_toggle: Control  # OGUI Toggle
+var _led_slider: Control  # OGUI ValueSlider
+var _led_debounce: Timer
+var _led_syncing := false
+
+const LED_COLORS := [
+	["Blue", [0, 96, 255]], ["Cyan", [0, 200, 255]], ["Green", [0, 255, 64]],
+	["Purple", [160, 0, 255]], ["Red", [255, 0, 0]], ["Orange", [255, 96, 0]], ["White", [255, 255, 255]],
+]
 
 
 ## Load the reader from the plugin's own folder (OGUI mounts the plugin zip at res://plugins/<id>).
@@ -32,6 +46,7 @@ func setup(plugin_base: String, hw_root: String = "") -> void:
 	info = load(plugin_base.path_join("hardware_info.gd")).new()
 	if hw_root != "":
 		info.root = hw_root
+	power = load(plugin_base.path_join("power_client.gd")).new()
 
 
 func _ready() -> void:
@@ -53,13 +68,79 @@ func _ready() -> void:
 		add_child(box)
 		_rows[row[0]] = box
 		_values[row[0]] = value
+		if row[0] == "leds":
+			_led_box = _build_led_controls()
+			add_child(_led_box)
 	_timer = Timer.new()
 	_timer.wait_time = REFRESH_SECS
 	_timer.autostart = true
 	_timer.timeout.connect(refresh)
 	add_child(_timer)
 	visibility_changed.connect(refresh)
+	visibility_changed.connect(_sync_leds)
 	refresh()
+	_sync_leds()
+
+
+func _build_led_controls() -> VBoxContainer:
+	var box := VBoxContainer.new()
+	box.name = "LedControls"
+	box.visible = false
+	_led_toggle = (load("res://core/ui/components/toggle.tscn") as PackedScene).instantiate()
+	_led_toggle.text = "Lights"
+	box.add_child(_led_toggle)
+	_led_toggle.toggled.connect(func(on: bool):
+		if not _led_syncing and power:
+			power.set_led_enabled(on))
+	# OGUI's slider applies its value before its range in _ready and reports the clamp as a change:
+	# add it first and only listen afterwards, or merely building the card writes a brightness.
+	_led_slider = (load("res://core/ui/components/slider.tscn") as PackedScene).instantiate()
+	_led_slider.text = "Brightness"
+	box.add_child(_led_slider)
+	_led_slider.min_value = 0
+	_led_slider.max_value = 100
+	_led_slider.step = 5
+	_led_debounce = Timer.new()
+	_led_debounce.one_shot = true
+	_led_debounce.wait_time = 0.25
+	_led_debounce.timeout.connect(func():
+		if power:
+			power.set_led_brightness(int(round(_led_slider.value * 255.0 / 100.0))))
+	box.add_child(_led_debounce)
+	_led_slider.value_changed.connect(func(_v: float):
+		if not _led_syncing:
+			_led_debounce.start())
+	var colors := HFlowContainer.new()
+	for entry in LED_COLORS:
+		var button := Button.new()
+		button.custom_minimum_size = Vector2(44, 44)
+		button.tooltip_text = entry[0]
+		var swatch := StyleBoxFlat.new()
+		swatch.bg_color = Color8(entry[1][0], entry[1][1], entry[1][2])
+		swatch.set_corner_radius_all(22)
+		for state in ["normal", "hover", "pressed"]:
+			button.add_theme_stylebox_override(state, swatch)
+		var rgb: Array = entry[1]
+		button.pressed.connect(func():
+			if power:
+				power.set_led_color(rgb))
+		colors.add_child(button)
+	box.add_child(colors)
+	return box
+
+
+## Read the setting back from powerd when the card shows; hide the controls without LEDs.
+func _sync_leds() -> void:
+	if _led_box == null or power == null or not is_visible_in_tree():
+		return
+	var led: Dictionary = power.get_led()
+	_led_box.visible = led.get("count", 0) > 0
+	if not _led_box.visible:
+		return
+	_led_syncing = true
+	_led_toggle.button_pressed = led["enabled"]
+	_led_slider.value = clampf(round(led["brightness"] * 100.0 / 255.0), 0, 100)
+	_led_syncing = false
 
 
 func refresh() -> void:
