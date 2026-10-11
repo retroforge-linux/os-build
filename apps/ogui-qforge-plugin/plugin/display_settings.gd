@@ -6,6 +6,10 @@ extends RefCounted
 ##    shell's root window -- running games see a resolution change, new launches get the new
 ##    size; the panel plane scales it to the output. "Default" is the board profile's size
 ##    (QFORGE_GAMESCOPE_NESTED_W/H, exported by qforge-session), "Native" the output size.
+##    The lower sizes are heights at the PANEL's aspect ratio ("720p" is 960 x 720 on the Air
+##    Y's 4:3 panel, 1280 x 720 on a 16:9 one), so the game display is scaled to fill the
+##    screen: a fixed 16:9 size on a 4:3 panel was letterboxed by gamescope, and a 4:3 game
+##    inside it pillarboxed again (bars on all four sides). As ROCKNIX's fullscreen scale hint.
 ##  - Reduced UI resolution: the shell itself renders at its 1280x800 design size and is scaled
 ##    up (Godot viewport stretch) instead of drawing every frame at the output size. Default from
 ##    the board profile (QFORGE_UI_VIEWPORT_RENDER). While a game has the foreground the shell
@@ -18,10 +22,10 @@ const SECTION := "qforge"
 const RESOLUTIONS := [
 	["default", "Default (this device)"],
 	["native", "Native"],
-	["1600x900", "1600 x 900"],
-	["1280x720", "1280 x 720"],
-	["960x540", "960 x 540"],
-	["854x480", "854 x 480"],
+	["900p", "900p"],
+	["720p", "720p"],
+	["540p", "540p"],
+	["480p", "480p"],
 ]
 
 var settings := load("res://core/global/settings_manager.tres") as SettingsManager
@@ -37,7 +41,7 @@ var _backgrounded := false  # a game has the foreground; the shell is only an ov
 ## Apply the stored (or default) choices; call once at startup, menu or not.
 func apply_all(scene_tree: SceneTree) -> void:
 	tree = scene_tree
-	apply_game_resolution(settings.get_value(SECTION, "game_resolution", "default") as String)
+	apply_game_resolution(stored_resolution())
 	apply_reduced_ui(reduced_ui_enabled())
 
 
@@ -59,8 +63,7 @@ func attach() -> bool:
 	_resolution.clear()  # the dropdown scene ships a "None" placeholder item
 	for r in RESOLUTIONS:
 		_resolution.add_item(_label_for(r[0], r[1]))
-	var current := settings.get_value(SECTION, "game_resolution", "default") as String
-	_resolution.select(maxi(0, _keys().find(current)))
+	_resolution.select(maxi(0, _keys().find(stored_resolution())))
 	_resolution.item_selected.connect(_on_resolution_selected)
 
 	_reduced_ui = toggle_scene.instantiate()
@@ -84,6 +87,17 @@ static func _keys() -> Array:
 	return RESOLUTIONS.map(func(r): return r[0])
 
 
+## The stored choice. Sizes stored as "WxH" before the panel-aspect presets become their height
+## preset ("1280x720" -> "720p"), so a 16:9 size no longer letterboxes on a 4:3 panel.
+func stored_resolution() -> String:
+	var key := settings.get_value(SECTION, "game_resolution", "default") as String
+	var p := key.split("x")
+	if p.size() == 2 and p[1].is_valid_int():
+		key = p[1] + "p"
+		settings.set_value(SECTION, "game_resolution", key)
+	return key
+
+
 func _label_for(key: String, label: String) -> String:
 	if key == "default":
 		var s := default_size()
@@ -91,7 +105,8 @@ func _label_for(key: String, label: String) -> String:
 	if key == "native":
 		var n := native_size()
 		return "%s, %d x %d" % [label, n.x, n.y]
-	return label
+	var s := size_for(key)
+	return "%s, %d x %d" % [label, s.x, s.y]
 
 
 ## The output size gamescope gives the shell's own display.
@@ -115,10 +130,19 @@ func size_for(key: String) -> Vector2i:
 			return default_size()
 		"native":
 			return native_size()
-	var p := key.split("x")
-	if p.size() == 2 and p[0].is_valid_int() and p[1].is_valid_int():
-		return Vector2i(int(p[0]), int(p[1]))
+	var h := key.trim_suffix("p")
+	if key.ends_with("p") and h.is_valid_int():
+		return aspect_size(int(h))
 	return default_size()
+
+
+## `height` lines at the panel's aspect ratio (even width), never above the output size.
+func aspect_size(height: int) -> Vector2i:
+	var n := native_size()
+	if n.y <= 0 or height >= n.y:
+		return n
+	var w := int(round(float(height) * n.x / n.y / 2.0)) * 2
+	return Vector2i(w, height)
 
 
 func apply_game_resolution(key: String) -> void:
