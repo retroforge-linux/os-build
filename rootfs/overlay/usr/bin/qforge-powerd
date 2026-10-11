@@ -290,6 +290,40 @@ def curve_pwm(curve, temp):
     return curve[0][1]
 
 
+def binary_fan_on(curve, temp, was_on, on_pwm, hysteresis):
+    """On/off for a fan with two speeds (gpio-fan: off or full).
+
+    A PWM there is not a speed: the driver rounds every value above 0 up to "on", so following
+    the curve would hold the fan at full speed from the curve's floor up. Instead the fan switches
+    on where the curve reaches on_pwm (its first step: 72 C on the moderate curve) and off again
+    once the curve at temp + hysteresis is back below it, so it does not flap around the knee."""
+    if not curve:
+        return was_on
+
+    def exact(t):  # curve_pwm without its rounding: 71 C must not count as the 72 C knee
+        points = sorted(curve)
+        if t <= points[0][0]:
+            return float(points[0][1])
+        for (t0, p0), (t1, p1) in zip(points, points[1:]):
+            if t <= t1:
+                return p0 + (p1 - p0) * (t - t0) / (t1 - t0) if t1 > t0 else float(p1)
+        return float(points[-1][1])
+
+    if was_on:
+        return exact(temp + hysteresis) >= on_pwm
+    return exact(temp) >= on_pwm
+
+
+def is_two_speed_fan(hwmon, thermal_root=Path("/sys/class/thermal")):
+    """A gpio-fan whose cooling device has one step above off (speed-map with two entries)."""
+    if not hwmon or read_text(hwmon / "name") != "gpio_fan":
+        return False
+    for cdev in thermal_root.glob("cooling_device*"):
+        if read_text(cdev / "type") == "gpio-fan":
+            return read_text(cdev / "max_state") == "1"
+    return False
+
+
 def resample_curve(curve, stops):
     return [curve_pwm(curve, stop) for stop in stops]
 
@@ -413,6 +447,8 @@ class QforgePower:
         self.fan_pwm = self.fan_hwmon / "pwm1" if self.fan_hwmon else None
         self.fan_enable = self.fan_hwmon / "pwm1_enable" if self.fan_hwmon else None
         self.fan_rpm = self.fan_hwmon / "fan1_input" if self.fan_hwmon else None
+        self.fan_binary = is_two_speed_fan(self.fan_hwmon)
+        self.fan_on = False
         self.temp_paths = self.discover_temps()
 
     def parse_config(self, include_user=True):
@@ -459,6 +495,10 @@ class QforgePower:
         }
         fan_config["smoothing"] = clamp(parser.getfloat("fan", "smoothing"), 0.0, 0.99)
         fan_config["pwm_quantum"] = clamp(parser.getint("fan", "pwm_quantum", fallback=1), 1, 255)
+        # Two-speed fans only (is_two_speed_fan): where the curve turns the fan on, and how far
+        # below that it turns off again.
+        fan_config["switch_on_pwm"] = clamp(parser.getint("fan", "switch_on_pwm", fallback=77), 1, 255)
+        fan_config["switch_hysteresis"] = clamp(parser.getint("fan", "switch_hysteresis", fallback=6), 0, 30)
         fan_config["min_pwm"] = clamp(fan_config["min_pwm"], 0, 255)
         fan_config["max_pwm"] = clamp(fan_config["max_pwm"], fan_config["min_pwm"], 255)
         fan_config["curve_stops"] = parse_curve_stops(
@@ -925,11 +965,20 @@ class QforgePower:
                     target = self.target_pwm(int(self.smoothed_temp))
                 else:
                     target = FAN_SAFE_PWM
-                if target > self.last_pwm:
-                    next_pwm = min(target, self.last_pwm + self.fan_config["ramp_up"])
+                if self.fan_binary:
+                    if temp:
+                        self.fan_on = binary_fan_on(
+                            self.fan_curve_points, int(self.smoothed_temp), self.fan_on,
+                            self.fan_config["switch_on_pwm"], self.fan_config["switch_hysteresis"])
+                    else:
+                        self.fan_on = True  # no temperature: fail safe
+                    self.last_pwm = self.fan_config["max_pwm"] if self.fan_on else 0
                 else:
-                    next_pwm = max(target, self.last_pwm - self.fan_config["ramp_down"])
-                self.last_pwm = clamp(next_pwm, self.fan_config["min_pwm"], self.fan_config["max_pwm"])
+                    if target > self.last_pwm:
+                        next_pwm = min(target, self.last_pwm + self.fan_config["ramp_up"])
+                    else:
+                        next_pwm = max(target, self.last_pwm - self.fan_config["ramp_down"])
+                    self.last_pwm = clamp(next_pwm, self.fan_config["min_pwm"], self.fan_config["max_pwm"])
 
             write_text(self.fan_pwm, self.last_pwm)
             if self.connection:

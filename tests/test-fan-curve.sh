@@ -314,6 +314,30 @@ balanced = re.search(r'name: "balanced",\n\+\s*cpu_governor: "([a-z_]+)"', patch
 check("the boot governor is PowerStation's balanced profile",
       balanced and balanced.group(1), named)
 
+# --- two-speed fans (gpio-fan: off or full; MANGMI Air X / Air Y) --------------------------
+moderate = pd.parse_fan_curve("96:255,90:204,84:153,78:102,72:77,0:51")
+check("2-speed: off at 60 C", pd.binary_fan_on(moderate, 60, False, 77, 6), False)
+check("2-speed: off just below the knee", pd.binary_fan_on(moderate, 71, False, 77, 6), False)
+check("2-speed: on at the knee (72 C, curve 77)", pd.binary_fan_on(moderate, 72, False, 77, 6), True)
+check("2-speed: stays on inside the hysteresis", pd.binary_fan_on(moderate, 67, True, 77, 6), True)
+check("2-speed: off below knee - hysteresis", pd.binary_fan_on(moderate, 65, True, 77, 6), False)
+check("2-speed: no curve keeps the state", pd.binary_fan_on([], 90, True, 77, 6), True)
+
+def fake_fan(name, cdev_type, max_state):
+    base = tmp / f"sys-{name}-{cdev_type}-{max_state}"
+    hw = base / "hwmon" / "hwmon20"; hw.mkdir(parents=True, exist_ok=True)
+    (hw / "name").write_text(name + "\n"); (hw / "pwm1").write_text("0\n")
+    cd = base / "thermal" / "cooling_device3"; cd.mkdir(parents=True, exist_ok=True)
+    (cd / "type").write_text(cdev_type + "\n"); (cd / "max_state").write_text(f"{max_state}\n")
+    return hw, base / "thermal"
+hw, th = fake_fan("gpio_fan", "gpio-fan", 1)
+check("2-speed detect: gpio-fan with max_state 1", pd.is_two_speed_fan(hw, th), True)
+hw, th = fake_fan("gpio_fan", "gpio-fan", 3)
+check("2-speed detect: gpio-fan with 4 speeds is a PWM fan", pd.is_two_speed_fan(hw, th), False)
+hw, th = fake_fan("pwmfan", "pwm-fan", 1)
+check("2-speed detect: pwm-fan never", pd.is_two_speed_fan(hw, th), False)
+check("2-speed detect: no fan", pd.is_two_speed_fan(None, th), False)
+
 for status, name in results:
     print(f"{status} {name}")
 sys.exit(1 if any(s.startswith("FAIL") for s, _ in results) else 0)
