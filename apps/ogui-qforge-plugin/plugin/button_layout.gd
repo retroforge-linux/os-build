@@ -12,8 +12,11 @@ extends RefCounted
 ## the "_nintendo" suffix is how a later check knows the device already has the swap. The
 ## profiles OGUI edits stay untouched, so turning the layout off just reloads OGUI's copy.
 ##
-## OGUI gives no signal when it loads a profile, so the device is checked (one busctl call)
-## shortly after each launch, switch and stop, after Settings > Gamepad closes, and at startup.
+## OGUI gives no signal when it loads a profile, so the device is checked shortly after each
+## launch, switch and stop, after Settings > Gamepad closes, and every POLL_SECS besides (OGUI
+## also loads one on its own, e.g. at startup after the plugin is up). The check is the
+## device's profile name, which the swapped copy carries with NAME_SUFFIX: an in-process
+## property read; busctl runs only when the profile has to change.
 ## Stored in OGUI's settings, section "qforge", key "nintendo_layout".
 ##
 ## A profile is never swapped while a button is held. InputPlumber drops a release it never saw
@@ -25,6 +28,8 @@ extends RefCounted
 const SECTION := "qforge"
 const KEY := "nintendo_layout"
 const SUFFIX := "_nintendo.json"
+const NAME_SUFFIX := " (Nintendo)"
+const POLL_SECS := 2.0
 const SWAP := {
 	"Gamepad:Button:South": "Gamepad:Button:East", "Gamepad:Button:East": "Gamepad:Button:South",
 	"Gamepad:Button:West": "Gamepad:Button:North", "Gamepad:Button:North": "Gamepad:Button:West",
@@ -41,6 +46,7 @@ var logger := Log.get_logger("QForgeButtons", Log.LEVEL.INFO)
 var tree: SceneTree
 var _toggle: Control  # OGUI Toggle
 var _timer: Timer
+var _poll: Timer
 var _held := {}  # InputPlumber D-Bus event names currently pressed
 var _waited := 0.0
 const POLL := 0.1
@@ -55,6 +61,11 @@ func setup(scene_tree: SceneTree) -> RefCounted:
 	_timer.wait_time = 0.5
 	_timer.timeout.connect(_on_timer)
 	tree.root.add_child(_timer)
+	_poll = Timer.new()
+	_poll.wait_time = POLL_SECS
+	_poll.autostart = true
+	_poll.timeout.connect(_check)
+	tree.root.add_child(_poll)
 	for device in input_plumber.get_composite_devices():
 		_watch(device)
 	input_plumber.composite_device_added.connect(_watch)
@@ -89,8 +100,9 @@ func attach() -> bool:
 func detach() -> void:
 	if is_instance_valid(_toggle):
 		_toggle.queue_free()
-	if is_instance_valid(_timer):
-		_timer.queue_free()
+	for t in [_timer, _poll]:
+		if is_instance_valid(t):
+			t.queue_free()
 
 
 func enabled() -> bool:
@@ -101,6 +113,17 @@ func _recheck() -> void:
 	if is_instance_valid(_timer):
 		_waited = 0.0
 		_timer.start(0.5)
+
+
+## Cheap: does every gamepad's profile match the setting? If not, the full apply (after release).
+func _check() -> void:
+	if not _timer.is_stopped():
+		return
+	var on := enabled()
+	for device in input_plumber.get_composite_devices():
+		if device.profile_name.ends_with(NAME_SUFFIX) != on:
+			_recheck()
+			return
 
 
 func _on_timer() -> void:
@@ -129,7 +152,9 @@ func apply() -> void:
 	var on := enabled()
 	for device in input_plumber.get_composite_devices():
 		var loaded := _profile_path(device.dbus_path)
-		if loaded.is_empty():
+		# Only OGUI's JSON profiles: before OGUI loads one the device runs InputPlumber's own
+		# YAML default, which OGUI replaces shortly.
+		if not loaded.ends_with(".json"):
 			continue
 		var swapped := loaded.ends_with(SUFFIX)
 		if on and not swapped:
@@ -160,6 +185,8 @@ func _write_swapped(src: String, dst: String) -> bool:
 		logger.warn("could not read gamepad profile " + src)
 		return false
 	swap_profile(profile)
+	if not profile.name.ends_with(NAME_SUFFIX):
+		profile.name += NAME_SUFFIX
 	if profile.save(dst) != OK:
 		logger.warn("could not write " + dst)
 		return false

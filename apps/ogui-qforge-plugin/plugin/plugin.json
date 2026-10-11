@@ -1,7 +1,7 @@
 {
   "plugin.id": "qforge",
   "plugin.name": "QForge",
-  "plugin.version": "0.1.39",
+  "plugin.version": "0.1.40",
   "plugin.min-api-version": "2.0.0",
   "plugin.link": "https://github.com/loki666/qforge",
   "plugin.source": "https://github.com/loki666/qforge/tree/main/apps/ogui-qforge-plugin",
