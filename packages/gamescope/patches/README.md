@@ -472,6 +472,12 @@ never pre-emptively upscaled; `vulkan_composite` and `vulkan_screenshot` copy it
 whose presents go through the gamescope WSI layer into Mesa's Wayland WSI. Measured on the Air
 X: gamescope GPU submits zero in menu and game, total GPU time and fps unchanged.
 
+`0036` — **a touch does not show the cursor** (ours, 2026-10-11). In the default touch click mode
+(Left) a touch warps the pointer to the finger and clicks, and the warp revealed the arrow for the
+10 s cursor timeout. Passthrough mode hides it but OpenGamepadUI (Godot on Xwayland) does not act
+on passed-through touches. Touch-driven warps are now synthetic and hide the cursor; a real mouse
+or trackpad shows it again. Air Y: taps still select cards, GAMESCOPE_CURSOR_VISIBLE_FEEDBACK stays 0.
+
 Drop the patch files here with those exact names (or rename and update `source.pin`'s
 `patches:` line). **Until a declared patch is present, `make overlay` / `make base` fail fast**
 with a clear "missing patch" message from `build-overlay.sh`.
