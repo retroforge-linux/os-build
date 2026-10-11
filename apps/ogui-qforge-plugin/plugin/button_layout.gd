@@ -15,6 +15,12 @@ extends RefCounted
 ## OGUI gives no signal when it loads a profile, so the device is checked (one busctl call)
 ## shortly after each launch, switch and stop, after Settings > Gamepad closes, and at startup.
 ## Stored in OGUI's settings, section "qforge", key "nintendo_layout".
+##
+## A profile is never swapped while a button is held. InputPlumber drops a release it never saw
+## pressed, so a button held across the swap (the A press on the toggle itself) had its release
+## come out as its partner's: A stayed down for games and menus. Held buttons are tracked from
+## the InputPlumber D-Bus target (what the menus receive); the swap waits for them, MAX_WAIT at
+## most.
 
 const SECTION := "qforge"
 const KEY := "nintendo_layout"
@@ -35,6 +41,10 @@ var logger := Log.get_logger("QForgeButtons", Log.LEVEL.INFO)
 var tree: SceneTree
 var _toggle: Control  # OGUI Toggle
 var _timer: Timer
+var _held := {}  # InputPlumber D-Bus event names currently pressed
+var _waited := 0.0
+const POLL := 0.1
+const MAX_WAIT := 3.0
 
 
 ## Start watching OGUI's profile loads and apply the stored choice.
@@ -43,8 +53,11 @@ func setup(scene_tree: SceneTree) -> RefCounted:
 	_timer = Timer.new()
 	_timer.one_shot = true
 	_timer.wait_time = 0.5
-	_timer.timeout.connect(apply)
+	_timer.timeout.connect(_on_timer)
 	tree.root.add_child(_timer)
+	for device in input_plumber.get_composite_devices():
+		_watch(device)
+	input_plumber.composite_device_added.connect(_watch)
 	launch_manager.app_launched.connect(_recheck.unbind(1))
 	launch_manager.app_stopped.connect(_recheck.unbind(1))
 	launch_manager.app_switched.connect(_recheck.unbind(2))
@@ -69,7 +82,7 @@ func attach() -> bool:
 	_toggle.button_pressed = enabled()
 	_toggle.toggled.connect(func(on: bool):
 		settings.set_value(SECTION, KEY, on)
-		apply())
+		_recheck())
 	return true
 
 
@@ -86,7 +99,29 @@ func enabled() -> bool:
 
 func _recheck() -> void:
 	if is_instance_valid(_timer):
-		_timer.start()
+		_waited = 0.0
+		_timer.start(0.5)
+
+
+func _on_timer() -> void:
+	if not _held.is_empty() and _waited < MAX_WAIT:
+		_waited += POLL
+		_timer.start(POLL)
+		return
+	apply()
+
+
+func _watch(device) -> void:
+	for target in device.dbus_devices:
+		if not target.input_event.is_connected(_on_input_event):
+			target.input_event.connect(_on_input_event)
+
+
+func _on_input_event(event: String, value: float) -> void:
+	if value > 0.5:
+		_held[event] = true
+	else:
+		_held.erase(event)
 
 
 ## Bring every gamepad's loaded profile in line with the setting.
