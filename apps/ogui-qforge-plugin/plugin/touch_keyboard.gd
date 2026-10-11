@@ -6,9 +6,18 @@ extends RefCounted
 ## Godot as a left click (gamescope's touch click mode), which focuses the field and nothing
 ## else, so the keyboard never came up from the touchscreen. A click/tap release on those fields
 ## now does what South does there: the search bar first switches to the library, like OGUI's.
+##
+## Also: a keyboard opened from a text field never puts the OSK state on the popup stack, and the
+## main menu / quick bar only REPLACE that state, so opening one left the keyboard open underneath.
+## Leaving the menu (e.g. its Home entry) then showed a keyboard nobody owned, whose popup layer ate
+## every tap on the screen -- cards and the search bar stopped responding. Any other popup taking
+## over now dismisses the keyboard.
 
 var state_machine := load("res://assets/state/state_machines/menu_state_machine.tres") as StateMachine
 var library_state := load("res://assets/state/states/library.tres") as State
+var popup_state_machine := load("res://assets/state/state_machines/popup_state_machine.tres") as StateMachine
+var osk_state := load("res://assets/state/states/osk.tres") as State
+var keyboard := load("res://core/global/keyboard_instance.tres") as KeyboardInstance
 var _tree: SceneTree
 
 
@@ -20,12 +29,29 @@ func setup(tree: SceneTree) -> RefCounted:
 		if node is ComponentTextInput:
 			_watch(node)
 	tree.node_added.connect(_watch)
+	popup_state_machine.state_changed.connect(_on_popup_changed)
 	return self
+
+
+func _on_popup_changed(_from: State, to: State) -> void:
+	if to == null or to == osk_state or keyboard.context == null:
+		return
+	# OGUI's KeyboardInstance.close() minus handing focus back to the text field: the popup that
+	# just opened owns the focus now.
+	var target = keyboard.context.target
+	if target is LineEdit:
+		(target as LineEdit).caret_force_displayed = false
+	if target is Control:
+		(target as Control).focus_mode = Control.FOCUS_ALL
+	keyboard.set_context(null)
+	keyboard.keyboard_closed.emit()
 
 
 func detach() -> void:
 	if _tree and _tree.node_added.is_connected(_watch):
 		_tree.node_added.disconnect(_watch)
+	if popup_state_machine.state_changed.is_connected(_on_popup_changed):
+		popup_state_machine.state_changed.disconnect(_on_popup_changed)
 
 
 func _watch(node: Node) -> void:
