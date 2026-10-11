@@ -87,6 +87,14 @@ only when its main loop next wakes to paint.
 - **The panel has one mode, 60 Hz**; a game below 60 fps waits ~half a refresh for the latch
   (8.7 ms mean in God of War).
 
+- **Shell window hidden in games** (plugin 0.1.21): the SM6115 DPU has two source pipes (VIG
+  sspp 1 with a scaler, DMA sspp 9); OGUI's empty in-game window held the DMA one. With its
+  `_NET_WM_WINDOW_OPACITY` at 0 the game scans out alone on one plane (God of War 52.8 fps), the
+  menu and in-game toasts bring the second plane back and it drops again after. Menu-open time
+  is unchanged (Guide to menu on screen 378-397 ms hidden vs 414-487 ms visible, both including
+  ~88 ms to start the injecting script). Test pitfall: in the menu OGUI is the base window, so
+  opacity 0 there blanks the screen -- check `gamescopectl focus_info` shows the game first.
+
 ## Measured, no change needed
 
 - **Godot renderer for OGUI**: Forward Mobile 17.9 ms/submit (26 fps, CPU 74%), GL compatibility
