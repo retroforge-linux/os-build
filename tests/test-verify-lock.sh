@@ -44,7 +44,7 @@ mk_tree() {
   for d in "$ROOT"/packages/*/; do ln -s "${d%/}" "$t/packages/$(basename "${d%/}")"; done
   cp "$ROOT/packages/inputhash.sh" "$ROOT/packages/verify-lock-rows.sh" "$t/packages/"
   # The builder pin is an input to every qforge row's hash (inputhash.sh reads it via lib-pins.sh).
-  cp "$ROOT/build/lib-pins.sh" "$ROOT/build/snapshot.pin" "$ROOT/build/builder.pin" "$t/build/"
+  cp "$ROOT/build/lib-pins.sh" "$ROOT/build/lib-container.sh" "$ROOT/build/snapshot.pin" "$ROOT/build/builder.pin" "$t/build/"
   cp "$ROOT/rootfs/manifest.lock" "$t/rootfs/manifest.lock"
   cp "$ROOT/installer/manifest.lock" "$t/installer/manifest.lock"
   printf '%s\n' "$t"
