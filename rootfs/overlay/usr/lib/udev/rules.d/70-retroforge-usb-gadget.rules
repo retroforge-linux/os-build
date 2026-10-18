@@ -1,0 +1,4 @@
+# A UDC appearing means the USB controller just took the device role (a host is on the cable):
+# build/bind the NCM gadget (usr/lib/retroforge/usb-gadget). Coldplug replays this at boot for a
+# cable that was already in.
+SUBSYSTEM=="udc", ACTION=="add", TAG+="systemd", ENV{SYSTEMD_WANTS}+="retroforge-usb-gadget.service"

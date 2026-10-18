@@ -1,0 +1,16 @@
+# systemd-networkd runs for the USB network gadget's usb0 only (usr/lib/systemd/network/
+# 10-retroforge-usb-gadget.network); no other interface has a .network file, so it touches nothing
+# NetworkManager owns. retroforge-usb-gadget.service itself is static: udev starts it when a UDC
+# appears.
+#
+# rootfs/customize-base.sh masks systemd-networkd.service (etc/systemd/system/systemd-networkd.service
+# -> /dev/null) so that NetworkManager alone runs the Wi-Fi. A preset cannot enable a masked unit
+# ("Unit ... is masked, ignoring" on the Air X's first boot under QForge, 2026-10-10), so the overlay
+# replaces that symlink with one to the real unit (etc/systemd/system/systemd-networkd.service ->
+# /usr/lib/systemd/system/...). Its socket and systemd-networkd-wait-online stay masked: networkd
+# opens its own netlink socket, and nothing should wait for usb0.
+#
+# No `enable` line here: a unit reached through that symlink is a LINKED unit to systemd, and
+# preset-all refuses to enable those ("Refusing to operate on linked unit file", once per first
+# boot). The multi-user.target.wants symlink in etc/systemd/system is what enables it, and that
+# works on a linked unit. This file exists to document the arrangement.

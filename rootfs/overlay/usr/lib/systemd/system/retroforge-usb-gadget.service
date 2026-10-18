@@ -1,0 +1,13 @@
+[Unit]
+Description=RetroForge USB network gadget (CDC NCM on usb0, ssh root@10.42.0.1)
+Documentation=file:///usr/lib/retroforge/usb-gadget
+# Started by udev each time a UDC appears (70-retroforge-usb-gadget.rules), which is each time the
+# Type-C controller switches the port to the device role. Plain oneshot, NOT RemainAfterExit: it
+# must be startable again on the next role flip, and the script is idempotent.
+After=sys-kernel-config.mount
+Requires=sys-kernel-config.mount
+ConditionPathExistsGlob=/sys/class/udc/*
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/retroforge/usb-gadget start

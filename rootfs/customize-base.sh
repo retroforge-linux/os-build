@@ -660,6 +660,9 @@ ctr run --rm --platform linux/arm64 -v "$PREBUILT_DIR":/prebuilt:ro \
   # Mask networkd + its socket + its wait-online so only NetworkManager-wait-online satisfies
   # network-online.target. Masking (not disable) is preset-proof: nothing can socket-activate or
   # Wants= them back. NM provides its own resolved/timesync paths; networkd is pure dead weight.
+  # One exception, in the overlay: the service is unmasked and enabled again for the USB network
+  # gadget, for usb0 alone (usr/lib/retroforge/usb-gadget, 60-retroforge-usb-gadget.preset). Its
+  # socket and wait-online stay masked here, so only NetworkManager satisfies network-online.target.
   ln -sf /dev/null /target/etc/systemd/system/systemd-networkd.service
   ln -sf /dev/null /target/etc/systemd/system/systemd-networkd.socket
   ln -sf /dev/null /target/etc/systemd/system/systemd-networkd-wait-online.service
