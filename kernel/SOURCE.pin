@@ -33,11 +33,14 @@
 # RE-PINNED 2026-10-30 (7.3.1) — A NEW SERIES, the first since 7.2. Ten patches landed and are
 # deleted, ~35 were rebased, two DT labels moved. Read the 7.3.1 section below. NOT BOOTED YET:
 # the full per-board HW gate is owed, audio and display first.
-version:    7.3.1
-url:        https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.1.tar.xz
-sha256:     fa595aad93734f829c963c2a90ef7c3673224fd7fdae7b49406e397cde2de231
-git_tag:    v7.3.1
-git_commit: 79a907609d53d5cd645b42c11550d295d43abf99
+# RE-PINNED 2026-11-08 (7.3.3, issue #37). Nothing of ours landed, no patch needed a change;
+# ath12k RX ring sizing and a drm/msm shrinker UAF fix are the legs. Read the 7.3.3 section
+# below. HW GATE OWED (7.3.1's is still owed too).
+version:    7.3.3
+url:        https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz
+sha256:     79c66dde66cd96877fcde8f7d36aec946b1f423d2b97b5a7b1751b75c764f3d1
+git_tag:    v7.3.3
+git_commit: d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
 
 # The sha256 above is the one kernel.org publishes in the SIGNED sha256sums.asc for v7.x, not a
 # hash of whatever the CDN happened to serve — re-checked 2026-10-30. The .asc itself verifies as
@@ -64,6 +67,27 @@ git_commit: 79a907609d53d5cd645b42c11550d295d43abf99
 # Treat 'in-series point release' as a prediction about EFFORT, never about RISK.
 # Re-run every gate, every time — and note that neither of those two findings came from an
 # offline gate. Both came from hardware.
+#
+# ============ 7.3.3 — PINNED 2026-11-08 (issue #37), HW GATE OWED ============
+#
+# sha256 from kernel.org's sha256sums.asc, signature GOOD from the Kernel.org checksum autosigner
+# (B886 8C80 BA62 A1FF FAF5 FDA9 632D 3A06 589D A6B1, fetched by WKD); the download matched it.
+# git_commit is the dereferenced tag (v7.3.3^{}), not the tag object b7cb9f47.
+#
+# 7.3.2 carries the content (548 commits); 7.3.3 is three Xen backend UAF fixes. 456 files changed
+# 7.3.1 -> 7.3.3, no Kconfig file among them. Legs: seven ath12k commits (RXDMA buffer ring size
+# per memory profile, ring-size macros -> inline helpers, dp_profile_params moved to dp.h),
+# drm/msm "Fix vm_bo use-after-free in with_vm_locks()", three qcom-wled backlight fixes,
+# arm-smmu-v3 shutdown ordering. Zero qcom clk/phy/interconnect/dts, zero soundwire.
+#
+# INTERSECTION: FOUR files, all read.
+#   drm/msm/msm_gem_shrinker.c     upstream iterates vm_bos with the _safe variant; our 0220 (THP +
+#                                  shrinker modparam) lands elsewhere in the file, fuzz 0.
+#   ath12k/core.c, core.h, mac.c   the ring-size rework above. Our 1002 (WCN7860 hw definition),
+#                                  1011, 1025 and 1026 land with offsets, fuzz 0; WCN7850/7860 take
+#                                  the default memory profile, now 4096-entry RXDMA buffer rings.
+# PATCHES: all 267 applied cumulatively at --fuzz=0 in lexical order, zero rejects, none reversed
+# (nothing of ours landed); kernel/patches/check-order.py: 0 problems.
 #
 # ============ 7.3.1 — PINNED 2026-10-30, NOT BOOTED ============
 #
