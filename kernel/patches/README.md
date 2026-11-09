@@ -222,8 +222,7 @@ suspends the kernel.
 | `0690` | community | ROCKNIX SM4450 `0023`: PM6450 PWM in leds-qcom-lpg; of_match row re-placed after `0685`. Never posted. | when upstreamed |
 | `0691` | community | ROCKNIX SM4450 `0060` (sunshineinabox): inversed PWM polarity in leds-qcom-lpg (the RG 55G1 backlight). Opt-in by polarity: was -EINVAL. Never posted. | when upstreamed |
 | `0711` | community | ROCKNIX SM4450 `0061`: edt-ft5x06 follows the panel power state, engaged only when the touch node names a `panel` (no other board of ours does). Never posted. | never |
-| `0871` | retroforge | Replaces ROCKNIX SM6115 `0037` (strict S16_LE on every stream), scoped to the `qcom,qrb4210-rb2-sndcard` compatible so it coexists with `0870`. | never |
-| `0872` `0874` | posted | ROCKNIX SM6115 `0042` `0045`, Val Packett: sm8250 codec_fmt on all codec DAIs, v2 6/6 `<20260506204142.659778-7-val@packett.cool>`; MI2S AFE port clock shutdown, v1 5/6 `<20260423050801.210840-7-val@packett.cool>` (ours is closer to v1 than v2 5/6 `<20260506204142.659778-6-val@packett.cool>`). Apply verbatim on `0870`/`0871`. | when merged |
+| `0872` `0874` | posted | ROCKNIX SM6115 `0042` `0045`, Val Packett: sm8250 codec_fmt on all codec DAIs, v2 6/6 `<20260506204142.659778-7-val@packett.cool>`; MI2S AFE port clock shutdown, v1 5/6 `<20260423050801.210840-7-val@packett.cool>` (ours is closer to v1 than v2 5/6 `<20260506204142.659778-6-val@packett.cool>`). Apply verbatim on `0870`. | when merged |
 | `0873` | community | ROCKNIX SM6115 `0044` (credited to Val Packett there): sm8250 QUATERNARY MI2S startup cases. Not found in Val's postings. | never |
 | `0925` | community | ROCKNIX SM6115 `0027` (Philippe Simons): CellWise CW2215/2217/2218 gauge. | never |
 | `0945`-`0965` | community | ROCKNIX SM6115 `0028`-`0032` (2026-10 state): bq256xx SGM41515 chip info, init reset + DT limits, OTG VBUS regulator, IINDPM by Type-C precedence (replaced the source-type version), software JEITA. | never |
@@ -483,7 +482,7 @@ above (the table lists each). The SM6125 Retroid Pocket Duo Lite patches in that
 `0013` (aw200xx vdd — `0660` already), `0201`/`0202` and `0205`/`0208`/`0210` (the SDE rotator
 and QSEED work — `0385` and `0350`-`0352` already, both carrying the sm6115 compatible), `0200`
 (a V4L2 mem2mem driver for that rotator, no counterpart here), and
-`0037` (replaced by the scoped `0871`). The whole stack applies with `--fuzz=0` on v7.2.9.
+`0037` (replaced by the scoped `0871`, itself dropped 2026-11-09: no DT binds `qcom,qrb4210-rb2-sndcard` since the Air X moved to the sc8280xp card). The whole stack applies with `--fuzz=0` on v7.2.9.
 
 The same day brought the MANGMI Air Y Pro (SM8250) over from ROCKNIX's SM8250 tree: `0580`,
 `0736`, `0990`, `1175`, and `0755` refreshed to the driver revision that knows the board.
