@@ -10,8 +10,10 @@ With the default 66 ms inactive_period, a bursty UI (a few short GPU
 wakeups per second) hits this on about every other suspend. In the
 slow case a7xx_gmu_gx_is_on() is never reached, i.e. the GMU never
 reports the IFPC power state: it is the GMU that does not idle, not
-GX that stays up. On a7xx the driver does not program the IFPC
-hysteresis, so the GMU firmware's own (gen70900, v4.2.20) is in play.
+GX that stays up. On a7xx the driver skips the PWR_COL_INTER_FRAME
+hysteresis registers, as KGSL does on gen7, and sends the IFPC
+hysteresis (0x1680) to the GMU firmware (gen70900, v4.2.20) over HFI
+instead, also as KGSL does.
 
 Measured on an AYANEO Pocket S2 (SM8650), 7.2.9, idle UI, 60 s
 windows, GPU runtime suspends that took > 100 ms:
