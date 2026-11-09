@@ -126,7 +126,7 @@ Updated Subject: [PATCH] gpu:drm:msm: a610 unlock 1050 MHz based on stock values
  	.rpmpds = sm6115_rpmpds,
  	.num_pds = ARRAY_SIZE(sm6115_rpmpds),
 -	.max_state = RPM_SMD_LEVEL_TURBO_NO_CPR,
-+	.max_state = RPM_SMD_LEVEL_BINNING,
++	.max_state = 464,	/* SUPER_TURBO, the 1050 MHz GPU level */
  };
  
  static struct rpmpd *sm6125_rpmpds[] = {
