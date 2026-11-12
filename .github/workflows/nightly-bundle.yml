@@ -1,0 +1,222 @@
+# retroforge nightly OTA bundle — main, built, signed and published to the `nightly` channel every
+# night, with NO approval (plan .claude/plans/nightly-channel.plan.md, docs/ota.md "Nightly").
+#
+#   prep ─┬─ build (image.yml, rootfs) ── release (sign-publish-bundle.yml, channel nightly)
+#   cert ─┘
+#
+# WHAT MAKES THIS SAFE TO RUN UNATTENDED, given that release-bundle.yml makes a human approve every
+# signature:
+#
+#   - It signs with the NIGHTLY cert (RAUC_NIGHTLY_CERT_PEM/RAUC_NIGHTLY_KEY_PEM), never the release
+#     one, and only inside the `nightly-signing` environment, which accepts deployments from `main`
+#     alone and holds nothing else of value. Devices trust the CA, so a nightly bundle would install
+#     on a stable device too; what bounds a leaked nightly key is its 90-day life, because rauc checks
+#     the signer's validity at install time. Renewal is by hand: `make renew-nightly-cert`, by
+#     someone who can read retroforge-linux/secrets (the root CA never reaches a runner).
+#   - The channel is a literal here, `nightly`, not derived from anything a person types.
+#   - Everything publish-bundle.sh gates on (keyring, dev-image refusal, a published version is never
+#     overwritten, latest.json written last) applies unchanged.
+#
+# What it gives up, deliberately: nightly is the one channel exempt from "every published bundle gets
+# a hardware install first" (plan D6). A device on it takes builds nobody has booted.
+name: nightly bundle
+
+on:
+  schedule:
+    # 02:30 UTC. Not on the hour: scheduled runs at :00 queue behind everyone else's.
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Build and publish even if main has not moved since the last nightly, or ci.yml has not passed on it'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# One nightly at a time; a manual run started during the scheduled one replaces it. A run cancelled
+# mid-publish leaves the previous nightly in place: latest.json is written last (publish-bundle.sh).
+concurrency:
+  group: nightly-bundle
+  cancel-in-progress: true
+
+env:
+  # Public, so readable without the environment's variables; same default as retroforge-update's
+  # DEFAULT_URL. Overridable for a test bucket with the repo variable.
+  OTA_BASE: ${{ vars.OTA_PUBLIC_BASE || 'https://ota.retroforge.org' }}
+
+jobs:
+  # Whether tonight's build happens, and what it is called.
+  prep:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read   # ci.yml's runs on HEAD
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      version: ${{ steps.decide.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # the ota/ tags, and the log since the last nightly
+
+      - id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force || false }}
+        run: |
+          set -euo pipefail
+          # nightly-signing accepts main only, so a run anywhere else would build for an hour and
+          # then be refused its environment. Say so now.
+          [ "$GITHUB_REF" = refs/heads/main ] || {
+            echo "::error::nightly builds come from main only (this run is on $GITHUB_REF)"
+            exit 1
+          }
+          head="$(git rev-parse HEAD)"
+          short="$(git rev-parse --short=7 HEAD)"
+
+          # VERSION (plan D2): one patch ahead of the last STABLE ota/ tag, plus a UTC timestamp.
+          # `v0.0.8-nightly.202611120230`: unique per run, which publish-bundle.sh's
+          # never-overwrite rule needs; the channel is readable in Settings; and it sorts after the
+          # stable release it builds on. One numeric field, not .YYYYMMDD.HHMM: semver forbids
+          # leading zeros in a numeric identifier, and 02:30 would have one.
+          last="$(git tag -l 'ota/v*' | sed 's|^ota/||' | grep -vE -- '-' | sort -V | tail -1)"
+          [ -n "$last" ] || { echo "::error::no stable ota/v* tag to number the nightly from"; exit 1; }
+          IFS=. read -r major minor patch <<<"${last#v}"
+          version="v$major.$minor.$((patch + 1))-nightly.$(date -u +%Y%m%d%H%M)"
+
+          # WHAT IS PUBLISHED NOW. A 404 is the normal state before the first nightly.
+          published="$(curl -fsS --retry 3 "$OTA_BASE/nightly/latest.json" 2>/dev/null || true)"
+          pub_git="$(jq -r '.git // empty' <<<"$published" 2>/dev/null || true)"
+          pub_build="$(jq -r '.build // empty' <<<"$published" 2>/dev/null || true)"
+          age_days=""
+          if [ -n "$pub_build" ]; then
+            # 20261111T192057Z -> epoch
+            pub_epoch="$(date -u -d "$(sed -E 's/^(....)(..)(..)T(..)(..)(..)Z$/\1-\2-\3 \4:\5:\6/' <<<"$pub_build")" +%s 2>/dev/null || true)"
+            [ -n "$pub_epoch" ] && age_days=$(( ($(date -u +%s) - pub_epoch) / 86400 ))
+          fi
+
+          # Has ci.yml passed on this exact commit?
+          ci_ok="$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$head&status=success&per_page=1" --jq '.total_count' 2>/dev/null || echo 0)"
+
+          # PLAN D3. Skip when main has not moved, unless the published nightly is over 30 days
+          # old: its cert may be near expiry, and rauc refuses a bundle whose signer has expired, so
+          # the bundle on offer has to be re-signed by the current cert before that happens.
+          build=true; why="main moved"
+          if [ -z "$published" ]; then
+            why="no nightly published yet"
+          elif [ -n "$pub_git" ] && [ "${head#"$pub_git"}" != "$head" ]; then
+            if [ -n "$age_days" ] && [ "$age_days" -gt 30 ]; then
+              why="main unchanged, but the published nightly is $age_days days old (re-sign)"
+            else
+              build=false; why="main unchanged since the published nightly ($pub_git)"
+            fi
+          fi
+          if [ "$build" = true ] && [ "$ci_ok" = 0 ]; then
+            build=false; why="ci.yml has not passed on $short"
+          fi
+          if [ "$FORCE" = true ] && [ "$build" = false ]; then
+            build=true; why="forced ($why)"
+          fi
+
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$build" = true ]; then
+            echo "::notice::building $version from $short: $why"
+          else
+            echo "::notice::no nightly tonight: $why"
+          fi
+
+          # PLAN D4: no GitHub Release per nightly; what changed goes here instead.
+          {
+            echo "## Nightly ${version}"
+            echo
+            echo "**${build}** — ${why}. Published now: ${pub_git:-nothing}${age_days:+, $age_days days old}."
+            echo
+            if [ -n "$pub_git" ] && git cat-file -e "$pub_git^{commit}" 2>/dev/null; then
+              echo "### Since the published nightly ($pub_git)"
+              echo '```'
+              git log --oneline --no-decorate "$pub_git..HEAD" | head -100
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # PLAN D1b. The cert is an environment secret, so this is the only job that can read its expiry.
+  # It runs beside prep, so an expired cert fails the run before an hour of build rather than after.
+  cert:
+    runs-on: ubuntu-latest
+    environment: nightly-signing
+    permissions:
+      contents: read
+      issues: write
+    env:
+      CERT_PEM: ${{ secrets.RAUC_NIGHTLY_CERT_PEM }}
+      ASSIGNEE: loki666
+    steps:
+      - name: check the nightly signing cert
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          renew='make renew-nightly-cert (needs read access to retroforge-linux/secrets; docs/ota.md, "Nightly signing cert")'
+          [ -n "${CERT_PEM:-}" ] || {
+            echo "::error::RAUC_NIGHTLY_CERT_PEM is not set in nightly-signing. Run $renew."
+            exit 1
+          }
+          end="$(printf '%s' "$CERT_PEM" | openssl x509 -noout -enddate | cut -d= -f2)"
+          end_day="$(date -u -d "$end" +%Y-%m-%d)"
+          # rauc refuses a bundle whose signer has expired, so signing with one would publish a
+          # bundle no device installs.
+          if ! printf '%s' "$CERT_PEM" | openssl x509 -noout -checkend 0 >/dev/null; then
+            echo "::error::the nightly signing cert expired on $end_day. Nothing is built until it is renewed: $renew."
+            exit 1
+          fi
+          echo "nightly signing cert valid until $end_day" >> "$GITHUB_STEP_SUMMARY"
+          printf '%s' "$CERT_PEM" | openssl x509 -noout -checkend $((14 * 86400)) >/dev/null && exit 0
+
+          # Inside 14 days: one issue per cert, keyed on its expiry date, never re-filed once closed.
+          title="Nightly signing cert expires on $end_day"
+          echo "::warning::$title — renew with $renew"
+          if [ "$(gh issue list --state all --search "in:title \"$title\"" --json number --jq length)" -gt 0 ]; then
+            exit 0
+          fi
+          gh issue create --title "$title" --assignee "$ASSIGNEE" --body "$(cat <<EOF
+          The cert nightly-bundle.yml signs with (\`RAUC_NIGHTLY_CERT_PEM\` in the \`nightly-signing\`
+          environment) expires on **$end_day**. After that the nightly workflow stops before building,
+          and devices refuse the nightly bundle already on offer (rauc checks the signer at install time).
+
+          Renew from an os-build checkout, as someone who can read \`retroforge-linux/secrets\`:
+
+          \`\`\`sh
+          make renew-nightly-cert
+          \`\`\`
+
+          Then close this issue. The next nightly picks the new cert up; a published nightly older
+          than 30 days is rebuilt so the bundle on offer is re-signed with it.
+          EOF
+          )"
+
+  build:
+    needs: [prep, cert]
+    if: needs.prep.outputs.build == 'true'
+    uses: ./.github/workflows/image.yml
+    secrets: inherit
+    with:
+      artifact: rootfs
+      version: ${{ needs.prep.outputs.version }}
+      # The build holds no key; the environment is named by `release` alone, as in release-bundle.yml.
+      environment: ''
+
+  release:
+    needs: [prep, build]
+    uses: ./.github/workflows/sign-publish-bundle.yml
+    secrets: inherit
+    with:
+      channel: nightly
+      publish: true
+      environment: nightly-signing
+      cert_secret: RAUC_NIGHTLY_CERT_PEM
+      key_secret: RAUC_NIGHTLY_KEY_PEM
