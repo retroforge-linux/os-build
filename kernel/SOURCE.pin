@@ -1,1110 +1,328 @@
-# retroforge kernel source pin — Phase 1
-# The TARBALL + its sha256 is the canonical pin. Validated 2026-06-17; re-pinned 2026-07-25
-# (7.1.5, HW-validated on Pocket S2 + Pocket ACE); re-pinned 2026-08-03 (7.1.6); re-pinned
-# 2026-08-18 (7.2 — mainline, released 2026-08-16; NOT HW-validated yet, see the gate below);
-# re-pinned 2026-08-27 (7.2.1); re-pinned 2026-09-03 (7.2.3); re-pinned 2026-09-08 (7.2.4);
-# re-pinned 2026-09-11 (7.2.5, issue #91 — needs patch 0525, see below).
-# 7.2.6 was EVALUATED AND SKIPPED on 2026-09-14 (issue #95, closed) because it kills Wi-Fi on
-# every WCN7850 board. RE-PINNED 2026-09-17 with 0535, the upstream fix for that break, and
-# HW-VALIDATED THE SAME DAY on three boards — Pocket ACE and Pocket S2 both associate on WCN7850,
-# S2 draws its full bonded panel, and the gamepad behind the Renesas PCIe-USB bridge works. All
-# three legs of the 0535 gate pass. 0525 and SMMU-v3 are still owed, as they were before this
-# pin moved. Read the 7.2.6 section below before touching it.
-# RE-PINNED 2026-09-22 (7.2.7) and HW-VALIDATED THE SAME DAY on THREE boards across all three
-# SoC generations — Pocket ACE (SM8550), Thor Lite (SM8250) and Pocket FIT (SM8650). Zero
-# *ERROR* in dmesg on every one; colour management reprogrammed to byte-identical buffer
-# indices on both LUTDMA engine revisions; the FIT's panel drawing is what re-proves 0525.
-# POCKET S2 IS NOT COVERED — bonded panel plus eight lines of margin under the 1088-line
-# rotator cap, the tightest gate we have. It carries ZERO drm/msm and zero qcom commits, so
-# every gate recorded above stands exactly as it did on 7.2.6 — 0525 and SMMU-v3 still owed.
-# RE-PINNED 2026-09-27 (7.2.8). HW-VALIDATED ON ALL FOUR ROSTER BOARDS (ACE, FIT, S2, MAX) + SUSTAINED GPU LOAD ON MAX. Unlike 7.2.7 it carries
-# eleven drm/msm commits, two of which are OURS landing: the DSI byte-clock fix (0525 in the
-# notes below, renumbered 0430) and the DPU peripheral-flush fix (0310). Both are DELETED; the
-# code they carried is now upstream's, byte-for-byte. Read the 7.2.8 section below.
-# RE-PINNED 2026-10-03 (7.2.9). Quiet for us: zero drm/msm, qcom clk/phy/iommu,
-# ath, mac80211 or soundwire commits. Read the 7.2.9 section below. HW-VALIDATED ON
-# POCKET ACE (SM8550) AND POCKET S2 (SM8650); NO SM8250 BOARD WAS BOOTED.
-# RE-PINNED 2026-10-12 (7.2.10). Nothing of ours landed, no patch moved; eleven
-# mac80211 files and a qcom geni-se ICC fix are the legs. Read the 7.2.10 section below.
-# HW-VALIDATED 2026-10-12 ON ONE BOARD PER SoC — POCKET ACE (SM8550), POCKET S2 (SM8650) AND
-# POCKET MAX (SM8250) — with 0330 v4, 1150 (Abel Vesa CX v5) and 0140 on the same card.
-# RE-PINNED 2026-10-15 (7.2.11). Nothing of ours landed, no patch needed a change;
-# ath12k, UFS core and btrfs are the legs. Read the 7.2.11 section below. HW GATE OWED.
-# RE-PINNED 2026-10-30 (7.3.1) — A NEW SERIES, the first since 7.2. Ten patches landed and are
-# deleted, ~35 were rebased, two DT labels moved. Read the 7.3.1 section below. NOT BOOTED YET:
-# the full per-board HW gate is owed, audio and display first.
-# RE-PINNED 2026-11-08 (7.3.3, issue #37). Nothing of ours landed, no patch needed a change;
-# ath12k RX ring sizing and a drm/msm shrinker UAF fix are the legs. Read the 7.3.3 section
-# below. HW GATE OWED (7.3.1's is still owed too).
+# Kernel source pin. kernel/build.sh reads the five fields below; CI's upstream-watch reads
+# `version:`. Everything else here is notes for the next bump and the next HW gate.
+#
+# Current: 7.3.3, pinned 2026-11-08 (issue #37, PR #38). Builds and boots; the per-board HW gate
+# for the 7.3 series is not finished (see "7.3.x on hardware" below).
 version:    7.3.3
 url:        https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz
 sha256:     79c66dde66cd96877fcde8f7d36aec946b1f423d2b97b5a7b1751b75c764f3d1
 git_tag:    v7.3.3
 git_commit: d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
 
-# The sha256 above is the one kernel.org publishes in the SIGNED sha256sums.asc for v7.x, not a
-# hash of whatever the CDN happened to serve — re-checked 2026-10-30. The .asc itself verifies as
-# a GOOD signature from "Kernel.org checksum autosigner <autosigner@kernel.org>", fingerprint
-# B886 8C80 BA62 A1FF FAF5 FDA9 632D 3A06 589D A6B1. That key carries no trust path here, so the
-# load-bearing check is CONTINUITY: the SAME signed file still lists 7.2.11 as
-# fd0fc479f983a8c05313f13e9c36330fe6651cf725396748c40d5cd93fa1e6a4, 7.2.10 as
-# 2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3 and 7.2.9 as
-# b4c5dfbe51a364a6c7f03869200f88c8e1f77403539005f14b7fc6bc91b8d8ba, byte-for-byte the hashes this
-# pin carried and shipped before — so the file describing the version above is the same file that
-# described the releases we already trusted. Roll this list forward on each bump rather than
-# growing it; three back is enough to be a chain. (Note: keys.openpgp.org serves this key STRIPPED
-# of its user IDs and gpg then refuses it as "no public key"; keyserver.ubuntu.com serves it whole.)
-# git_commit is the DEREFERENCED tag (`git ls-remote 'v<version>^{}'`), matching how every line
-# from 7.1.5 onward was recorded. The ANNOTATED TAG OBJECT is a different sha and is NOT what
-# belongs here — resolving the previous pin's tag and getting back the git_commit it already
-# records is the cheap way to prove you dereferenced rather than copied the wrong one.
-#
-# 7.2 was MAINLINE with no point release; 7.2.1 was the first stable one. Precedent from
-# 7.1.3 -> 7.1.5 used to say a point release INSIDE a series is a pure pin edit. TWO RELEASES
-# RUNNING HAVE NOW FALSIFIED THAT, and the second one was not even takeable on its own: 7.2.5
-# needed a new patch (0525) to keep two boards' panels alive, and 7.2.6 broke Wi-Fi on every
-# WCN7850 board and was skipped once before this branch re-took it with 0535.
-# Treat 'in-series point release' as a prediction about EFFORT, never about RISK.
-# Re-run every gate, every time — and note that neither of those two findings came from an
-# offline gate. Both came from hardware.
-#
-# ============ 7.3.3 — PINNED 2026-11-08 (issue #37), HW GATE OWED ============
-#
-# sha256 from kernel.org's sha256sums.asc, signature GOOD from the Kernel.org checksum autosigner
-# (B886 8C80 BA62 A1FF FAF5 FDA9 632D 3A06 589D A6B1, fetched by WKD); the download matched it.
-# git_commit is the dereferenced tag (v7.3.3^{}), not the tag object b7cb9f47.
-#
-# 7.3.2 carries the content (548 commits); 7.3.3 is three Xen backend UAF fixes. 456 files changed
-# 7.3.1 -> 7.3.3, no Kconfig file among them. Legs: seven ath12k commits (RXDMA buffer ring size
-# per memory profile, ring-size macros -> inline helpers, dp_profile_params moved to dp.h),
-# drm/msm "Fix vm_bo use-after-free in with_vm_locks()", three qcom-wled backlight fixes,
-# arm-smmu-v3 shutdown ordering. Zero qcom clk/phy/interconnect/dts, zero soundwire.
-#
-# INTERSECTION: FOUR files, all read.
-#   drm/msm/msm_gem_shrinker.c     upstream iterates vm_bos with the _safe variant; our 0220 (THP +
-#                                  shrinker modparam) lands elsewhere in the file, fuzz 0.
-#   ath12k/core.c, core.h, mac.c   the ring-size rework above. Our 1002 (WCN7860 hw definition),
-#                                  1011, 1025 and 1026 land with offsets, fuzz 0; WCN7850/7860 take
-#                                  the default memory profile, now 4096-entry RXDMA buffer rings.
-# PATCHES: all 267 applied cumulatively at --fuzz=0 in lexical order, zero rejects, none reversed
-# (nothing of ours landed); kernel/patches/check-order.py: 0 problems.
-#
-# ============ 7.3.1 — PINNED 2026-10-30, NOT BOOTED ============
-#
-# A series bump (7.2.11 -> 7.3.1), so the stack was REBASED, not re-applied: the 7.2.11 tree plus
-# one commit per patch, git-rebased onto a 7.3.1 tree, so every hunk got a three-way merge and only
-# real conflicts stopped it. 47 of 269 patches failed a plain --fuzz=0 apply; most were context only.
-#
-# DELETED, landed byte-for-byte (their commits went empty in the rebase): 0145 (sm6115 video GDSC
-# HW_CTRL), 0230 (Rob Clark's VM hardening; its last hunk's msm_alloc_stolen_fb() is gone too),
-# 0620 (sy7758), 0800 (DP audio prepare), 1000 (ksmbd pipe transceive), 1063 (qmp-combo runtime
-# PM at boot), 1080 (qce runtime PM), 1155 (sm8650 cpu props), 1165 (sm6115 venus), 1167 (sm8750
-# uart15).
-# REWORKED (each patch header carries a "7.3.1 bump" note):
-#   0530 mainline now has its own panel-chipone-icna35xx.c (per-board compatibles none of our DTs
-#        use). Ours is RENAMED beside it: panel-ddic-icna35xx.c / DRM_PANEL_DDIC_ICNA35XX, driver
-#        name panel-ddic-icna35xx (the 0535 precedent); 0531-0533 follow. kernel.config moved.
-#   0810 DELETED (port of Nova-Deck b404b61a). It rewrote lpaif 7 -> WSA and masked the WSA2
-#        channels for our qcom-firmwares topology, which asked for LPAIF type 7 (WSA2). Mainline's
-#        ayaneo,pocket-s2-sndcard (62dc2554d36d) maps the stream onto the WSA2 channels instead.
-#        Pocket S2 and Pocket FIT are both that card now, model SM8650-APS2 (set once, in
-#        sm8650-ayaneo-common.dtsi), so both load qcom/ayaneo-ps2/SM8650-APS2-tplg.bin: the
-#        linux-firmware topology (qcom/sm8650/ayaneo/ps2/, HW_IF_TYPE 2 = WSA), now built from its
-#        source under the name the kernel requests in qcom-firmwares. UCM: conf.d/sm8650 ->
-#        conf.d/ayaneo-ps2 (the card driver name); the identical KPF profile is gone, and the FIT's
-#        card id becomes SM8650APS2. The upstream topology has no DISPLAY_PORT_RX_0 MultiMedia1
-#        (touching it killed the whole HiFi verb upstream); DP plays on MultiMedia6 / PCM 5.
-#   0820/0825 DELETED, a new 0820 (port of Nova-Deck b404b61a's MI2S half). Their card-level
-#        "i2s_clk" (enabled in startup, PRIMARY, then every MI2S BE, refcounted) is replaced by
-#        mainline's per-DAI MI2S clocks (088c4404b3d7, cc8495c1d45a): a `bclk` on a dai@<port> node
-#        under &q6apmbedai, rate set and enabled by sc8280xp_snd_hw_params() when the card data has
-#        mi2s_bclk_enable. sm8450/sm8550 data already do; the new 0820 sets it for sm8750. Moved:
-#        Odin 2 family + RP6/Nova dai@10 (PRIMARY_MI2S_RX, SEN IBIT), Odin 3 + FIT Elite dai@12
-#        (SECONDARY_MI2S_RX, SEC IBIT), RG55G1 + RP Classic dai@93 (SENARY_MI2S_RX, QUI IBIT; the
-#        sm4450 card falls back to sm8450 data). The BE is fixed at 48 kHz/2ch/S16, so bclk is the
-#        1536000 the old assigned-clock-rates pinned.
-#   0826 now a delta on mainline's hw_params only: the codec format on every codec DAI of an MI2S
-#        link (both SM4450 amps; mainline sets only the first), the RP Classic mono fixup, and a
-#        bclk counted over max(channels, 2) slots so that mono stream stays at 1536000 (mainline
-#        would halve it). Thor Lite (SM8250) keeps its card clock: sm8250.c, not this driver.
-#   0855 the runtime-PM half landed; only the system-sleep handlers are left.
-#   0994 extended: 7.3 reads the regulator state back at probe at REG_ENABLE; PBS uses offset 0x0.
-#   1090 extended: IRQ re-enabled on the new pm_runtime_force_* error returns.
-#   0120 upstream dropped skip_retention_level (retention is skipped for every domain), so our
-#        two .skip_retention_level lines went with it. 0398 sm4450 maps to the new ubwc_2_0_hbb14
-#        preset (same values). 1020 rides the pwrseq_power_on/off -> pwrseq_enable/disable rename.
-#        1062 re-inserted beside upstream's new sm8475 config. 1145 keeps upstream's sm8750 VBIF
-#        0x3000. 1105 shrank (7.3 has the pcie*_port0 labels).
-# API: 7.3 renamed of_drm_get_panel_orientation() to drm_of_get_panel_orientation() (now in
-# <drm/drm_of.h>); the 16 panel drivers our patches add follow it (0505-0590). The IIO consumer
-# API is now in the IIO_CONSUMER namespace: 0910's pm8150b charger module imports it (modpost).
-# DUPLICATE DRIVERS: of every compatible our patches add, only 0540's ayaneo,wt0600-2k and
-# ayaneo,wt0630-2k are also matched by a 7.3 driver (panel-renesas-r63419). DRM_PANEL_RENESAS_R63419
-# defaults n and is not in our config, so ours binds. 0515 coexists with st7703 the same way.
-# DT: sm8550.dtsi renamed pcieport0 -> pcie0_port0; qcs8550-ayn-common.dtsi and
-# qcs8550-ayaneo-pocket-common.dtsi follow. sm8250/sm8650/sm8750 keep pcieport0.
-# The sm8550 and sm8650 IPA nodes now carry memory-region = <&ipa_fw_mem>, a node our three
-# common dtsi files delete (no modem); they now drop that property too. IPA stays disabled.
-# CONFIG: CRYPTO_DEV_QCOM_RNG is gone (qcom-rng moved to hw_random): now HW_RANDOM_QCOM.
-# CRYPTO_DEV_QCE now `depends on (BROKEN && ARCH_QCOM) || COMPILE_TEST` (it races the secure world
-# for the engine and is slower than the CPU): unsettable, it silently resolved to n, so it is
-# deleted from kernel.config. The ARMv8 CE ciphers do the work.
-# The driver going does NOT take the DT node with it: every SoC's `crypto` node is enabled, and on
-# sm8250/8550/8650/8750 it lists interconnects, so with no driver to bind it fw_devlink holds the
-# interconnect providers' sync_state forever ("sync_state() pending due to 1dfa000.crypto") and
-# every NoC node stays at INT_MAX — saturated BCM votes. Upstream (Nova-Deck 6f40319a) saw it break
-# every Odin 3 panel off->on (the DSI command DMA's read never returned) and power-off hang.
-# `&crypto { status = "disabled"; }` in every board file that reaches a crypto node: upstream's 8
-# plus sm8250-mangmi-air-y-pro.dts and sm6115-mangmi-air-x-base.dtsi (the sm6115 node has no
-# interconnects, but is still a consumer that never binds). sm4450 has no crypto node. Keep the
-# driver and the node in step if QCE ever returns.
-# PATCHES: all 259 apply cumulatively at --fuzz=0, zero rejects, and the result is byte-identical
-# to the rebased tree.
-# BUILD: `make kernel` green in the container: Image + 32 dtbs + modules staged. Final .config:
-# DDIC_ICNA35XX=y, CHIPONE_ICNA35XX and RENESAS_R63419 not set, HW_RANDOM_QCOM=y. tests/test-hw-dtb.sh
-# (302 pins, 0 failed) and tests/test-panel-calibration.sh green against it.
-#
-# WHAT ONLY HARDWARE CAN SETTLE — a whole series moved underneath, so every board, and:
-#   - audio everywhere: MI2S formats AND the bit clock now come from mainline hw_params + the
-#     dai@ bclk nodes on every MI2S BE (Odin 2/Thor/Odin 3/Elite/RG55G1/RP Classic amps; a
-#     "pll lock fail" from the aw88xxx amps = no BCLK; upstream HW-checked Odin 3), S2 + FIT speakers,
-#     headphones and DP (mainline card, linux-firmware topology; upstream HW-checked speakers
-#     only), the macros' runtime PM now upstream's (0855), headset jack on MI2S boards (0861).
-#   - display: the ICNA35XX panels (Pocket DS/EVO, Odin 2 Portal, Thor, Odin 3, Pocket Max) now
-#     bind panel-ddic-icna35xx; SM4450 UBWC via the preset.
-#   - PCIe Wi-Fi on the qcs8550 boards (label move), the SM6115 Bluetooth (1020), Air X suspend
-#     (1090, 0855), the RNG (hwrng should list qcom).
-#
-# ADDED 2026-11-02: SM8750's share of Abel Vesa's CX v5, 9/42 + 41/42 into 1150 and 26/42 into
-# 0142 (both renamed +8750), in series order. The SM8750 bring-up missed them; 7.3.1 carries none
-# of the series. Our 8250/8550/8650 patches checked byte-identical to v5, none of theirs missing.
-# 0142 and 0151 share gcc-sm8750.c (desc vs PCIe GDSC flags), both apply at fuzz 0.
-# HW GATE 2026-11-02, Odin 3 (upstream's dev card) — PASS: 100000.clock-controller is a consumer
-# of `cx` (on, perf 256) and runtime-PM `active`/`auto`, before and after a freeze cycle (CPUs 1-7
-# offlined and back at 160s); zero *ERROR*/WARNING, zero failed units; WCN7850 on PCIe
-# re-associated after, EHT 2x2 576/648 Mbit/s, 0% loss. `sync_state() pending due to 3d37000.gmu`
-# for gcc, gpucc and gxclkctl is NOT from this: the GMU node lists GCC_GPU_GEMNOC_GFX_CLK in
-# pristine 7.3.1 and nothing ever binds a driver to it. Not yet booted on a RetroForge card;
-# FIT Elite still owed.
-#
-# ============ 7.2.11 — PINNED 2026-10-15, HW GATE OWED ============
-#
-# 285 commits, 285 files. Zero drm/msm, zero qcom clk/phy/interconnect/iommu/dts for any SoC we
-# ship (the four qcom clk commits are kaanapali/glymur/eliza), zero soundwire. No Kconfig symbol
-# added or removed.
-#
-# INTERSECTION: FOUR files, all read.
-#   arch/arm64/kernel/Makefile     upstream adds `KCOV_INSTRUMENT_irq.o := n` above the obj list;
-#                                  our 0020 and 0025 land 3 lines lower, fuzz 0.
-#   ath12k/core.c + core.h         upstream REVERTS "wifi: ath12k: add panic handler" (the handler
-#                                  did a PCI sw-reset from atomic panic context). Our 1011 touches
-#                                  the scan-timeout work, not the notifier; core.h lands 1 line
-#                                  higher, fuzz 0. 1011 has NOT landed: core.h has no scan-timeout
-#                                  wiphy work.
-#   drivers/ufs/core/ufshcd.c      two upstream fixes: a clock-gating hold across probe (released
-#                                  by async scan or out_release) and the MCQ CQ sweep decoupled from
-#                                  the request iterator. Neither is in ufshcd_gate_work(), which is
-#                                  all 1086 touches; 1086's three hunks land at the same offsets as
-#                                  on 7.2.10.
-# PATCHES: all 189 applied cumulatively at --fuzz=0, zero fuzz, zero rejects.
-# DROP CHECK: nothing of ours landed. Every patch was REVERSE-applied with --dry-run --fuzz=0 to
-# a PRISTINE 7.2.11 tree, file by file: no file of any patch reverses. The written drop
-# conditions all say keep: 0930's `battmgr->unit = QCOM_BATTMGR_UNIT_mAh` is absent; 1135's
-# sm8250.dtsi still has three `wake-gpios ... GPIO_ACTIVE_HIGH`; 0440's dsi_7nm_phy_enable() still
-# sets pll_enable_cnt = 1 with no PLL_SYSTEM_MUXES write.
-# CONFIG SWEEP: 442 symbols named in kernel.config + trim-platforms.config, ZERO missing.
-# BUILD: green in the container, Image + 21 dtbs + modules staged. After olddefconfig, ALL 439
-# requested directives (383 values + 56 `is not set`) asserted against the final .config:
-# zero mismatches.
-#
-# WHAT ONLY HARDWARE CAN SETTLE, from commits OUTSIDE (or beside) our patches:
-#   - Wi-Fi: the ath12k panic-handler revert changes core init/deinit on WCN7850, and mac80211
-#     gains multicast AQL accounting. WCN7850 association on ACE or S2.
-#   - UFS: the probe-time clock-gating hold and the MCQ CQ sweep rewrite, on a UFS board (S2/FIT
-#     boot from UFS internally; a dev card boots from SD, so this needs an internal install or
-#     at least the UFS probe clean in dmesg), next to our 1086.
-#   - btrfs: five fixes, one a leaf corruption on xattr replace when two names collide in one
-#     dir item. Our slot roots are btrfs; a normal boot + Steam session is the leg.
-#   - HID: hid-steam teardown/registration rework. Only binds a Valve controller; plug one in if
-#     one is to hand, otherwise nothing of ours uses it.
-#
-# ============ 7.2.10 — PINNED 2026-10-12 (issue #112), HW-VALIDATED ON ACE + S2 + MAX ============
-# ============ 7.2.10 — PINNED 2026-10-12, HW-VALIDATED ON ACE + S2 + MAX =====#
-# 426 commits, 412 files. Zero drm/msm, zero qcom clk/phy/interconnect/iommu/dts, zero ath12k,
-# zero soundwire, zero btrfs. Three Kconfig symbols added (ARM64_ERRATUM_3821522 and its
-# ARM64_WORKAROUND_BROKEN_AMU_CONSTCNT, Cortex-A725 only, so on no SoC we ship; and
-# CC_OPT_INLINE_MEMSET, a compiler-flag string); none removed.
-#
-# INTERSECTION: ONE file, include/linux/sched.h, as in 7.2.9. Upstream adds a sched_cache_grp
-# field and helper prototypes in the CONFIG_SCHED_CACHE block at ~1421; our 0010 adds
-# task_struct.compat_input at ~1567. It lands one line lower, at fuzz 0, and `compat_input` is
-# present in the patched tree.
-# PATCHES: all 99 applied cumulatively at --fuzz=0, zero fuzz, zero rejects (upstream's stack).
-# Here: all 165 (with the SM6115/MANGMI patches and 0142) apply to the sha256-checked tarball at
-# --fuzz=0, zero rejects, and none of the 165 reverse-applies to a pristine 7.2.10 tree.
-# DROP CHECK: nothing of ours landed. Every patch was REVERSE-applied with --dry-run --fuzz=0 to
-# a PRISTINE 7.2.10 tree: no patch reverses, and no FILE of any patch reverses either, so there is
-# no partial landing to trim. The three patches with a written drop condition all still apply:
-# 0930's `battmgr->unit = QCOM_BATTMGR_UNIT_mAh` is absent from qcom_battmgr_probe(); 1135's
-# sm8250.dtsi still has three `wake-gpios ... GPIO_ACTIVE_HIGH`; and 0440's dsi_7nm_phy_enable()
-# still sets pll_enable_cnt = 1 with no PLL_SYSTEM_MUXES write (no dsi file moved). The five
-# `mainline` rows in patches/README.md all wait for 7.3.
-# CONFIG SWEEP: 438 symbols named in kernel.config + trim-platforms.config, ZERO missing.
-# BUILD (upstream's run; not yet built here): green in the container, Image + 21 dtbs + modules
-# staged. After olddefconfig, ALL 435 requested directives (379 values + 56 `is not set`)
-# asserted against the final .config: zero mismatches. Strip TRAILING whitespace as well as the
-# inline `# comment` before comparing, or the padded lines (panels, backlights, joysticks) all
-# read as 29 false mismatches.
-#
-# WHAT ONLY HARDWARE CAN SETTLE, from commits OUTSIDE the intersection:
-#   - Wi-Fi: 16 mac80211 + 2 cfg80211 fixes (BA-session teardown, chanctx reservation, PS
-#     delivery drain at station teardown, TX-status rate validation). The 7.2.6 precedent is
-#     why this is the first leg: WCN7850 association on ACE or S2. ath11k gets one line
-#     (num_stations reset on start), so an SM8250 ath11k board covers that.
-#   - soc: qcom: geni-se corrects the QUP core interconnect vote constants. Under every GENI
-#     I2C/UART client: touch, sgm3804 panel rails, sy7758 backlight, aw88166 amps.
-#   - ASoC: lpass-wsa-macro rewrites the interpolator volume after enabling clocks: the speaker
-#     path. Speaker playback on one board per SoC.
-#   - arm64: the erratum 2645198 break-before-make flush range is fixed. That is Cortex-A715, so
-#     SM8550 (ACE) is the board that exercises it.
-#   - usb: ucsi glink use-after-free on remove, and a shorter 120 ms resume hold for SuperSpeed
-#     root hubs, so one suspend/resume with the gamepad behind the Renesas bridge.
-#   - 7.2.9 booted NO SM8250 board. One is owed here.
-#
-# HW GATE, 2026-10-12 (dev card, build 20261012T103205Z, git 7b8954a: 7.2.10 + 0330 v4 + Abel
-# Vesa's CX v5 as 1150 + 0140):
-#   Pocket ACE (SM8550) — PASS. Zero *ERROR*, zero WARNING, zero failed units. 10 boot SMMU
-#     faults, all t=0.76s fsr=0x402 cb=8: the pre-existing cohort (read them from `journalctl -k`
-#     once a panel blank has run: the dsx noise below wraps the dmesg ring). WCN7850 associated,
-#     EHT 2x2 tx 720 / rx 960 Mbit/s, zero ath12k errors. GENI I2C: all four clients bound
-#     (nb7vpq904m, sy7758, sgm3804, synaptics_dsx); panel rails 5200000 uV users=1 each;
-#     backlight 3060/4080. Speaker, touch and gamepad work (operator-confirmed).
-#     1150 + 0140: 100000.clock-controller is a consumer of the `cx` genpd, runtime `active`/`auto`,
-#     before and after two freeze cycles (CPUs 1-7 offlined and back).
-#     0330 v4: THE SUSPEND PATH DOES NOT EXERCISE IT — retroforge-suspend cannot reach gamescope
-#     and falls back to bl_power, so the crtc stays enabled. Exercised by hand
-#     instead: three `gamescopectl drm_sleep_internal_screen 1/0` cycles, connector disabled ->
-#     enabled each time, zero *ERROR*, WARNING or SMMU fault. While blanked, synaptics_dsx logs
-#     I2C retry 1..10 / "Failed to read interrupt status" (~46 lines/s), stopping on unblank;
-#     touch works after.
-#   Pocket S2 (SM8650, bonded) — PASS. One *ERROR*, `dsi_get_phy: phy driver is not ready`, the
-#     probe deferral recorded since 7.2.8. Zero WARNING, zero SMMU faults, zero failed units.
-#     WCN7850 associated, EHT 2x2 720/720 Mbit/s, zero ath12k errors. GENI I2C: all five clients
-#     bound (sy7758, sgm3804, wcd9395-usbss, gt911, nb7vpq904m); panel rails 5200000 uV users=1;
-#     backlight 3060/4080; DSI-1 at 1440x2560. Sound card present; `qcom-apm ... CMD timeout` and
-#     `soundwire sdw-master-2-0: clock stop deprepare wait failed:-110` after the card are the same
-#     two lines as on 7.2.9. 1150 + 0140: GCC on `cx`, runtime `active` before and after a freeze
-#     cycle (CPUs offlined at 224s, back at 267s). 0330 v4: three manual KMS blank cycles on the
-#     bonded panel, disabled -> enabled each time, ZERO new kernel lines (gt911 stays quiet while
-#     blanked, unlike the ACE's synaptics_dsx). Both panel halves drawing after the blanks and the
-#     resume; speaker, touch and gamepad work after resume (operator-confirmed). One boot-time
-#     `usb 1-1: device not accepting address 2, error -71` at 4.7s; the gamepad enumerates and
-#     works regardless.
-#   Pocket Max (SM8250, COMMAND-mode panel) — PASS. Zero *ERROR*, zero SMMU faults, zero failed
-#     units. The two WARNINGs are the documented clk_core_disable + clk_core_unprepare pair after
-#     the boot-time `DSI PLL(0) lock failed`, 1x each, as on 7.2.8. 1150 is NEW here: GCC is a
-#     consumer of `cx` (on) — runtime PM reads `unsupported`, correct, since v5 has no sm8250 driver
-#     half and 0140 does not touch it. Wi-Fi (ath11k, the num_stations fix): associated at legacy
-#     rates right after boot, then HE 2x2 648/648 Mbit/s under load, 0% loss, zero tx retries or
-#     failures — rate control ramping, not a fault. 0330 v4 on the command-mode panel: three
-#     manual KMS blank cycles, disabled -> enabled each time, zero new kernel lines. Freeze cycle
-#     clean (CPUs offlined at 238s, back at 265s), `cx` still on after. Panel, speaker, touch,
-#     gamepad and rumble work after the blanks and the resume (operator-confirmed).
-#
-# ============ 7.2.9 — PINNED 2026-10-03, HW-VALIDATED ON ACE + S2 ============
-#
-# 458 commits, 471 files. Zero drm/msm, zero qcom clk/phy/interconnect/iommu, zero ath12k,
-# zero mac80211/cfg80211, zero soundwire/ASoC, zero btrfs. No Kconfig symbol added or removed.
-#
-# INTERSECTION: ONE file, include/linux/sched.h. Upstream renames struct sched_cache_stat at
-# ~2398; our 0010 adds a task_struct field at ~1567. Unrelated, and 0010 applies at fuzz 0.
-# PATCHES: 93 applied cumulatively at --fuzz=0, zero fuzz, zero rejects.
-# CONFIG SWEEP: 438 symbols named in kernel.config + trim-platforms.config, ZERO missing.
-# BUILD: green in the container, Image + 21 dtbs + modules staged. After olddefconfig, ALL 435
-# requested directives (379 values + 56 `is not set`) asserted against the final .config:
-# zero mismatches.
-#
-# WHAT ONLY HARDWARE CAN SETTLE, from commits OUTSIDE the intersection:
-#   - i2c-qcom-geni: a four-commit refactor (serial-engine setup isolated, resource init moved,
-#     SE_GENI_CLK_SEL clock index no longer hardcoded) plus a DMA-release fix on probe error.
-#     GENI I2C carries touch, the sgm3804 panel rails, sy7758 backlight, htr3212 RGB LEDs and
-#     the aw88166 amps, so it is the one leg here: panel up, touch and brightness working on
-#     one board per SoC.
-#   - arm64: cpu_errata now matches the target implementation CPU's own MIDR, and asm/io.h
-#     changed. A clean boot on each SoC generation covers both.
-#
-# HW GATE, 2026-10-03 (dev card, build 20261003T163741Z):
-#   Pocket ACE (SM8550) — PASS. Zero *ERROR*, zero WARNING, zero failed units. 10 boot SMMU
-#     faults, all t=0.76s fsr=0x402 cb=8: the pre-existing cohort. GENI I2C: all four clients
-#     bound on three controllers (nb7vpq904m, sy7758, sgm3804, synaptics_dsx); panel-avdd and
-#     panel-avee enabled at 5200000 uV, users=1 each; sy7758 backlight 3060/4080. 12 dsx
-#     retry/"Failed to read interrupt status" lines, the KNOWN BOOT NOISE listed below; touch
-#     responds (operator-confirmed). WCN7850 associated, EHT 2x2 720 Mbit/s. Gamepad behind the
-#     Renesas bridge enumerated. gamescope up on DSI-1.
-#   Pocket S2 (SM8650, bonded) — PASS. One *ERROR*, `dsi_get_phy: phy driver is not ready`, the
-#     probe deferral already recorded at 7.2.8. Zero WARNING, zero SMMU faults, zero failed
-#     units. GENI I2C: all five clients bound on four controllers (sy7758, sgm3804,
-#     wcd9395-usbss, gt911, nb7vpq904m); panel rails 5200000 uV users=1 each; backlight
-#     3060/4080. DSI-1 connected at 1440x2560, gamescope up on it. WCN7850 associated, EHT 2x2.
-#     Sound card present. `soundwire sdw-master-2-0: clock stop deprepare wait failed:-110` at
-#     18.6s, AFTER the card instantiated: not issue #105's instantiation -110, and 7.2.9 has no
-#     soundwire/LPASS commits. Not attributed to this bump. Speaker plays and touch responds
-#     (operator-confirmed).
-#
-# ============ 7.2.8 — PINNED 2026-09-27, HW GATE OWED ============
-#
-# 438 commits. NOT quiet for us: eleven drm/msm, and two of them are patches we carried.
-# Zero qcom clk/phy/interconnect/pinctrl/dts commits, zero ath12k.
-#
-# INTERSECTION: 7.2.8 touches 439 files, our patches 185, the intersection is EIGHT, all read:
-#   dpu1/dpu_hw_ctl.c    stable fd25668f96ff = OUR 0310 (peripheral flush mask). DELETED.
-#   dsi/dsi_host.c       stable c59e4a90780f = OUR 0430, the "0525" DSI byte-clock fix every
-#                        note below still calls by its old number. DELETED.
-#   msm_drv.c            MODULE_PARM_DESC(separate_gpu_drm -> separate_gpu_kms). That is the
-#                        first context line of 0220's hunk 1, so 0220 REJECTED at --fuzz=0.
-#                        Hunk regenerated from a patched 7.2.8 tree; no code change, noted
-#                        under the patch's `---`. 0230's msm_drv.c hunks are elsewhere.
-#   msm_gem.h, msm_gem_vma.c   the kfree_rcu() landing (see the 0508 EPILOGUE below). 0230
-#                        still applies at fuzz 0.
-#   adreno/adreno_gpu.c  pm_runtime_dont_use_autosuspend() in adreno_gpu_cleanup(); 0230 is
-#                        elsewhere in the file.
-#   input/input-compat.c memset(effect) in input_ff_effect_from_user(); our 0010 only widens who
-#                        may take the compat path.
-#   input/rmi4/rmi_driver.c  early return from suspend/resume when unbound; 0725 is elsewhere.
-# HOW THE TWO DELETIONS WERE PROVEN, since "Reversed (or previously applied)" and "5 out of 5
-# hunks ignored" is exactly the arithmetic the 0512 trap below says not to believe: each patch
-# was REVERSE-applied with --dry-run --fuzz=0 to a PRISTINE 7.2.8 tree, and every hunk of both
-# reversed cleanly. That is content equality, hunk by hunk, not a count.
-# CONSEQUENCE FOR THE GATES BELOW: wherever they say "0525 is live / proves 0525", read
-# "upstream's byte-clock fix". The code is identical, so which boards can prove it (the v2.9
-# DSI hosts: S2 and FIT) and which are negative controls (ACE, Max) is unchanged. What is new is
-# that we no longer own it: a regression in that path is now a stable report, not a patch edit.
-#
-# CONFIG SWEEP: 428 symbols named in kernel.config + trim-platforms.config, ZERO missing from
-# the patched tree. 7.2.8 adds one Kconfig symbol (RUSTC_HAS_APXF, x86) and removes none.
-# BUILD: green in the container — 84 patches at --fuzz=0 with zero fuzz and zero rejects,
-# Image + 21 dtbs + modules staged. After olddefconfig, ALL 428 requested values were asserted
-# against the final .config (not only build.sh's curated list): zero mismatches, and no `n`
-# directive came back `undef`.
-#
-# HW GATE, 4 of 4 roster boards, 2026-09-27 (dev card, build 20260927T085528Z):
-#   Pocket ACE (SM8550, sm8550-dsi-ctrl: a NEGATIVE CONTROL for the byte-clock fix) — PASS.
-#     Zero *ERROR*. 10 boot SMMU faults, all t=0.77s fsr=0x402 cb=8: the pre-existing cohort.
-#     2 content planes at rotation=8. LUTDMA v2 dspp0 igc 1584 / gamut 29532, byte-identical
-#     to 7.2.7. WCN7850 associated, EHT 2x2 720 Mbit/s, 0% loss, no ath12k/pwrseq errors.
-#     Gamepad behind the Renesas bridge enumerated. gamescope 5256/5256 presents, 0 in flight.
-#   Pocket FIT (SM8650, sm8650-dsi-ctrl: the v2.9 ops, so the byte-clock fix is LIVE) — PASS.
-#     Zero *ERROR*, zero SMMU faults, none of the regression's signature strings. DSI-1
-#     connected; the clock tree is parented to the PHY PLL and self-consistent: bit 737364843,
-#     byte 92170605 (= bit/8), byte_div 46085303, pclk 122894141. That is upstream's copy of the
-#     old 0525 doing its job. 2 content planes at rotation=8; LUTDMA v3 on dspp0+dspp1, igc
-#     1584 / gamut 29532, byte-identical to 7.2.7. WCN7850 associated, EHT 2x2, no
-#     ath12k/pwrseq errors. Gamepad enumerated. gamescope 2577/2577 presents.
-#   Pocket S2 (SM8650, bonded, the tightest gate) — PASS. DSI-1 connected at 1440x2560, both
-#     pclks 134626490 off dsi0's PLL (bit 807758935, byte 100969866 = bit/8; dsi1's own PLL at
-#     0 is correct when bonded). 2 content planes at rotation=8, so the 1088-line margin still
-#     holds. LUTDMA identical to FIT. WCN7850 associated, 0 SMMU faults, 1672/1672 presents.
-#     The one *ERROR*, `dsi_get_phy: phy driver is not ready` at 1.0s, is a probe deferral.
-#     First boot had NO sound card: the known SM8650 SoundWire wedge, issue #105 (`swrm_wait_for_frame_gen
-#     _enabled: link status not disconnected` on 6d30000), with no -110 this time. A reboot
-#     brought the card and speaker back. Not a 7.2.8 regression: 7.2.8 has no qcom soundwire or
-#     LPASS commits.
-#   `qcom-apm ... CMD timeout for [1001021] opcode` at ~10s shows on ACE, FIT and S2, each with
-#   working audio. It is noise; do not chase it as the no-sound cause.
-#   Pocket Max (SM8250, COMMAND-mode panel, sm8250-dsi-ctrl) — PASS. Zero *ERROR*, 0 SMMU
-#     faults. 1 LINEAR content plane at rotation=1 (correct: no inline rotator, so gamescope
-#     composite-rotates); LUTDMA `no engine`, inert by hardware. 2484/2484 presents. Sound card
-#     up, Wi-Fi associated, joypad + vibrator enumerated. iris H.264 decode through
-#     h264_v4l2m2m: 60/60 frames at 24x on 'Iris Decoder', so the SM8250 iris node is healthy.
-#     The one clk_core_disable + clk_core_unprepare WARNING pair at 1.05s is the documented
-#     PRE-EXISTING fallout of the boot-time `DSI PLL(0) lock failed` (1x each, as on 7.2).
-#   SUSTAINED GPU LOAD — PASS on Pocket Max (A650): Parking Garage Rally Circuit (Godot, x86
-#     under FEX) held the GPU at its 800 MHz max for a full 60s sample, 58 presents/s, 6 min
-#     up, GPU 44C, no fault/hang/recover/SMMU/OOM. (On FIT the same game idled the GPU at
-#     231 MHz, so that run does not count.)
-#     Its FIRST launch on Max died with `XIO: fatal IO error 62 (Timer expired) on X server
-#     ":1"` while gamescope and both Xwaylands stayed up with nothing in dmesg, and the relaunch
-#     ran clean. That is an X-client/FEX-side event with no kernel signature; it is not
-#     attributed to 7.2.8, and it is not cleared either — if it recurs, it is a per-game issue.
-#
-# WHAT ONLY HARDWARE CAN SETTLE, from commits OUTSIDE the intersection:
-#   - Wi-Fi: four `power: sequencing` fixes (pwrseq powers WCN7850 up) and ~30 mac80211/cfg80211
-#     fixes, one of them "don't free driver-owned scan requests" — the scan path 0507 patches.
-#     Association on a WCN7850 board is the leg.
-#   - Display: the byte-clock fix is upstream's copy now; S2 or FIT drawing its panel re-proves
-#     it. drm/sched "Fix virtual runtime race" and a dma-fence signalling-bit fix sit under
-#     every GPU submit, so a game under sustained load is worth more than a desktop this time.
-#   - arm64 percpu: three fixes (LSE on 8/16-bit types, this_cpu_and mask, this_cpu_write cast).
-#     Generic, but SM8250 is the board most likely to show a percpu miscompile.
-#   - btrfs: eight fixes; our rootfs and var are btrfs. Nothing specific to test beyond a boot.
-#
-# ============ 7.2.6 — SKIPPED 2026-09-14, RE-TAKEN 2026-09-17 ON THIS BRANCH ========
-#
-# THE FIRST ATTEMPT DID NOT SHIP. Every offline gate passed and the kernel built clean; the HW
-# gate then found TWO regressions no offline gate could see. One was fixed on the spot (0534,
-# bonded DSI). The other killed Wi-Fi on every WCN7850 board and had no identifiable cause after
-# five candidates were eliminated, so the pin went back to 7.2.5 and #95 was closed.
-#
-# WHAT CHANGED ON 2026-09-17: the Wi-Fi break is no longer unexplained. It is a PCIe BDF-to-SID
-# programming bug in pcie-qcom.c, triggered by 7.2.6's own conversion of the PCIe iommu-map
-# entries to their correct five-cell form, and upstream has fixed it. We carry that fix as 0535
-# and this branch re-pins 7.2.6 to put it in front of the hardware. Full derivation in
-# REGRESSION 2 below — read it before assuming anything about what this bump is now blocked on.
-#
-# THE STATE OF THE PATCH SET ON THIS BRANCH, all four changes APPLIED (they were queued before):
-#   - 0534 ADDED — the bonded-DSI re-revert, HW-CONFIRMED on Pocket S2 during the first attempt.
-#     Restored verbatim from that attempt, not regenerated. See REGRESSION 1.
-#   - 0535 ADDED — the upstream pcie-qcom BDF-to-SID fix. See REGRESSION 2.
-#   - 0511 and 0512 DELETED — both landed upstream at 7.2.6.
-#   - 0508 stays deleted; that was already true on main, and is true regardless of the pin.
-#     See below and issue #96 (closed).
-#
-# RUN THE INTERSECTION FIRST — and this release is why that is not a formality. 7.2.5 -> 7.2.6
-# changes 1764 files (7.2.4 -> 7.2.5 changed 462); our patches touch 173; the INTERSECTION IS
-# NINETEEN FILES, against two at the previous bump. All nineteen were read. Recipe unchanged:
-# take the `+++ b/` paths out of https://cdn.kernel.org/pub/linux/kernel/v7.x/incr/patch-7.2.5-6.xz
-# and intersect with the `+++ b/` paths in kernel/patches/*.patch.
-#
-# WHAT THE MOVE OWES THE PATCH SET — three deletions and two additions, ALL APPLIED ON THIS
-# BRANCH. Neither addition is an offline finding: 0534 came out of the HW gate (REGRESSION 1) and
-# 0535 came from the upstream thread that explains the HW gate's other failure (REGRESSION 2):
-#
-#   0511 -> DELETED (it was load-bearing on 7.2.5, so it comes back if this pin is reverted).
-#     "drm/msm: remove objects from evit list after pinning them" (Anna Maniscalco)
-#     landed in 7.2.6 verbatim, upstream's backport carrying the same "evit" typo in its subject.
-#     `patch` reported it as "Reversed (or previously applied)", and the pristine 7.2.6 tree has
-#     exactly one drm_gpuvm_bo_evict(vm_bo, false) in msm_gem_vm_bo_validate(). Pure deletion.
-#
-#   0512 -> DELETED (it was load-bearing on 7.2.5, so it comes back if this pin is reverted).
-#     7.2.6 backports all three of Konrad Dybcio's "Remove brownout risks from DPU"
-#     patches (54b17a858b8b dpu, e532b800728d dp, 00008e6f544c dsi), which is exactly what our
-#     0512 squashed. Our DPU early return, our DSI removal and three of our four DP removals are
-#     now upstream's own.
-#     THE FOURTH DP SITE STAYS IN THE TREE, and this is the part worth reading, because the first
-#     attempt at this bump kept a reduced 0512 to remove it and that was WRONG.
-#     7.2.x dp_ctrl.c has four dev_pm_opp_set_rate(ctrl->dev, 0) sites, mainline had three. The
-#     surviving one is in msm_dp_ctrl_off_link_stream(). The tempting inference — "same code,
-#     mainline just renamed it, so remove ours too" — does not survive reading the bodies:
-#       7.2.x msm_dp_ctrl_off       vsc_sdp mainlink_disable ctrl_reset pixclk link_clk_dis phy_off
-#       mainline msm_dp_ctrl_off_link  vsc_sdp mainlink_disable ctrl_reset    link_clk_dis phy_off
-#       7.2.x off_link_stream  vsc_sdp PSM_CONFIG mainlink_disable pixclk link_clk_dis phy_off
-#                              PHY_EXIT PHY_INIT   (and no ctrl_reset)
-#     Konrad's third hunk is in msm_dp_ctrl_off_link, whose 7.2.x counterpart is msm_dp_ctrl_off —
-#     and the backport de-voted that one, correctly. off_link_stream is a DIFFERENT function
-#     (dongle-to-D3 psm_config, phy reinit), and mainline did not rename it, it DELETED the path:
-#     the sink_count==0 branch in dp_display.c is now just `msm_dp_display_host_phy_exit(dp)`,
-#     with no ctrl teardown and no vote at all. So there is NO upstream line corresponding to
-#     removing this one, and no upstream author wrote, reviewed or tested such a removal.
-#     We therefore leave it. 7.2.6 ships dp_ctrl.c exactly as stable intends, one vote site.
-#     If that pattern is genuinely harmful on the dongle-unplug path, it is an upstream
-#     conversation, not a local patch.
-#     TWO TRAPS PAID FOR HERE, both worth keeping:
-#       - GNU patch skips the WHOLE FILE at the first reversed hunk and then reports "4 out of 4
-#         hunks ignored", which reads as "all four are upstream" and is false. Count the call
-#         sites in the pristine tree; never believe the hunk arithmetic.
-#       - "mainline does not have this line" is NOT evidence that mainline removed it. Check
-#         whether the function still exists upstream at all, and if it does not, find where its
-#         CALLERS went. A function deleted in a refactor will never be "fixed" upstream, so a
-#         DROP-check written against it can never trip.
-#
-#   0508 DELETED — APPLIED, and this one is permanent regardless of the pin. NOT because upstream
-#     took it. It was the SUPERSEDED VERSION of an unmerged
-#     fix, which is a state worth learning to recognise, because every cheap check says "keep it":
-#     7.2.6 still has plain kfree() in msm_ringbuffer_destroy() and msm_gem_vm_free(), mainline at
-#     7.3-rc3 still has both, drm_sched_fini() still does not detach fences from the scheduler,
-#     drm_sched_fence_get_timeline_name() still returns fence->sched->name, and 7.2.6 does not
-#     touch drivers/gpu/drm/scheduler/ at all. The bug is real and still open. The patch was still
-#     the wrong thing to carry.
-#     WHAT THE LIST SAYS. The header credited Dmitry Baryshkov; the actual author is Jonghyuk Kim
-#     (MalHyuk) <malhyuk97@gmail.com>, msgid 20260902012720.880783-1-malhyuk97@gmail.com. Their
-#     posting history (patchwork.kernel.org /api/1.2/patches/?submitter=224493) reads:
-#       2026-08-28  [v1,1/2] drm/sched: cache the timeline name to fix a use-after-free
-#       2026-09-02  [v2..] and [v3..] of that same core series
-#       2026-09-02  drm/msm | drm/nouveau | accel/amdxdna: RCU-free the scheduler-containing ...
-#       2026-09-04  [v4,1/3] drm/sched: cache the timeline name to fix a use-after-free
-#     The three per-driver RCU patches were a one-day detour, and v4 says so outright: "amdxdna,
-#     nouveau and msm (VM_BIND) are still affected in mainline, so fix it in the CORE to cover any
-#     per-context-scheduler driver at once." v4 caches sched->name in the fence at init so
-#     get_timeline_name() never dereferences fence->sched, which makes RCU-freeing the container
-#     unnecessary. Same bug class as CVE-2025-38703 (xe) and CVE-2025-71302 (panthor), both fixed
-#     per-driver — and not repeating that is the point of v4.
-#     SO WE CARRIED v1 OF AN APPROACH ITS OWN AUTHOR REPLACED TWO DAYS LATER. Not taking v4
-#     instead: it is core drm/sched, it affects every driver on the box, patchwork still shows it
-#     `new` with no trailer but the author's own sign-off, and it imposes a contract (the @name
-#     passed to drm_sched_init() must outlive any exported fence) that we would then own
-#     verifying. Recorded in issue #96 (opened then CLOSED as not-tracking: the bug is upstream's
-#     to fix and we have never observed it here). Do not resurrect 0508 — the rule that catches
-#     this class is in the gate block below, under "check the AUTHOR, not the thread".
-#     THE CHECK THAT WOULD HAVE CAUGHT IT, and it is now part of the drill below: for any patch we
-#     carry from a list, look up the AUTHOR's other postings, not just the patch's own thread.
-#     A superseded patch's thread looks exactly like a patch awaiting review — one message, no
-#     replies, state `new`. The supersession lives in a DIFFERENT thread.
-#     EPILOGUE, 7.2.8: the maintainer merged v1 anyway. Rob Clark took the per-driver kfree_rcu()
-#     patch, same msgid as the old 0508 (mainline 01c8d1f385f7, stable 713abac5c04c in 7.2.8), so
-#     the UAF is now fixed in our tree by upstream. The deletion was still right — carrying it
-#     would now be a reversed-patch deletion at this bump — but "the author moved on" did not
-#     predict what the maintainer merged. Supersession by the AUTHOR is a reason not to carry a
-#     patch, never a forecast that it will not land.
-#
-# WHAT THE OTHER SIXTEEN INTERSECTING FILES TURNED OUT TO BE — read, and benign for us:
-#   drivers/gpu/drm/msm/disp/dpu1/dpu_encoder.c    upstream swaps msm_dp_is_yuv_420_enabled() for
-#     drm_mode_is_420_only() in update_topology; our 0510/0515 hunks are elsewhere in the file.
-#   drivers/gpu/drm/msm/msm_drv.h                  the declarations that swap drops. 0515 only.
-#   drivers/gpu/drm/msm/disp/dpu1/dpu_hw_catalog.c adds _DMA_SBLK_V13() + dpu_dma_sblk_v13 for
-#     DPU v13 (sm8750). Our 0528/0530 do not touch that region; no v13 board here.
-#   drivers/gpu/drm/msm/msm_gpu.c                  put_task_struct() leak fix + recover-before-
-#     retire reorder, both in recover_worker(); our 0523 hunk is in
-#     msm_gpu_create_private_vm(), ~370 lines away.
-#   drivers/gpu/drm/msm/msm_ringbuffer.c/.h        the sched_initialized fix (e2332abed2a4). It
-#     used to collide with 0508's context; with 0508 gone we simply inherit it.
-#   drivers/gpu/drm/msm/msm_gem_vma.c              the 0511 landing — see above.
-#   drivers/gpu/drm/msm/adreno/a6xx_catalog.c      RBBM_CLOCK_CNTL3_TP0 fix in a730_hwcg[].
-#     a730_hwcg has exactly ONE consumer, chip_id 0x07030001 (sm8450). Our three SoCs take
-#     a650_hwcg (0x06050002, sm8250) and a740_hwcg (0x43050a01 sm8550 / 0x43051401 sm8650).
-#     Our 0004 (IFPC on a740) is untouched.
-#   drivers/net/wireless/ath/ath12k/wmi.c          19 upstream hunks, none ours. The nearest,
-#     "Correctly copy the hint BSSID in WMI scan request", is in the same function our 0507
-#     patches (ath12k_wmi_send_scan_start_cmd) but ~100 lines past it; 0507 applied at fuzz 0.
-#     0507 is still NOT upstream — cmd->scan_priority is still unassigned in 7.2.6.
-#   drivers/video/backlight/Kconfig                BACKLIGHT_KTD253 drops `|| COMPILE_TEST`.
-#     Our 0060/0062 add their own entries further down.
-#   kernel/sys.c                                   prctl_set_auxv() memcpy length fix; our 0504 is
-#     in the compat-input-syscall path.
-#   arch/arm64/boot/dts/qcom/sm8{250,450,550,650,750}.dtsi  PCIe iommu-map entries gain the
-#     missing 4th cell (<0x0 &apps_smmu 0x1400 0x1> -> <0x0 &apps_smmu 0x1400 0x0 0x1>). No board
-#     DTS of ours overrides iommu-map, so we simply inherit the fix. sm8750 also gains qcom,ice on
-#     ufs; not a SoC we build for.
-#
-# THE ONE THING THE INTERSECTION FOUND THAT ONLY HARDWARE CAN SETTLE: 7.2.6 REWORKS THE SM8250
-# IRIS/VENUS NODE, in sm8250.dtsi, which all three of our SM8250 boards inherit wholesale — each
-# carries nothing but `&venus { status = "okay"; };` (Pocket Max, AYN Thor Lite, Retroid Pocket
-# common). Two upstream commits:
-#   arm64: dts: qcom: sm8250: correct frequencies in the Iris OPP table
-#     720/1014/1098/1332 MHz -> 240/338/366/444 MHz. The old table was the vcodec clock's rates
-#     written against the core clock; every OPP the driver picks therefore changes.
-#   arm64: dts: qcom: sm8250: sort out Iris power domains
-#     adds RPMHPD_MMCX as a fourth power domain ("mmcx") and gives every OPP a SECOND
-#     required-opps entry, so the MX and MMCX votes are now driven independently.
-# Nothing offline can grade this. It is the reason the HW gate below must include a real decode on
-# an SM8250 board: `ffmpeg -c:v h264_v4l2m2m` and NOT Steam — iris loads its firmware lazily at
-# STREAMON and logs nothing on success, so /dev/video0 existing proves nothing. See
-# kernel-build.sh's venus/iris comments and build a clip on-device with
-# `ffmpeg -f lavfi -i testsrc=size=1280x720:rate=30:duration=2 ...`; ffmpeg IS on the dev image.
-#
-# PATCH GATE RE-RUN 2026-09-17 for this branch, because the patch set is not the one the
-# 2026-09-14 gate saw — main gained 0012, the 0513 THP/shrinker v2 rework and 0531/0532 in the
-# meantime, and this branch adds 0534 and 0535 on top:
-#   - all 92 patches apply CUMULATIVELY in lexical order to a pristine 7.2.6 tree, ZERO rejects,
-#     0534 and 0535 both at zero fuzz.
-#   - the same run against a pristine 7.2.5 tree produces an IDENTICAL fuzz list and exactly one
-#     failure, 0534 — which is the expected shape: 7.2.5 already carries 93c97bc8d85d, so the
-#     re-revert is "previously applied" there. That single asymmetry is what makes 0534 a
-#     7.2.6-and-later patch rather than something to carry on both.
-#   - `patch --batch` WILL SILENTLY APPLY A REVERSED PATCH. Gating 0511 that way "passed" while
-#     actually REVERTING upstream's fix. Use -N (skip reversed, non-zero exit) when the question
-#     is whether a patch is still needed; build.sh's bare `patch` answers no to the prompt and
-#     fails, which is the behaviour you want in a build but not in a gate script.
-#
-# OFFLINE GATES, all re-run on 2026-09-14 against a pristine 7.2.6 extraction:
-#   - all 90 patches apply CUMULATIVELY in lexical order with ZERO rejects (93 before this bump;
-#     0508, 0511 and 0512 all deleted).
-#   - the PER-HUNK fuzz profile is BYTE-IDENTICAL to 7.2.5's: 18 hunks at fuzz 1 and 12 at fuzz 2,
-#     same patches, same hunk numbers, on both sides. Nothing climbed. (The raw total moved 26 ->
-#     30 between the 7.2.5 gate and now for OUR reasons — 0526-0530 were added on main in the
-#     meantime — which is exactly why the total is the wrong instrument and the profile is the
-#     right one. Both sides were run today, against fresh pristine extractions: the 7.2.5 side
-#     with the PRE-bump patch set, all 93 applying with zero rejects, and the 7.2.6 side with the
-#     surviving 90. That asymmetry costs the comparison nothing — none of the three deleted
-#     patches contributes a fuzz line on either side.)
-#   - "0 rejects" does not prove anything about what a DELETION leaves behind, so the three
-#     removals were asserted in the patched tree: exactly ONE
-#     dev_pm_opp_set_rate(ctrl->dev, 0) left in dp_ctrl.c, exactly one
-#     drm_gpuvm_bo_evict(vm_bo, false) (0511's code, now upstream's), and ZERO kfree_rcu in
-#     msm_ringbuffer.c and msm_gem_vma.c. I.e. all three files now read exactly as stable ships
-#     them, which is the whole point of the three deletions.
-#   - 0525 is STILL LOAD-BEARING and unchanged. Its own drop check says to look for the absence of
-#     clk_round_rate() in dsi_calc_clk_rate_6g() and for byte_intf_clk_div_2 in struct
-#     msm_dsi_host: 7.2.6's dsi_host.c differs from 7.2.5's by the brownout hunk ALONE, so neither
-#     is true and the patch stays. Beware a false positive here — pristine dsi_host.c already
-#     contains `phy_shared_timings->byte_intf_clk_div_2`, a DIFFERENT, pre-existing field. Grep
-#     for the struct member, not the bare name.
-#   - 0526's drop check is also still unmet: qcom_battmgr.c is not in 7.2.6's delta at all, and
-#     `battmgr->unit = QCOM_BATTMGR_UNIT_mAh` is still absent from qcom_battmgr_probe().
-#   - all 426 referenced CONFIG_* symbols (kernel.config + trim-platforms.config) exist in the
-#     PATCHED 7.2.6 tree, NONE missing. Count unchanged from 7.2.5 (426) and neither fragment was
-#     edited.
-#   - nothing else of OURS landed upstream this release: every remaining patch applied FORWARD, so
-#     0511 and 0512 are the only deletion candidates 7.2.6 creates.
-#   - and the whole thing was then BUILT: `make kernel` against 7.2.6 on 2026-09-14, exit 0, zero
-#     compiler errors, all 90 patches applied, `trim-platforms: 46 symbols confirmed disabled`
-#     with no redundant list and no requested symbol landing on the wrong value. Image + all 21
-#     board DTBs + 947 modules under /lib/modules/7.2.6. That is the gate the offline drill cannot
-#     give you.
-#     47 compiler warnings — the SAME COUNT 7.2.5 produced, and this time the file census was
-#     kept: all 47 are in OUR out-of-tree drivers (34 chipone_tddi, 4 qcom-hv-haptics, 1 each
-#     ayaneo-serial-mcu / qcom-spmi-haptics / rmi_driver, 1 include/linux/device.h expansion), i.e.
-#     in files 7.2.6 does not touch, so none of them can be bump fallout. Module count moved
-#     946 -> 947; nothing in kernel.config changed, so that is an olddefconfig-resolved upstream
-#     default and not a decision of ours.
-#
-# HW GATE FOR 7.2.6 — RUN ON THREE BOARDS ON 2026-09-14, AND IT IS WHAT KILLED THE FIRST ATTEMPT.
-# IT HAS NOT BEEN RE-RUN WITH 0535 IN. Nothing below is evidence about this branch; it is the
-# record of what failed and why. RE-RUN ORDER FOR THIS BRANCH: a WCN7850 board first (ACE or S2),
-# and check wlan0 before investing in the rest of the gate — that is the single question 0535
-# exists to answer. The roster and what each board proves are unchanged; they are in STANDING
-# FACTS immediately below, along with the compatible-string reading that says which boards can
-# exercise 0525 at all.
-#
-#   Pocket Max  sm8250  PASS 2026-09-14 (build 98f72ff / 20260914T155747Z). The iris gate — the
-#     mandatory new one this bump — is GREEN: the DT rework is live on the device
-#     (power-domain-names "venus vcodec0 mx mmcx", opp-table 240/338/366/444, pm_genpd `mmcx on`),
-#     and a real `ffmpeg -c:v h264_v4l2m2m` decode returned frame=60 with zero errors and an
-#     output of EXACTLY 82,944,000 bytes = 1280*720*1.5*60. That byte count is the load-bearing
-#     evidence: dmesg is SILENT on success because iris loads firmware lazily at STREAMON, so a
-#     clean log proves nothing on its own. Panel up, gamescope on DSI-1, Steam up, 0 failed units.
-#     Display-wise this board is only a NEGATIVE CONTROL (`qcom,sm8250-dsi-ctrl`, plain 6g ops).
-#
-#   Pocket ACE  sm8550  FAIL — Wi-Fi.    Pocket S2  sm8650  FAIL — Wi-Fi AND display.
-#
-# REGRESSION 1 — DUAL-DSI, half the panel. DIAGNOSED AND FIXED, HW-CONFIRMED. 0534 IS IN THE TREE
-#   ON THIS BRANCH, restored verbatim from the first attempt; the recipe below is for the NEXT
-#   bump, where the patch has to be regenerated against a new tarball. 7.2.6 backports 5de981b7db1f
-#   (upstream 44784327815b), a REVERT of 93c97bc8d85d "drm/msm: dsi: fix PLL init in bonded mode".
-#   Pocket S2 is the only bonded board we ship (`qcom,dual-dsi-mode` + `qcom,sync-dual-dsi`, one
-#   1440x2560 panel over two links) and only its BOTTOM HALF draws on 7.2.6. Two PHYs share one
-#   PLL in bonded mode; the restored pre-fix code early-returns out of dsi_pll_enable_pll_bias()
-#   for the second PHY and force-assigns pll_enable_cnt = 1 in dsi_7nm_phy_enable(), so the second
-#   link never gets its bias. 0534 re-applies 93c97bc8d85d. Upstream reverted it because it broke
-#   the NON-bonded case and they are "letting Neil to work on a better fix" — so upstream has no
-#   state that is right for a fleet with both kinds of panel, and we pick the one we MEASURED:
-#   7.2.5 carried 93c97bc8d85d and all four gated boards passed, the three non-bonded ones
-#   included. HW-CONFIRMED on Pocket S2 2026-09-14: with the re-revert in, the whole 1440x2560
-#   panel draws again.
-#   TO RE-CREATE THE PATCH (never hand-author a .patch body):
-#     for f in drivers/gpu/drm/msm/dsi/phy/dsi_phy.h drivers/gpu/drm/msm/dsi/phy/dsi_phy_7nm.c; do
-#       tar -xOf linux-<NEW>.tar.xz  linux-<NEW>/$f  > old/$f   # the reverted (broken) content
-#       tar -xOf linux-7.2.5.tar.xz  linux-7.2.5/$f > new/$f    # the content we want back
-#       diff -u old/$f new/$f   # -> the hunks, with a/ b/ headers fixed up
-#     done
-#   Assert afterwards, because zero rejects proves nothing about a revert: `pll_data` absent from
-#   both files, exactly one `pll->pll_enable_cnt++;`, and no `pll_enable_cnt = 1;`.
-#   DROP IT INSTEAD if Neil Armstrong's rework has landed — the tell is that
-#   dsi_pll_enable_pll_bias() no longer early-returns on a non-zero pll_enable_cnt.
-#
-# REGRESSION 2 — ath12k / WCN7850 Wi-Fi DEAD. ROOT-CAUSED 2026-09-17 AND FIXED BY 0535; the fix
-#   is NOT YET HW-CONFIRMED, and confirming it is the whole purpose of this branch.
-#   `failed to set mhi state: POWER_ON(2)` / `failed to start mhi: -110`, deterministic, on BOTH
-#   WCN7850 boards; no wlan0 at all.
-#
-#   THE CAUSE IS qcom_pcie_config_sid_1_9_0() IN pcie-qcom.c — not ath12k, not MHI, not the PHY.
-#   It parses "iommu-map" as fixed four-word {rid, phandle, sid, len} entries, a layout that is
-#   only right for an IOMMU declaring `#iommu-cells = <1>`. apps_smmu declares <2>, so a correct
-#   entry is FIVE cells. 7.2.6 converts the PCIe iommu-map of every SoC we ship to that five-cell
-#   form — checked in the PRISTINE tarballs, sm8250/sm8550/sm8650, and none of our patches touch
-#   iommu-map or pcie-qcom.c — and all three bind cfg_1_9_0 (sm8650 through its
-#   "qcom,pcie-sm8550" fallback). The four-word stride then slips one cell per entry. For
-#   `<0 &apps_smmu 0x1400 0x0 0x1>, <0x100 &apps_smmu 0x1401 0x0 0x1>` the driver reads
-#   map[1] = {bdf 0x1, phandle 0x100, sid <the phandle value>, len 0x1401}, so BDF 0x100 — the
-#   WCN7850 on pcie0 and the Renesas uPD720201 on pcie1, on every board — is NEVER programmed into
-#   the BDF-to-SID table. Its DMA hashes to an unprogrammed slot, is tagged SID 0, and the SMMU
-#   faults. Upstream's own report shows the fault line to grep for:
-#   `arm-smmu ...: Unhandled context fault: fsr=0x402, iova=..., cbfrsynra=0x0, cb=1`.
-#   0535 carries the fix: stride = 3 + #iommu-cells, with a legacy fallback for the old four-cell
-#   DTs. See that patch for the upstream links and trailers (Tested-by Neil Armstrong on an
-#   SM8650-HDK, which is our SoC).
-#
-#   AND IT CORRECTS THE OLD NOTE HERE, which claimed 7.2.5 runs these devices with NO IOMMU
-#   mapping. It does not. of_check_bad_map() (drivers/of/base.c, present in both 7.2.5 and 7.2.6)
-#   tolerates the four-cell shape and treats it as 1-cell output, with a pr_warn_once "has 1-cell
-#   entries targeting 2-cell #iommu-cells". So the shipped pin is correctly translated, and the
-#   "we have never had DMA isolation" worry that note raised is unfounded. Grep a 7.2.5 boot log
-#   for that warn if you want it nailed down.
-#
-#   WHAT IS STILL OPEN, and it is the one thing that argues against this being the whole story:
-#   POCKET MAX SHOULD HAVE FAILED TOO. sm8250 got the same five-cell conversion, binds the same
-#   cfg_1_9_0, and its `pci17cb,1101` sits at BDF 0x100 like everything else — ath11k is a
-#   different driver but it is the same DMA path. Max was recorded PASS on 2026-09-14, but that
-#   narrative lists panel, gamescope, Steam and iris, and never says Wi-Fi. Either Wi-Fi was never
-#   exercised there, or something distinguishes sm8250 and this explanation is incomplete.
-#   CHEAPEST RESOLUTION, no rebuild: read the Max 7.2.6 journal for wlan0 and for cbfrsynra=0x0
-#   faults. Do that before spending a HW slot.
-#
-#   Pocket Max being `pci17cb,1101` = ath11k also means a Max pass is NOT evidence that Wi-Fi is
-#   healthy on this pin. Read the wifi node's compatible, not the board name.
-#
-#   THE ELIMINATIONS FROM THE FIRST ATTEMPT ALL STAND, and every one of them is consistent with
-#   the cause above — the fault was never in the drivers they cover. Do not re-walk them.
-#   ELIMINATED BY INSPECTION: the two bus/mhi/host changes (an EDL-only
-#   error path, and a read-back inside mhi_soc_reset(), which ath12k does not call on power-up —
-#   it uses its own ath12k_pci_sw_reset()); the QMP PCIe PHY `.pcs_lane1` addition (offsets_v5 is
-#   sm8550-only and sm8650 uses offsets_v6_20, yet BOTH fail, so the cause must be SoC-independent);
-#   pcie-qcom.c's new PERST check (it only skips when the GPIO provider is a CHILD of the PCIe
-#   node, and &tlmm is not); and the 19 ath12k commits themselves — ath12k/pci.c and ath12k/mhi.c,
-#   which own MHI power-up, are NOT in the delta at all, so reverting the ath12k files that DID
-#   change cannot move a POWER_ON timeout.
-#   ALSO ELIMINATED, BY EXPERIMENT ON HARDWARE: drivers/pci/pcie/aspm.c. It was the best remaining
-#   candidate — the only GENERIC-PCI file in the delta on this path, and ath12k_pci_power_up()
-#   carries "Disable ASPM during firmware download due to problems switching to AMSS state", AMSS
-#   being exactly the transition that times out (CONFIG_PCIEASPM=y, so the changed code is live).
-#   A card built with that ONE file reverted to 7.2.5 was booted on Pocket S2 2026-09-14: the
-#   panel came back (that was 0534) and Wi-Fi did NOT. So aspm.c is out too.
-#   WHY THE SYMPTOM FITS, and it was always sharper than "PCIe is broken": on BOTH boards both
-#   endpoints enumerate, link up and bind, and MMIO/config/BAR access all work. What fails is
-#   COMPLETION — `xhci-pci-renesas: Error while assigning device slot ID: Command Aborted` and MHI
-#   timing out fetching firmware. The gamepad MCU's UART CONFIG PORT is unaffected, because that
-#   port is not behind the bridge (the MCU has two ends — see below). That is a
-#   device-side DMA failure with the host side healthy, which is exactly what an unprogrammed
-#   BDF-to-SID entry produces: host-initiated traffic never goes through the SMMU, so only the
-#   paths where the DEVICE writes to memory die.
-#
-#   WHAT THE HW GATE HAS TO SHOW for 0535 to count: wlan0 present and associating on a WCN7850
-#   board (ACE or S2, both were FAIL), the Renesas xHCI enumerating a device, and ZERO
-#   `cbfrsynra=0x0` context faults in the journal. A board-specific MDSS burst at cbfrsynra=0x1c00
-#   is a different, known thing — see KNOWN BOOT NOISE below.
-#
-#   RUN 2026-09-17, TWO OF THREE LEGS PASS:
-#     wlan0        PASS on BOTH WCN7850 boards. ACE and S2 each bring `ath12k_wifi7_pci`
-#                  (`0x17cb:0x1107`) to `mhi mhi0: Power on setup success` -> Mission mode, then
-#                  associate; ACE measured at EHT-MCS 6 / NSS 2 / 80 MHz, rx 648.5 Mbit/s, -56 dBm,
-#                  carrying an ssh session. Zero `failed to set mhi state: POWER_ON(2)`, zero
-#                  `failed to start mhi: -110` on either board. This is the leg that killed the
-#                  first attempt, and it is dead.
-#     cbfrsynra=0x0  PASS. Zero on all three boards (Max, ACE, S2).
-#     Renesas xHCI   PASS: the built-in GAME CONTROLLER sits behind the
-#                  Renesas PCIe-USB bridge and worked throughout the gate. That is a stronger
-#                  result than plugging a stick in — a working pad means the downstream device
-#                  both ENUMERATED and is completing interrupt transfers, i.e. the device-side DMA
-#                  that `Error while assigning device slot ID: Command Aborted` denied on 7.2.6
-#                  before 0535.
-#
-#                  THE AYANEO MCU HAS TWO ENDS AND THEY ARE NOT ALTERNATIVES. It exposes the
-#                  CONTROLLER on a USB bus — always behind the Renesas bridge — and a separate
-#                  UART CONFIG PORT, which is only how our ayaneo-serial-mcu driver programs it
-#                  (face layout, etc.). The UART end carries NO HID. So a working pad is
-#                  unambiguous evidence for this leg on EVERY board: no `lsusb -t` is needed and
-#                  there is no per-board attachment question to resolve.
-#
-#   Also passed the same day, on the 0534 side: S2 draws the FULL 1440x2560 bonded panel (both
-#   `dsi@ae94000` and `dsi@ae96000` `okay`, `qcom,dual-dsi-mode` + `qcom,sync-dual-dsi`, its own
-#   DTB — so the mode was confirmed ENGAGED, not inferred from a panel that merely looked right),
-#   and the non-bonded case that upstream reverted 93c97bc8d85d FOR is clear on both Max and ACE.
-#
-# STILL OWED WHENEVER WE DO MOVE: 0525 on the two v2.9 boards (S2, FIT), and the SMMU-v3 (0515)
-# gate, which needs Pocket FIT specifically — it is the only DSC panel. Neither was reachable on
-# 7.2.6: S2 could not be judged on 0525 while half its panel was dark, and FIT was never booted.
-#
-# WHERE THE LOGS ARE, because this cost time: /var/log is BIND-MOUNTED onto /home by our own
-# var-log.mount, so the journal is NOT under retroforge-var-*/log/journal (that dir holds only an
-# empty `remote/`). Read a card with
-#   journalctl -D /run/media/<you>/retroforge-home/.retroforge/offload/var/log/journal --list-boots
-# and note that `-b -1` does NOT work with -D — it reports "no persistent journal was found".
-# Pass the explicit boot ID from --list-boots instead. (Second instance of the -b trap in
-# [[journalctl-traps]].)
-#
-# AND A KNOCK-ON WORTH KNOWING: the "stuck at retroforge first-boot grow" seen on ACE was NOT a grow
-# bug. grow-home.sh does a bare `udevadm settle` after systemd-repart, and settle waits on the
-# WHOLE udev queue — including the 90-second ath12k probe. It returned 0.2s after ath12k gave up.
-# The grow itself was correct ("No changes", home already filling the card). Its one error,
-# `resize2fs: Please run e2fsck -f first`, is the expected consequence of pulling the card out of
-# a running board, and is non-fatal by design.
-#
-# ===================== STANDING FACTS ABOUT THE HW GATE (any pin) =====================
-#
-# Per-release PASS narratives are NOT kept here — a gate that passed on a pin we no longer ship
-# tells the next reader nothing. Git history has them. What survives is only what still decides
-# how to run the next gate.
-#
-# THE ROSTER, and what each board can and cannot prove:
-#   Pocket ACE  qcs8550-ayaneo-pocketace  panel 0051 ayaneo,pocket-ace-panel   VIDEO mode
-#   Pocket S2   sm8650-ayaneo-ps2         panel 0066 ayaneo,wt0630-2k          VIDEO mode
-#   Pocket FIT  sm8650-konkr-pf           panel 0067 ayaneo,ar14-144hz         VIDEO mode
-#   Pocket Max  sm8250-mangmi-pocket-max  panel 0058 mangmi,pocket-max-panel   COMMAND mode
-# Four of 21 boards and three SoCs; the other 17 are untested on every pin so far. Both DSI modes
-# on purpose — the deferred-scanout-release premise in 0515 is video-mode-specific, so the
-# command-mode board is there to show the other path did not regress.
-#
-# READ THE DSI HOST'S `compatible` ON THE DEVICE, NOT THE BOARD NAME, to know which board proves
-# what about 0525: `qcom,sm8650-dsi-ctrl` binds msm_dsi_6g_v2_9_host_ops (the runtime-reparenting
-# ops, so 0525 is live) — Pocket S2 and Pocket FIT. `qcom,sm8550-dsi-ctrl` and the sm8250 one bind
-# the plain 6g ops, so 0525 cannot fire in either direction: ACE and Max are NEGATIVE CONTROLS,
-# proving only that nothing else broke display bring-up. The regression's signature to grep for is
-# "Failed to set rate pixel clk", "rcg didn't update", "Turning OFF PHY while PLL is on".
-#
-# A DCS BRIGHTNESS ROUND-TRIP DOES NOT TEST 0525. With our 0005, xfer_prepare() skips the
-# link-clock cycle whenever the display is active (`xfer_owns_link_clks = !(power_on && enabled)`),
-# so a write to a live panel never reaches dsi_link_clk_set_rate_6g() and never reaches the
-# rounding. For us that rounding runs at modeset/power_on only — i.e. ANY boot of a v2.9 board
-# tests it and nothing else does. Corollary: do not drop 0005 imagining 0525 covers for it, and do
-# not expect 0525 to produce a visible improvement.
-#
-# A NEW Image INVALIDATES THE WHOLE `/lib/modules/<ver>` TREE (module BTF). Testing a pin means
-# flashing a card built from it, never swapping /boot/Image on an existing card.
-#
-# KNOWN BOOT NOISE, do not re-diagnose it as fallout from whatever you just changed:
-#   RESUME, all boards — `IRQ168: set affinity failed(-22)`. Known on these SoCs, appears on a
-#     suspend cycle that otherwise completes correctly. Not worth investigating.
-#   synaptics_dsx_i2c retry storm ("I2C retry 1..10", "I2C read over retry limit",
-#     "Failed to read interrupt status") — KNOWN ON THESE SoCs and NOT related to suspend/resume,
-#     despite showing up inside a suspend window in any log that spans one. Do not read it as
-#     suspend fallout; it is ongoing touchscreen-driver noise that happens to land there.
-#   Pocket ACE — a bounded burst of 10 arm-smmu context faults at ~0.77s, all cbfrsynra=0x1c00
-#     (the MDSS node, `iommus = <&apps_smmu 0x1c00 0x2>`), inside a 0.4 ms window, all of them
-#     BEFORE the panel rails come up at 0.854s. The bootloader continuous-splash handoff, i.e.
-#     what 0370-dpu-quiesce-boot-scanout.patch is for. Board-specific: Pocket FIT shows ZERO on the
-#     same kernel, and so do Pocket Max and Pocket S2 (checked 2026-09-17).
-#     NOT INTRODUCED BY 7.2.6 — A/B'd 2026-09-17 with two cards differing only in the kernel
-#     commit: 7.2.5 (ce5ba00) and 7.2.6 (6c80318) produce the identical burst on the same ACE,
-#     same count, same fsr=0x402, same fsynr, same context bank.
-#     STILL OPEN, AND THAT A/B DID NOT TOUCH IT: whether it predates our own 0513/0518-0524. BOTH
-#     cards carry those patches, so the comparison could only ever answer the 7.2.6 question. The
-#     experiment that answers the real one is a build with 0513/0518-0524 dropped. Note also that
-#     0370-dpu-quiesce-boot-scanout.patch IS applied on both (kernel/build.sh:59 globs the whole patch
-#     dir), so we already ship the patch aimed at this handoff and ACE faults anyway.
-#     LIKELY FIX TAKEN 2026-11-09, HW GATE OWED: 0190 (upstream v1) gives SM8550 MDSS an identity
-#     domain at boot. The faults come from the empty translating domain attached when the device
-#     is added, which is BEFORE 0370 runs, so 0370 could never reach them. 0195 does the same for
-#     SM8650. Gate: a 7.3.3 ACE boot shows 0 cbfrsynra=0x1c00 faults, where it showed 10.
-#     WHY THIS ENTRY COST A CARD BUILD: on 2026-09-17 the burst was re-derived from scratch —
-#     count, timing, MDSS stream and all — by building and flashing a 7.2.5 card and swapping
-#     boards, because nobody grepped this file. `grep cbfrsynra kernel/SOURCE.pin` answers it in
-#     a second. When a boot line looks new, search the pin BEFORE building anything.
-#
-# SMMU SERIES AT v3 since 2026-09-12, and STILL NOT HW-GATED — it is the oldest ungated thing on
-# this pin. 0515/0516/0517 used to carry patches 1-3 of Dmitry Baryshkov's v2 "drm/msm: fix SMMU
-# fault dumps"; they are now ONE file, 0330-drm-msm-fix-smmu-fault-dumps.patch, carrying v3
-# patches 1, 2, 4, 5, 6 and 7. The offline side is clean and has been re-run on every tree since,
-# 7.2.6 included: applies at zero fuzz, the v3 code asserted PRESENT in the patched tree
-# (msm_fb_unpin_work, msm_framebuffer_unpin, kzalloc_obj(*unpin), the DSC ternary, mutex_init
-# before drm_framebuffer_init) and the v2 code asserted GONE (msm_kms_init_fb_unpin, the per-crtc
-# drm_flip_work). kzalloc_obj(), which v3's 4/8 uses, is in include/linux/slab.h; no shim.
-# WHAT IS OWED: hardware. v3's 4/8 is a REWRITE of the old 0517 on the display teardown path, so
-# the four-board gate has to clear it — POCKET FIT MOST OF ALL, since it is the DSC board (0067 is
-# DSC-only, slice_count 2) and therefore the only one that exercises v3's 6/8.
-# The fallback is narrower than a pin revert: `git checkout` the three v2 files and drop 0515.
-#
-# 7/8 ADDED 2026-09-13, reversing the previous day's skip. The skip reasoning was that
-# crtc_state->ctm is never non-NULL for us because gamescope does colour in its own Vulkan
-# composite. DPU inline rotation (0528/0529) put gamescope on DIRECT SCANOUT, where that composite
-# never runs — CONFIRMED on Pocket FIT 2026-09-13: night mode at maximum is invisible, and appears
-# the instant GAMESCOPE_COMPOSITE_FORCE=1 is set. The fix keeps scanout and drives the DPU's DSPP
-# CTM + GAMMA_LUT instead, which makes 7/8 load-bearing (its own upstream reproducer is a CTM
-# test) and promotes 5/8 from NULL-safety to a live fix. Full rationale in 0515's own preamble.
-# The drill above was RE-RUN with 7/8 in: still 90 patches, ZERO rejects, and the per-hunk fuzz
-# profile is unchanged at 16 hunks at fuzz 1 and 10 at fuzz 2, with nothing inside 0515 needing
-# fuzz. 7/8 also touches msm_atomic.c, which no other patch we carry does.
-# CONSEQUENCE FOR USERSPACE, and it is not optional: 7/8 removes the kernel-side
-# `state->allow_modeset = true` override, so ENABLING colour management now requires the client to
-# commit with DRM_MODE_ATOMIC_ALLOW_MODESET itself. Anything that sets a CTM on a plain atomic
-# flip gets -EINVAL instead of the silent modeset the hack used to grant it.
+# ============================== The fields ==============================
+#
+# sha256 comes from kernel.org's signed sha256sums.asc for v7.x, not from hashing what the CDN
+# served (that only proves the CDN agrees with itself). The .asc carries a good signature from the
+# "Kernel.org checksum autosigner" key, B886 8C80 BA62 A1FF FAF5 FDA9 632D 3A06 589D A6B1 (fetch
+# it by WKD or from keyserver.ubuntu.com; keys.openpgp.org serves it without user IDs and gpg then
+# reports "no public key"). That key has no trust path here, so the check that counts is
+# continuity: the same signed file still lists the pins we shipped before with the hashes we
+# recorded. Re-checked 2026-11-12:
+#   7.3.1   fa595aad93734f829c963c2a90ef7c3673224fd7fdae7b49406e397cde2de231
+#   7.2.11  fd0fc479f983a8c05313f13e9c36330fe6651cf725396748c40d5cd93fa1e6a4
+#   7.2.10  2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3
+# On each bump, add the outgoing pin and drop the oldest; three is enough for a chain.
+#
+# git_commit is the dereferenced tag (`git ls-remote origin 'v<version>^{}'`), not the annotated
+# tag object, which has a different sha. Resolving the previous pin's tag and getting back the
+# git_commit it records is a cheap way to check you dereferenced.
 
-# LUTDMA ADDED 2026-09-13 — 0530/0531/0532. Third-party (the author's tree, against 7.2.3),
-# carried here re-rolled onto the pinned tree and re-drilled on every bump since. What it is:
-# on DPU 9.0 and later the colour LUT blocks sit behind a LUT bus with NO memory-mapped write path,
-# reachable only by the downstream sde LUTDMA engine — which is why mainline exposes only PCC and
-# GC on these SoCs, and why our CRTC shows CTM + GAMMA_LUT and no DEGAMMA_LUT. That is a driver
-# limit, not a hardware one. 0530 ports the engine (v2 for DPU 9.x, v3 for 10.x/12.x) and uses it
-# to drive the DSPP inverse gamma, exposed as a 256-entry CRTC DEGAMMA_LUT, and the 17^3 gamut
-# block, exposed as a DPU_3D_LUT blob; 0531 adds the optional "lutdma" reg entry to the binding and
-# 0532 fills it in for sm8550 (0xaeac000/0x800) and sm8650/sm8750 (0xaf80000/0x7000). Without the
-# reg entry the properties are simply not exposed, so the patch is inert on anything that lacks it.
-# That lifts the constraint gamescope's 0014 was built around — only a DIAGONAL is expressible with
-# no degamma — and lets the whole SDR chain scan out in hardware (gamescope 0018).
+# ============================== Pin history ==============================
 #
-# THE RE-ROLL, precisely: all three apply CUMULATIVELY with ZERO rejects and — worth noting
-# against the fuzz-climb warning below — ZERO fuzz and ZERO offsets.
-# Two hunks of the author's dpu_crtc.c did not apply and were DROPPED rather than
-# duplicated, because 0515 already carries the same two upstream changes: the ternary form of the
-# mixer's hw_dspp assignment, and dropping color_mgmt_changed from the condition that reassigns
-# resources. What remains at that site is only what is new — the DEGAMMA_LUT entry-count check and
-# the _dpu_crtc_check_cp_blocks() call. Everything else is the author's work unchanged.
+# One line per pin. Details of older pins are in git history (`git log -p kernel/SOURCE.pin`),
+# details of each patch in its own header and in kernel/patches/README.md.
 #
-# SM8650 VERIFIED 2026-09-13 on Pocket FIT, which was the point of taking it. The author verified
-# engine v2 on SM8550 (Odin 2 Portal) and v3 on SM8750 (Odin 3); SM8650 is DPU 10.0, also engine
-# v3, and its catalog entry was carried but never run. It works: `engine v30000 sb_off 0x800`,
-# opmode 0x1, intr4_status 0x0, ctl0 done 1, both topology DSPPs carrying IGC + gamut, and the two
-# new CRTC properties sized exactly right (DEGAMMA_LUT 2048 B = 256x4xu16, DPU_3D_LUT 39312 B =
-# 17^3x4xu16). ZERO lutdma/reg_dma/CTL_FLUSH/underrun/SMMU-fault lines across 16 enable/disable
-# transitions, every one of which is a modeset.
-# POCKET S2 PASSED 2026-09-14, closing the gate bc4f7b0's message left open, and it is the board
-# that mattered most here: --rotated-output-max-height clamps its 1440x2560 panel to a 1080 render
-# that the DPU upscales, so a pre-rotation height of 1080 sits 8 lines under the inline rotator's
-# 1088 cap and anything that grew a layer would re-open the black-UI failure. It did not. In ALL
-# FOUR states (LUTs on/off x night mode, plus colour temperature and the restore) the board held
-# TWO live content planes BOTH at rotation=8 — inline rotation and the DPU upscale intact — with
-# ZERO "invalid height for inline rot" rejections in dmesg and zero in the session log. Engine v3,
-# opmode 0x1, intr4_status 0x0, zero display/LUTDMA errors after t=10s. Its one boot-time *ERROR*
-# (`dsi_get_phy: phy driver is not ready`, t=1.0s on ae96000.dsi) is ordinary deferred probe on the
-# secondary DSI and predates this work.
-# POCKET ACE (qcs8550, DPU 9.0) ALSO PASSED, same day — engine v2, i.e. the AUTHOR's own verified
-# configuration, so it re-gates their leg against our re-roll rather than testing new silicon:
-# `engine v20000 sb_off 0x400` exactly as sm8550_reg_dma declares, opmode 0x1, intr4_status 0x0,
-# ctl0 done 1 with intr_status 0x200000 = BIT(21) = v2's CTL_0 done mask on every ctl row, because
-# v2 shares ONE status register where v3 has a per-CTL window. One DSPP for the single-mixer
-# 1080x1620 panel vs two on the FIT, identical buffer indices. Zero display/LUTDMA errors after
-# boot. Its 10 arm-smmu faults inside the first second are the PRE-EXISTING splash handoff noted
-# above, unchanged in count — do not read them as LUTDMA fallout.
-# No Kconfig symbol is added: the engine builds unconditionally into the msm driver (Makefile only),
-# so the 426-symbol sweep below is unaffected. A failed LUTDMA wait/setup skips that DSPP while the
-# commit still reports success, which the author bounds with a retry budget on the CRTC — that is
-# part of 0530, not an optional follow-up, and it is the failure mode to watch for on new silicon.
+#   7.0.11  2026-06-17  first validated pin.
+#   7.1.5   2026-07-25  HW: Pocket S2, Pocket ACE.
+#   7.1.6   2026-08-03
+#   7.2     2026-08-18  mainline; took over two of ours (sm8550 bandwidth scaling, sgm3804; see
+#                       "What 7.2 took over" below).
+#   7.2.1   2026-08-27
+#   7.2.3   2026-09-03
+#   7.2.4   2026-09-08
+#   7.2.5   2026-09-11  issue #91: needed a DSI byte-clock fix to keep two boards' panels alive
+#                       (landed upstream in 7.2.8).
+#   7.2.6   2026-09-17  skipped on 2026-09-14 (issue #95): Wi-Fi dead on every WCN7850 board and
+#                       only half of the Pocket S2's bonded panel drawing. Re-taken with the
+#                       pcie-qcom BDF-to-SID fix (now 1060) and a bonded-DSI fix (now 0440).
+#                       HW: ACE, S2, Max.
+#   7.2.7   2026-09-22  HW: ACE, Thor Lite, FIT.
+#   7.2.8   2026-09-27  two of ours landed (DSI byte clock, DPU peripheral flush). HW: ACE, FIT,
+#                       S2, Max, plus sustained GPU load on Max.
+#   7.2.9   2026-10-03  HW: ACE, S2.
+#   7.2.10  2026-10-12  issue #112. HW: ACE, S2, Max (with 0330 v4, 1150, 0140).
+#   7.2.11  2026-10-15  no HW gate run before 7.3.1 replaced it.
+#   7.3.1   2026-10-30  new series: ten of ours landed and were deleted, the rest rebased.
+#   7.3.3   2026-11-08  issue #37: nothing of ours landed, no patch changed.
 #
-# ============ THE GATE ITSELF: how to run it, and the ways it lies (any pin) ============
+# A point release inside a series is a prediction about effort, never about risk: 7.2.5 needed a
+# new patch and 7.2.6 broke Wi-Fi, and both were found on hardware, not by an offline gate.
+
+# ============================== 7.3.3 ==============================
 #
-# The numbers each release produced are NOT kept here; the CURRENT pin's are in its section above.
-# What follows is the method and the traps, which do not change between releases.
+# 7.3.2 carries the content (548 commits); 7.3.3 adds three Xen backend use-after-free fixes.
+# 7.3.1 -> 7.3.3 changes 456 files and no Kconfig file. What concerns us: seven ath12k commits
+# (RXDMA buffer ring size per memory profile), drm/msm "Fix vm_bo use-after-free in
+# with_vm_locks()", three qcom-wled fixes, arm-smmu-v3 shutdown ordering. No qcom clk, phy,
+# interconnect, dts or soundwire change.
 #
-#   - CONFIG SWEEP. Every CONFIG_* named in kernel.config + trim-platforms.config must exist in the
-#     PATCHED tree. Recipe: strip `CONFIG_x=` and `# CONFIG_x is not set` to bare names, diff
-#     against every `config`/`menuconfig` name in the tree's Kconfig files. It must run against the
-#     PATCHED tree, not a pristine one — some symbols are defined by our own patches, e.g.
-#     AYANEO_SERIAL_MCU comes from 0980-misc-add-ayaneo-serial-mcu.patch. The count moves for OUR
-#     reasons far more often than upstream's: every historical move so far was a fragment edit of
-#     ours, not a symbol upstream deleted.
-#     The one upstream casualty to date stays deleted and its note is still why — see
-#     kernel.config's header:
-#       READ_ONLY_THP_FOR_FS -> removed upstream in 7.2; file THP is unconditional now.
-#     SCHED_CACHE (added 2026-08-22) still resolves the same way (init/Kconfig, `default y`,
-#     `depends on SMP`) — the pin records an inherited default rather than changing one.
-#   - PATCH APPLY. Every kernel/patches/*.patch must apply CUMULATIVELY, in lexical order, to ONE
-#     tree, with zero rejects — see HOW TO RE-RUN below for why any other order lies.
-#   - FUZZ, and why the total is the WRONG instrument. kernel/build.sh passes no -F0, so patch's
-#     default fuzz=2 is accepted silently; when a hunk that matters reaches 2, patch starts
-#     applying it in the WRONG PLACE and the build still succeeds. But the raw count has been
-#     unmoved across several releases in a row, and a hunk sliding 1 -> 2 while another slid 2 -> 1
-#     would leave it unmoved too. So diff the PER-HUNK PROFILE — patch name + hunk number + fuzz
-#     level, sorted — between a pristine OLD tree and a pristine NEW one, both drilled today. Any
-#     line that moves is a hunk to read.
-#   - "0 REJECTS" DOES NOT PROVE A PATCH LANDED. For every patch you changed, and for every patch
-#     whose file upstream touched, assert its CODE is present in the patched tree by grepping for
-#     an identifier it introduces. A reversed-and-skipped patch also reports no reject.
-#   - RE-CHECK EVERY CARRIED-FROM-A-LIST PATCH AGAINST ITS AUTHOR, NOT ITS THREAD. For each patch
-#     we carry that is not upstream, look up the AUTHOR's other postings —
-#     `patchwork.kernel.org/api/1.2/patches/?submitter=<id>&per_page=100`, the submitter id coming
-#     from `/api/1.2/patches/?msgid=<our msgid>`. A patch its author has SUPERSEDED looks exactly
-#     like one awaiting review: one message in the thread, no replies, state `new`, and the bug
-#     still unfixed in every tree you can grep. The supersession lives in a DIFFERENT thread, often
-#     a different subsystem, sometimes days later. 0508 was carried for two bumps in that state.
-#     Two more traps in the same instrument: patchwork's `handled-elsewhere` means "another
-#     project's row owns this", NOT "applied"; and lore's SEARCH is behind Anubis (HTTP 403) while
-#     `b4 mbox <msgid>` and `/all/<msgid>/t.mbox.gz` are not gated — use b4 to read a thread, and
-#     the patchwork API to enumerate an author.
-#   - THE UPSTREAM-DELTA INTERSECTION, AND RUN IT FIRST. Take the `+++ b/` paths out of the
-#     release's incremental patch (https://cdn.kernel.org/pub/linux/kernel/v7.x/incr/patch-A-B.xz)
-#     and intersect with the `+++ b/` paths in kernel/patches/*.patch. It is far cheaper than
-#     diffing two patched trees and it is the ONLY gate that reaches upstream's own changes: at
-#     7.2.5 the fuzz profile could not see the DSI blocker, because upstream changed a function
-#     none of our patches contexts on, and the config sweep could not, because no symbol moved.
-#     A NON-EMPTY RESULT IS A READING ASSIGNMENT, NOT A NOTE. Read every file it names, and answer
-#     BOTH questions it raises: did upstream break one of ours, and did one of ours land upstream
-#     (in which case it is a deletion candidate, not a patch to carry forward).
-#   - WHAT THE INTERSECTION CANNOT SEE, and therefore what the HW gate is actually for: a release
-#     also changes drivers we depend on but carry no patch against, so nothing offline flags them.
-#     Scan the ChangeLog for the subsystems these boards live on — i2c/qcom-geni (every touchscreen
-#     and DDIC here sits behind geni, so a timing change is the likeliest source of a "touch works
-#     but flakes"), soc/qcom/geni-se, media/qcom/iris (our =m decoder on all three SoCs; exercise
-#     it with ffmpeg v4l2m2m and NOT Steam, see the iris/venus node interlock in build.sh),
-#     remoteproc/qcom_q6v5_pas, usb typec/tcpm qcom-pmic — and say in the pin that they were looked
-#     at, so the next reader knows they were not missed.
-#   - `patch unexpectedly ends in middle of line` x4 is NOT a reject: patches 0004 (IFPC) and 0203
-#     (S16_LE) have no trailing newline. Both hunks succeed. Pre-existing, unrelated to any bump.
-#   - SYMBOL EXISTENCE IS NOT SYMBOL VALUE. The sweep above only proves a symbol is still defined
-#     somewhere. The fragments must then be MERGED FOR REAL inside build/Dockerfile
-#     (`merge_config.sh -m defconfig kernel/*.config` + `make olddefconfig`, trim-platforms.config
-#     included) and every requested symbol asserted to have KEPT its requested value —
-#     olddefconfig silently DROPS a =y symbol whose dependencies are unmet.
-#     DEBUG_INFO_BTF/SCHED_CLASS_EXT resolve correctly only because the container ships `dwarves`
-#     (pahole v1.31).
-#   - READ `n` AND `undef` AS DIFFERENT FACTS, not as pass/fail. A trim-platforms.config directive
-#     can come back `undef` (absent from .config entirely) rather than `n`, when some symbol the
-#     same file already cuts gates it — that line then cuts nothing and should be deleted. `undef`
-#     still PASSES, so an assertion demanding the literal `# ... is not set` line reports false
-#     failures. build.sh counts the two apart and prints the redundant list; a REDUNDANT line in
-#     the build log is a line to remove, not to ignore. Floor is 40 directives.
-#   - FINALLY, BUILD IT. `make kernel` is the gate the offline drill cannot give you. Record the
-#     warning count and WHICH FILES they come from: warnings in our own out-of-tree drivers cannot
-#     be bump fallout, warnings in files the release touched can be.
+# Intersection with our patches, four files, all read:
+#   drm/msm/msm_gem_shrinker.c     upstream walks vm_bos with the _safe variant; our 0220 lands
+#                                  elsewhere in the file.
+#   ath12k/core.c, core.h, mac.c   the ring-size rework. 1002, 1011, 1025 and 1026 land with
+#                                  offsets; WCN7850/7860 take the default memory profile, now
+#                                  4096-entry RXDMA buffer rings.
+# All 267 patches applied cumulatively at --fuzz=0, no rejects, none reversed;
+# kernel/patches/check-order.py: no problems.
+
+# ============================== 7.3.1 ==============================
 #
-# HOW TO RE-RUN THIS VALIDATION, and the mistake that makes it lie: patches must be applied
-# cumulatively to ONE tree, exactly as kernel/build.sh does. Dry-running each patch independently
-# against a pristine tree reports ~8 false failures, because several patches depend on files an
-# earlier patch CREATES (1002 patches the qcom-hv-haptics.c that 1000 adds; 1003 patches the
-# rsinput.c that 0031 adds) and the drm/panel patches all extend one Makefile, each one's
-# context containing the line its predecessor added. Zero of those are real.
+# A series bump, so the stack was rebased rather than re-applied: a git tree of 7.2.11 with one
+# commit per patch, rebased onto a 7.3.1 tree, so every hunk got a three-way merge and only real
+# conflicts stopped it. Then only the patches whose original no longer produced the same tree were
+# regenerated (`git apply --cached`, headers kept). 47 of 269 patches failed a plain --fuzz=0
+# apply, most on context only.
 #
-# Corrections applied during the 7.1.5 validation, still current and still load-bearing in
-# kernel.config — do not "restore" the left-hand names:
-#   CRYPTO_MICHAEL_MIC  -> DROPPED (upstream removed it from crypto/Kconfig; mac80211 carries its
-#                          own michael_mic, so TKIP is unaffected). Was already a dead symbol in
-#                          7.1.3 and silently ignored by kconfig.
-#   MFD_QCOM_SPMI_PMIC  -> MFD_SPMI_PMIC
-#   PHY_QCOM_SNPS_EUSB2 -> PHY_SNPS_EUSB2 (+ PHY_QCOM_EUSB2_REPEATER)
-#   SM_DISPCC_8650      -> SM_DISPCC_8550 (SM8650 reuses the 8550 display clock controller;
-#                          no separate _8650 dispcc upstream — symbols jump 8550 -> 8750)
+# Deleted, landed byte-for-byte (their commits went empty in the rebase): 0145 (sm6115 video GDSC
+# HW_CTRL), 0230 (Rob Clark's VM hardening), 0620 (sy7758), 0800 (DP audio prepare), 1000 (ksmbd
+# pipe transceive), 1063 (qmp-combo runtime PM at boot), 1080 (qce runtime PM), 1155 (sm8650 CPU
+# props), 1165 (sm6115 venus), 1167 (sm8750 uart15).
 #
-# --- What 7.2 took over from us, and what that cost ---
-# Two of our patches went upstream in 7.2 and were DELETED here rather than carried:
-#   0101 (sm8550 DDR/LLCC/L3 CPU bandwidth scaling) — landed verbatim; all 11 hunks read as
-#         already-applied against 7.2's sm8550.dtsi. Pure deletion, no other change.
-#   0065 (sgm3804 panel-power regulator) — landed as a REWRITE, not our version, and with an
-#         INCOMPATIBLE DT binding. Upstream's driver registers TWO rails from `pos`/`neg` child
-#         nodes each carrying `enable-gpios`; ours was one rail with both GPIOs in `reset-gpios`
-#         on the parent, hardcoding 5.2V (reg 0x0c) over I2C while telling the framework 5.0V.
-#         Keeping both was not an option: same compatible, same file path, duplicate Kconfig
-#         symbol. So the binding was migrated across all six board nodes and the panels that
-#         consume it — see the HW gate below, this is the risky half of the bump.
+# Reworked (each patch header carries a "7.3.1 bump" note):
+#   0530  mainline now has its own panel-chipone-icna35xx.c, with per-board compatibles none of
+#         our DTs use. Ours is renamed beside it: panel-ddic-icna35xx.c, DRM_PANEL_DDIC_ICNA35XX,
+#         driver name panel-ddic-icna35xx. 0531-0533 follow; kernel.config changed with it.
+#   0810  deleted (port of Nova-Deck b404b61a). It remapped LPAIF 7 to WSA and masked the WSA2
+#         channels for our own topology. Mainline's ayaneo,pocket-s2-sndcard maps the stream onto
+#         the WSA2 channels itself. Pocket S2 and Pocket FIT are both that card now, model
+#         SM8650-APS2 (set once, in sm8650-ayaneo-common.dtsi), and load
+#         qcom/ayaneo-ps2/SM8650-APS2-tplg.bin, built in qcom-firmwares from linux-firmware's
+#         topology source. UCM moved from conf.d/sm8650 to conf.d/ayaneo-ps2 and the FIT's card id
+#         is SM8650APS2. That topology has no DISPLAY_PORT_RX_0 on MultiMedia1; DP plays on
+#         MultiMedia6 / PCM 5.
+#   0820, 0825  deleted, replaced by a new 0820 (the MI2S half of b404b61a). Their card-level
+#         "i2s_clk" gives way to mainline's per-DAI MI2S clocks: a `bclk` on a dai@<port> node
+#         under &q6apmbedai, set and enabled by sc8280xp_snd_hw_params() when the card data has
+#         mi2s_bclk_enable. sm8450/sm8550 data already do; the new 0820 sets it for sm8750. Moved:
+#         Odin 2 family + RP6/Nova on dai@10 (PRIMARY_MI2S_RX), Odin 3 + FIT Elite on dai@12
+#         (SECONDARY_MI2S_RX), RG55G1 + RP Classic on dai@93 (SENARY_MI2S_RX; the sm4450 card uses
+#         the sm8450 data). The back end is fixed at 48 kHz / 2 ch / S16, so bclk is 1536000, the
+#         rate the old assigned-clock-rates pinned.
+#   0826  now only adds to mainline's hw_params: the codec format on every codec DAI of an MI2S
+#         link (both SM4450 amps; mainline sets the first only), the RP Classic mono fixup, and a
+#         bclk counted over max(channels, 2) slots so the mono stream stays at 1536000. Thor Lite
+#         (SM8250) keeps its card clock: it uses sm8250.c, not this driver.
+#   0855  the runtime-PM half landed; only the system-sleep handlers are left.
+#   0994  extended: 7.3 reads the regulator state back at probe (REG_ENABLE); PBS uses offset 0x0.
+#   1090  extended: the IRQ is re-enabled on the new pm_runtime_force_* error returns.
+#   0120  upstream dropped skip_retention_level, so our two .skip_retention_level lines went too.
+#   0398  sm4450 maps to the new ubwc_2_0_hbb14 preset (same values).
+#   1020  follows the pwrseq_power_on/off -> pwrseq_enable/disable rename.
+#   1062  re-inserted beside upstream's new sm8475 config.
+#   1145  keeps upstream's sm8750 VBIF 0x3000.
+#   1105  shrank: 7.3 has the pcie*_port0 labels.
 #
-# HW GATE, PARTLY RUN (3 of 7) as of 2026-09-09. The sgm3804 migration changes how panel power is
-# brought up on Pocket ACE / DMG / DS / S1K / S2K, Pocket S2 and konkr-pf. Three of those seven —
-# Pocket ACE, Pocket S2 and konkr-pf (Pocket FIT) — came up clean on the 2026-09-09 card, which is
-# the failure this gate was written to catch (a lit backlight over a black panel, AVEE dead). DMG,
-# DS, S1K and S2K are STILL UNTESTED, and they are the ones to try next:
-#   - `avdd-supply` now points at the positive rail only; the negative rail is a SECOND regulator
-#     that nothing enabled before, so every panel driver that used to get both rails from one
-#     `avdd` now takes an `avee` supply too (patches 0051/0052/0054/0066/0067/0068). A board left
-#     un-migrated would come up with AVEE dead — a lit backlight over a black panel.
-#   - the rails are pinned to 5200000 uV, NOT the 5000000 the old DTS asked for. 5.2V is what the
-#     hardware was actually running: our driver ignored the DT constraint and wrote selector 0x0c,
-#     which is 4.0V + 12*100mV on upstream's linear range. Asking for 5.0V here would be a real,
-#     silent voltage change dressed up as a no-op.
-#   - upstream's driver declares enable_time = 40ms per rail; ours had none. regulator_bulk_enable
-#     is async so both rails come up in parallel, but panel prepare is now ~40ms slower.
+# API: of_drm_get_panel_orientation() became drm_of_get_panel_orientation() in <drm/drm_of.h>;
+# the 16 panel drivers we add follow it (0505-0590). IIO consumers are in the IIO_CONSUMER
+# namespace now, which 0910's pm8150b charger imports.
 #
-# The migration above was CROSS-CHECKED against the not-yet-merged upstream Pocket S2 display
-# series (Neil Armstrong, Linaro), which is the reference for how these nodes are meant to look:
-#   [v5] arm64: dts: qcom: sm8650-ayaneo-pocket-s2: add display nodes -- 2026-07-28, state `new`
-#   https://patchwork.kernel.org/project/linux-arm-msm/patch/20260728-topic-sm8650-ayaneo-pocket-s2-display-dt-v5-1-892ab9bcecfe@linaro.org/
-# (lore.kernel.org is behind an Anubis proof-of-work wall and cannot be fetched; patchwork serves
-# the same mail and is not gated. Use it. SHARPENED 2026-09-12 while pulling the v3 SMMU series:
-# under /api/1.2/ it is the JSON that works, NOT the mail endpoints — /api/1.2/patches/<id>/mbox/
-# and .../raw/ both 404. Go
-#   /api/1.2/patches/?msgid=<msgid, no angle brackets>   -> patch id(s) + the series id
-#   /api/1.2/series/<sid>/                               -> every patch in the series, in order
-#   /api/1.2/patches/<id>/                               -> `content` (the mail body) + `diff`
-#   /api/1.2/covers/<id>/                                -> the cover letter, `content` = changelog
-# A cover letter is NOT indexed as a patch, so a 0/N msgid returns an empty list — query 1/N
-# instead, or take the series id off any patch in it. The `diff` field is byte-exact: the five
-# diffs in 0515 were written straight out of it and apply at fuzz 0.
+# Duplicate drivers: of every compatible our patches add, only 0540's ayaneo,wt0600-2k and
+# ayaneo,wt0630-2k are also matched by a 7.3 driver (panel-renesas-r63419). That driver defaults to
+# n and is not in our config, so ours binds. 0515 sits beside st7703 the same way.
 #
-# CORRECTED 2026-09-13: `b4` IS THE RIGHT TOOL AND IT WORKS HERE. The Anubis wall is on lore's
-# HTML only; the mbox endpoint it actually uses (/all/<msgid>/t.mbox.gz) is NOT gated, so
-#   b4 am -o <dir> <msgid-without-angle-brackets>
-# fetches a whole series in one call, applies the review trailers posted on the list, and checks
-# attestation. That is one command against the patchwork recipe above, which needs three API round
-# trips and a 0/N special case. Prefer b4; keep the patchwork route as the fallback for when only
-# a patchwork id is known. Verified by re-fetching the v3 SMMU series: the per-patch diffs b4
-# produces are byte-identical to the ones already in 0515 (only the blank line between
-# concatenated patches differs, which we strip).
-# The /project/<p>/patch/<msgid>/ web URLs above stay valid for humans.)
-# It independently confirms 5200000 uV on both rails and the same tlmm 59=pos / 58=neg order we
-# already had, and it carries three properties this tree was missing, now added to all six nodes:
-#   vin-supply = <&vph_pwr>       the chip's input rail (label reachable on every board with an
-#                                 sgm3804: qcs8550-ayaneo-pocket-common.dtsi + sm8650-ayaneo-common.dtsi)
-#   regulator-active-discharge = <1>   restores the discharge bits our old driver wrote to reg 0x03
-#                                 unconditionally; upstream only writes them when DT asks
-#   regulator-boot-on             the rail can already be up at handoff (bootloader splash)
+# DT: sm8550.dtsi renamed pcieport0 to pcie0_port0, and qcs8550-ayn-common.dtsi and
+# qcs8550-ayaneo-pocket-common.dtsi follow; sm8250/8650/8750 keep pcieport0. The sm8550 and sm8650
+# IPA nodes now reference ipa_fw_mem, a node our three common dtsi files delete (no modem), so they
+# drop that property too. IPA stays disabled.
 #
-# WHERE WE STILL DIVERGE, deliberately: upstream names the panel's rails `vsp-supply`/`vsn-supply`
-# and drives the S2 panel with a generic `renesas,r63419` driver (compatible "ayaneo,wt0630-2k",
-# "renesas,r63419"). Neither that driver nor that series is in 7.2, so our six panel drivers stay
-# and keep their own `avdd`/`avee` names. If we ever drop them for the upstream r63419 driver, the
-# DTS supply names have to become vsp/vsn at the same time — they are a driver-side contract.
+# Crypto: CRYPTO_DEV_QCOM_RNG is gone (now HW_RANDOM_QCOM). CRYPTO_DEV_QCE now depends on BROKEN
+# (it races the secure world for the engine and is slower than the CPU), so it is deleted from
+# kernel.config. The driver going does not take the DT node with it: every SoC's `crypto` node is
+# enabled, and on sm8250/8550/8650/8750 it lists interconnects, so with no driver to bind it
+# fw_devlink holds the interconnect providers' sync_state forever ("sync_state() pending due to
+# 1dfa000.crypto") and every NoC node stays at its maximum vote. Upstream (Nova-Deck 6f40319a) saw
+# that break every Odin 3 panel off->on and hang power-off. Every board file that reaches a crypto
+# node sets `&crypto { status = "disabled"; }`: upstream's eight, plus sm8250-mangmi-air-y-pro.dts
+# and sm6115-mangmi-air-x-base.dtsi. sm4450 has no crypto node. If QCE ever returns, re-enable the
+# node with it.
+#
+# Result: all 259 patches applied cumulatively at --fuzz=0, and the tree was byte-identical to the
+# rebased one. `make kernel` green (Image + 32 dtbs + modules); DDIC_ICNA35XX=y, CHIPONE_ICNA35XX
+# and RENESAS_R63419 unset, HW_RANDOM_QCOM=y. tests/test-hw-dtb.sh and
+# tests/test-panel-calibration.sh green.
+#
+# Added 2026-11-02: SM8750's share of Abel Vesa's CX v5 (9/42 + 41/42 into 1150, 26/42 into 0142),
+# which the SM8750 bring-up missed. Gated the same day on an Odin 3 (upstream's dev card): GCC is a
+# consumer of `cx` and runtime-PM active before and after a freeze cycle, no errors, WCN7850
+# re-associated. `sync_state() pending due to 3d37000.gmu` for gcc, gpucc and gxclkctl is not from
+# this: the GMU node lists GCC_GPU_GEMNOC_GFX_CLK in pristine 7.3.1 and no driver binds it.
+
+# ============================== 7.3.x on hardware ==============================
+#
+# Seen so far:
+#   - 7.3.1, Pocket S2 (2026-10-31): sound came up as Dummy Output until the DP route moved into
+#     the APS2 HiFi verb in UCM (8ac2c00d); speaker OK after.
+#   - 7.3.1, Air X (2026-11-01): Wi-Fi late or absent, from 7.3's qrtr HELLO change dropping the
+#     name service's early answer to the modem. Fixed by 1018.
+#   - 7.3.3, card 3a87b3fc (PR #38 comment): boot, Wi-Fi and suspend checked on four boards.
+#     ACE: all OK, deep suspend included. Air Y Pro: OK, but the SLPI crashes in its sensor process
+#     60 ms after resume and recovers by itself. Air X: the ADSP crashes the same way after resume,
+#     no sound card comes back and the device freezes; not attributed to 7.3.3 (nothing in
+#     remoteproc, fastrpc, soc/qcom or rpmsg changed since 7.3.1), but 7.3.1 had no suspend run to
+#     compare with. RG55G1: OK; three disp_cc byte0/byte0_intf/pclk0 "stuck at 'on'" WARNs, and
+#     rtcwake cannot run (the pm8xxx RTC is not a wake source in its DT). S2 not run.
+#
+# Still owed for the series:
+#   - Audio everywhere: MI2S formats and bit clocks now come from mainline (every MI2S speaker
+#     board; a "pll lock fail" from an aw88xxx amp means no BCLK), S2 + FIT speakers, headphones
+#     and DP, headset jack on MI2S boards (0861).
+#   - Display: the ICNA35XX panels (Pocket DS/EVO, Odin 2 Portal, Thor, Odin 3, Pocket Max) bind
+#     panel-ddic-icna35xx; SM4450 UBWC through the preset; picture and touch after resume.
+#   - PCIe Wi-Fi on the qcs8550 boards (label move), SM6115 Bluetooth (1020), the RNG (hwrng
+#     should list qcom).
+#   - From 7.2.11, never gated: WCN7850 association, UFS probe clean on an internal install (a
+#     dev card boots from SD), a normal boot and Steam session on btrfs.
+#   - 0190/0195: a Pocket ACE boot shows 0 `cbfrsynra=0x1c00` faults where it showed 10.
+#   - Audio playback, sustained GPU load, and the S2 (bonded panel) on 7.3.3.
+
+# ============================== Running the HW gate (any pin) ==============================
+#
+# Boards: one per SoC at least, and the ones that are alone in what they exercise:
+#   SM8550  Pocket ACE   video-mode panel, WCN7850, pad behind the Renesas PCIe-USB bridge.
+#   SM8650  Pocket S2    the only bonded-DSI panel (one 1440x2560 panel over two links); its
+#                        1080-line render sits 8 lines under the inline rotator's 1088-line cap,
+#                        the tightest display margin we have.
+#           Pocket FIT   the only DSC panel.
+#   SM8250  Pocket Max   command-mode panel, ath11k Wi-Fi; or Thor Lite / Air Y Pro.
+#   SM6115  Air X        ath10k WCN3950, ADSP/modem bring-up.
+#   SM4450  RG55G1
+#   SM8750  Odin 3       upstream's dev card; we have none.
+# Read the node's compatible on the device, not the board name, to know what a board proves: a
+# Max pass says nothing about WCN7850, since its Wi-Fi is ath11k (pci17cb,1101).
+#
+# Flash a card built from the pin. A new Image invalidates the whole /lib/modules/<ver> tree
+# (module BTF), so never swap /boot/Image on an existing card.
+#
+# Video decode: test iris/venus with `ffmpeg -c:v h264_v4l2m2m` on a clip made on the device
+# (`ffmpeg -f lavfi -i testsrc=size=1280x720:rate=30:duration=2 ...`), not with Steam. Iris loads
+# its firmware at STREAMON and logs nothing on success, so /dev/video0 existing proves nothing;
+# the decoded byte count does (1280*720*1.5 per frame).
+#
+# Logs: /var/log is bind-mounted onto /home (var-log.mount), so on a card read
+#   journalctl -D /run/media/<you>/retroforge-home/.retroforge/offload/var/log/journal --list-boots
+# and pass a boot ID: `-b -1` does not work with -D ("no persistent journal was found").
+#
+# KNOWN BOOT NOISE. Before chasing a boot line, grep this file for it.
+#   - All boards, on resume: `IRQ168: set affinity failed(-22)`.
+#   - synaptics_dsx_i2c "I2C retry 1..10" / "Failed to read interrupt status": touchscreen-driver
+#     noise, also while the panel is blanked; not suspend fallout.
+#   - `qcom-apm ... CMD timeout for [1001021] opcode` at ~10 s on ACE, FIT and S2, with working
+#     audio. Not a no-sound cause.
+#   - Pocket S2: `dsi_get_phy: phy driver is not ready` at ~1 s (probe deferral on the secondary
+#     DSI), and `soundwire sdw-master-2-0: clock stop deprepare wait failed:-110` after the card
+#     is up. A first boot with no sound card at all is the SM8650 SoundWire wedge, issue #105;
+#     a reboot brings it back.
+#   - SM8250 (Max, Air Y Pro): a clk_core_disable + clk_core_unprepare WARNING pair after the
+#     boot-time `DSI PLL(0) lock failed`, since 7.2.
+#   - Pocket ACE: 10 arm-smmu context faults at ~0.77 s, all fsr=0x402 cbfrsynra=0x1c00 (the MDSS
+#     stream), before the panel rails come up: the bootloader splash still scanning out into an
+#     empty translating domain, before 0370 can stop it. Other boards show none. 0190 (SM8550) and
+#     0195 (SM8650) give MDSS an identity domain at boot and should take it to 0 (owed, above).
+
+# ============================== Bumping the pin (any pin) ==============================
+#
+# Run these in order; each catches what the others cannot.
+#
+# 1. Upstream intersection, first. Take the `+++ b/` paths out of the release's incremental patch
+#    (https://cdn.kernel.org/pub/linux/kernel/v7.x/incr/patch-A-B.xz) and intersect them with the
+#    `+++ b/` paths in kernel/patches/*.patch. Read every file it names and answer two questions:
+#    did upstream break one of ours, and did one of ours land (then it is a deletion candidate).
+#    It is the only offline check that sees upstream's own changes: at 7.2.5 neither the patch
+#    apply nor the config sweep could see the DSI break.
+#
+# 2. Changes beside our patches. The intersection cannot see drivers we depend on but do not
+#    patch. Scan the ChangeLog for i2c/qcom-geni and soc/qcom/geni-se (every touchscreen, panel
+#    rail and amp is behind GENI), drm/msm, ath10k/11k/12k and mac80211, ASoC qcom and soundwire,
+#    media/qcom/iris, remoteproc/qcom_q6v5_pas, pcie-qcom, usb typec/ucsi, btrfs, and record
+#    what each pin's legs are, so the next reader knows they were looked at.
+#
+# 3. Patch apply. All of kernel/patches/*.patch, cumulatively, in lexical order, onto one pristine
+#    tree, at --fuzz=0 (as build.sh does). Applying each patch alone to a pristine tree reports
+#    false failures: several patches patch files an earlier one creates, and the panel patches all
+#    extend one Makefile. For a series bump, rebase instead (see 7.3.1 above).
+#
+# 4. Drop check. A clean apply proves nothing about what landed upstream:
+#    - reverse-apply each patch with --dry-run --fuzz=0 to a pristine tree, file by file; a file
+#      that reverses cleanly has landed;
+#    - GNU patch skips the whole file at the first reversed hunk and then reports "N out of N
+#      hunks ignored", which reads as "all upstream" and may be false. Count the call sites in the
+#      pristine tree instead;
+#    - `patch --batch` silently applies a reversed patch, i.e. reverts upstream's fix. Use -N
+#      when asking whether a patch is still needed;
+#    - "mainline does not have this line" does not mean mainline removed it: check whether the
+#      function still exists, and if not, where its callers went;
+#    - for every patch you changed or whose file upstream touched, grep the patched tree for an
+#      identifier it introduces.
+#
+# 5. Patches carried from a list: check the author, not the thread. Look up the author's other
+#    postings (`b4 mbox <msgid>` reads a thread; patchwork's
+#    /api/1.2/patches/?submitter=<id>&per_page=100 lists an author, the id coming from
+#    /api/1.2/patches/?msgid=<msgid>). A patch its author has superseded looks exactly like one
+#    awaiting review: one message, no replies, state `new`. The supersession is in another thread.
+#    It is a reason not to carry a patch, not a forecast that it will not land: the old 0508 was
+#    superseded by its author and the maintainer merged it anyway, in 7.2.8.
+#    patchwork's `handled-elsewhere` means another project owns the row, not "applied".
+#    lore's HTML and search are behind Anubis (HTTP 403); `b4 am -o <dir> <msgid>` and
+#    /all/<msgid>/t.mbox.gz are not, and b4 applies the list's trailers. Patchwork's JSON API also
+#    works (/api/1.2/series/<sid>/, /patches/<id>/ with a byte-exact `diff`, /covers/<id>/), but
+#    its mbox and raw endpoints 404, and a 0/N cover letter is not indexed as a patch.
+#
+# 6. Config. Every CONFIG_* named in kernel/*.config must exist in the patched tree (some come
+#    from our patches, e.g. AYANEO_SERIAL_MCU from 0980). Then merge the fragments for real
+#    (`merge_config.sh -m defconfig kernel/*.config` + `make olddefconfig`) and assert every
+#    requested value against the final .config: olddefconfig silently drops a =y whose
+#    dependencies are unmet. Strip trailing whitespace and inline comments before comparing. A
+#    trim directive that comes back undefined rather than `n` is cut by another symbol and the
+#    line can go; build.sh lists those as redundant. DEBUG_INFO_BTF and SCHED_CLASS_EXT need the
+#    container's pahole (dwarves).
+#
+# 7. Build. `make kernel`, and record the warnings by file: warnings in our own drivers cannot be
+#    bump fallout, warnings in files the release touched can be.
+#
+# 8. Hardware, as above. Then record the pin in the history list and a section for it here.
+#
+# Config renames from 7.1.5, still current in kernel.config (do not restore the old names):
+#   CRYPTO_MICHAEL_MIC dropped (removed upstream; mac80211 has its own michael_mic),
+#   MFD_QCOM_SPMI_PMIC -> MFD_SPMI_PMIC, PHY_QCOM_SNPS_EUSB2 -> PHY_SNPS_EUSB2 (+
+#   PHY_QCOM_EUSB2_REPEATER), SM_DISPCC_8650 -> SM_DISPCC_8550 (SM8650 reuses the 8550 dispcc).
+#   READ_ONLY_THP_FOR_FS was removed in 7.2 (file THP is unconditional).
+
+# ============================== Standing notes ==============================
+#
+# 0330, Dmitry Baryshkov's "drm/msm: fix SMMU fault dumps" (v4 since 2026-10-12): exercised at
+# 7.2.10 by three manual KMS blank cycles each on ACE, S2 and Max (`gamescopectl
+# drm_sleep_internal_screen 1/0`; retroforge-suspend does not reach that path, it falls back to
+# bl_power). Pocket FIT, the DSC board, is still owed. It removes the kernel's allow_modeset
+# override, so enabling colour management needs a commit with DRM_MODE_ATOMIC_ALLOW_MODESET; see
+# the patch's preamble for what that means for gamescope.
+#
+# LUTDMA (0360, 0365, 1145): a port of the downstream SDE reg-dma engine. On DPU 9.0 and later the
+# colour LUTs have no memory-mapped write path, which is why mainline exposes only CTM and
+# GAMMA_LUT there. The engine drives the DSPP inverse gamma (a 256-entry DEGAMMA_LUT) and the
+# 17^3 gamut block (a DPU_3D_LUT blob); without its reg entry the properties are not exposed.
+# HW-verified 2026-09-13/14 on FIT (engine v3), S2 and ACE (engine v2). A failed LUTDMA wait skips
+# that DSPP while the commit still reports success, bounded by a retry budget on the CRTC: that is
+# the failure to watch for on new silicon.
+#
+# What 7.2 took over from us: the sm8550 DDR/LLCC/L3 bandwidth scaling (verbatim) and the sgm3804
+# panel-power regulator, which landed as a rewrite with a different binding: two rails from
+# `pos`/`neg` child nodes with `enable-gpios`, where ours was one rail. All six board nodes and
+# their panels were migrated: `avdd-supply` is the positive rail and every panel driver takes an
+# `avee` supply too; the rails are pinned at 5200000 uV, the voltage our old driver actually wrote
+# (asking for 5.0 V would be a real change); each rail has a 40 ms enable_time. Cross-checked
+# against Neil Armstrong's Pocket S2 display series (vin-supply = <&vph_pwr>,
+# regulator-active-discharge, regulator-boot-on added). HW-checked on Pocket ACE, Pocket S2 and
+# Pocket FIT; Pocket DMG, DS, S1K and S2K are untested, and a lit backlight over a black panel
+# (AVEE dead) is the failure to look for.
+# Upstream names those rails vsp/vsn and drives the S2 panel with panel-renesas-r63419, which 7.3
+# has but we do not enable. If we switch to it, the DTS supply names must change with it.
