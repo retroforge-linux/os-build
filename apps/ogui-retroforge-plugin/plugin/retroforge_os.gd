@@ -28,6 +28,7 @@ extends OSPlatform
 const UpdateStates := preload("update_states.gd")
 const InternalInstall := preload("internal_install.gd")
 const ScrapeRunner := preload("scrape_runner.gd")
+const GeneralBox := preload("general_box.gd")
 const TOOL := "/usr/bin/retroforge-update"
 const CHECK_TIMEOUT := 60.0  # s: the manifest fetch retries for at most ~30 s
 const FIRST_CHECK_DELAY := 180.0  # s after start: the network is up, the player is not mid-menu
@@ -81,7 +82,7 @@ func ready(root: Window) -> void:
 	_apply.progressed.connect(_on_install_progress)
 	_apply.finished.connect(_on_install_finished)
 	var menu: Node = root.find_child("GeneralSettings", true, false)
-	var box: Node = menu.get_node_or_null("MarginContainer/VBoxContainer/VBoxContainer") if menu else null
+	var box: Node = GeneralBox.find(menu)
 	if not box:
 		logger.warn("OGUI general settings layout not found; no Updates section")
 		return

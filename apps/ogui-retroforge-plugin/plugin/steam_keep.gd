@@ -8,6 +8,7 @@ extends RefCounted
 ## no game; one that does stops when the game ends. The command decides all of that, so the toggle only
 ## shows what `retroforge-steam-keep status` says and runs `on` / `off`.
 
+const GeneralBox := preload("general_box.gd")
 const TOOL := "/usr/bin/retroforge-steam-keep"
 
 var notification_manager := load("res://core/global/notification_manager.tres")
@@ -26,7 +27,7 @@ func setup(scene_tree: SceneTree) -> RefCounted:
 ## one. False when the layout differs or the command is missing.
 func attach(target: Node = null) -> bool:  # target: Apps > Steam Client's rows (apps_page.gd)
 	var menu: Node = tree.root.find_child("GeneralSettings", true, false)
-	var box: Node = target if target else (menu.get_node_or_null("MarginContainer/VBoxContainer/VBoxContainer") if menu else null)
+	var box: Node = target if target else GeneralBox.find(menu)
 	if not box or not FileAccess.file_exists(TOOL):
 		return false
 	var after: Node = null

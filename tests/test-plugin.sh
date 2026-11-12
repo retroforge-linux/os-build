@@ -1636,7 +1636,7 @@ func run() -> void:
 	put("latest.beta", "0.0.4-beta.1")
 	os.ready(root)
 	await wait(0.5)
-	var box: Node = menu.get_node("MarginContainer/VBoxContainer/VBoxContainer")
+	var box: Node = menu.get_node("MarginContainer/VBoxContainer/UpdateSection")
 	check("OGUI's updater controls are gone", [box.has_node("AutoUpdateToggle"), box.has_node("CheckUpdateButton"), box.has_node("UpdateButton"), menu.has_node("SoftwareUpdater"), menu.has_node("UpdateTimer")], [false, false, false, false, false])
 	var button: Node = box.get_node_or_null("RetroForgeUpdateButton")
 	var channel: Node = box.get_node_or_null("RetroForgeUpdateChannel")
@@ -1678,9 +1678,9 @@ func run() -> void:
 	os2.systemctl = os.systemctl
 	os2.ready(root)
 	await wait(0.5)
-	var b2: Node = menu2.get_node("MarginContainer/VBoxContainer/VBoxContainer/RetroForgeUpdateButton")
+	var b2: Node = menu2.get_node("MarginContainer/VBoxContainer/UpdateSection/RetroForgeUpdateButton")
 	check("restarted session: staged update shows Restart now", [b2.button_text, b2.description], ["Restart now", "RetroForge 0.0.4-beta.1 is installed. Restart to use it."])
-	check("restarted session: Beta still selected", menu2.get_node("MarginContainer/VBoxContainer/VBoxContainer/RetroForgeUpdateChannel").selected, 1)
+	check("restarted session: Beta still selected", menu2.get_node("MarginContainer/VBoxContainer/UpdateSection/RetroForgeUpdateChannel").selected, 1)
 	var menu3: Node = await test_background_check(menu2)
 	await test_pinned(menu3)
 	quit(1 if failed else 0)
@@ -1708,7 +1708,7 @@ func test_background_check(previous: Node) -> Node:
 	os3.in_game = func() -> bool: return false  # LaunchManager needs InputPlumber, absent here
 	os3.ready(root)
 	await wait(1.2)
-	var b3: Node = menu3.get_node("MarginContainer/VBoxContainer/VBoxContainer/RetroForgeUpdateButton")
+	var b3: Node = menu3.get_node("MarginContainer/VBoxContainer/UpdateSection/RetroForgeUpdateButton")
 	check("background check: found 0.0.5, offers Install", [b3.button_text, b3.description], ["Install", "RetroForge 0.0.5 is available (you have 0.0.3)."])
 	nm.notification_queued.disconnect(note)
 	nm.notification_sent.disconnect(note)
@@ -1732,7 +1732,7 @@ func test_pinned(previous: Node) -> void:
 	os4.systemctl = D.path_join("../fake-systemctl")
 	os4.ready(root)
 	await wait(0.5)
-	var box: Node = menu4.get_node("MarginContainer/VBoxContainer/VBoxContainer")
+	var box: Node = menu4.get_node("MarginContainer/VBoxContainer/UpdateSection")
 	var b4: Node = box.get_node("RetroForgeUpdateButton")
 	var c4: Node = box.get_node("RetroForgeUpdateChannel")
 	check("pinned: dropdown lists dev after Stable and Beta, dev selected",

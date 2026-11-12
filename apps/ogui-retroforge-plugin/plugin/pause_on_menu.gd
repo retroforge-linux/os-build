@@ -20,6 +20,7 @@ extends RefCounted
 ## the game runs while the keyboard is the popup on top, and a keyboard opened over a menu resumes
 ## it. Frozen behind the keyboard, a game never saw the keys (Air X, 2026-10-28).
 
+const GeneralBox := preload("general_box.gd")
 const SECTION := "retroforge"
 const RUNNING_GAME_CARD := "res://core/ui/card_ui/navigation/running_game_card.gd"
 const KEY := "pause_in_menus"
@@ -49,7 +50,7 @@ func setup(scene_tree: SceneTree) -> RefCounted:
 ## Add the toggle under Settings > General's Animated Effects. False when the layout differs.
 func attach() -> bool:
 	var menu: Node = tree.root.find_child("GeneralSettings", true, false)
-	var box: Node = menu.get_node_or_null("MarginContainer/VBoxContainer/VBoxContainer") if menu else null
+	var box: Node = GeneralBox.find(menu)
 	if not box:
 		return false
 	var after: Node = box.get_node_or_null("AnimatedEffectsToggle")
