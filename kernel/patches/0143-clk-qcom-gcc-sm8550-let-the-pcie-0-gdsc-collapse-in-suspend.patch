@@ -1,0 +1,38 @@
+From: Magnominus <76019319+MagnominusGit@users.noreply.github.com>
+Subject: [PATCH] clk: qcom: gcc-sm8550: let the PCIe 0 GDSC collapse in suspend
+
+With PWRSTS_RET_ON, gdsc_disable() leaves the PCIe 0 controller GDSC
+powered across system suspend. When pcie-qcom then takes the link down
+for suspend and drops its OPP, the MC0/SH0 (DDR, LLCC) sleep votes go to
+zero, the SoC enters its low power states, and the resume never returns
+to Linux: the Retroid Pocket Nova reset about 46 s after the RTC alarm.
+
+Make the controller GDSC collapsible. It keeps VOTABLE and
+RETAIN_FF_ENABLE, which is what the downstream kalama tree does
+(qcom,collapse-vote + qcom,retain-regs in kalama-gdsc.dtsi, and
+regulator_disable(gdsc_core) in pci-msm.c's suspend paths). Only the
+controller GDSC changes; the PHY GDSC is left alone.
+
+With this, and with the port driver bound so the Root Port reaches
+D3hot (no pcie_ports=compat), a 10 min deep suspend on the Nova spent
+595 s of 597 s in AOSS sleep, CX shutdown and DDR low power
+(qcom_stats), resumed on the same boot, retrained the link and brought
+ath12k back.
+
+This undoes upstream 967e011013ed for one of the four GDSCs.
+
+[ The idea is Armada's 0566 (armada-os/armada, on research by Noahcdls),
+  which Kettle Linux carries as 40-kettle/1463. Theirs changes all four
+  PCIe GDSCs; this changes only the PCIe 0 controller's. ]
+---
+--- a/drivers/clk/qcom/gcc-sm8550.c
++++ b/drivers/clk/qcom/gcc-sm8550.c
+@@ -3003,7 +3003,7 @@
+ 	.pd = {
+ 		.name = "pcie_0_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = VOTABLE | POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+ 

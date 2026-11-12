@@ -158,6 +158,42 @@ wait_panel() {  # $1 = enabled|disabled
   return 1
 }
 
+# Park the sound cards for a kernel suspend: an open playback stream keeps the ADSP awake, and an
+# awake ADSP holds the SoC out of its low power states. The shell holds one open the whole time it
+# runs, so waiting for idle never closes the device. Switching each card's profile to "off" closes
+# it at once and moves the streams to the fallback sink, where they stay alive; putting the profile
+# back moves them home. The sound server is the session user's and is not frozen.
+# HW 2026-11-12, Retroid Pocket Nova: off -> PCM closed, ADSP asleep 100 % of 6 s (0 % before);
+# restored -> the shell's stream back on the speaker sink at its old volume.
+AUDIO_STATE=/run/retroforge/audio-profiles
+pa() {  # pactl as the session user; non-zero when there is no sound server
+  for d in /run/user/*; do
+    [ -S "$d/pulse/native" ] || continue
+    u=$(stat -c %U "$d") || continue
+    XDG_RUNTIME_DIR="$d" LC_ALL=C timeout 3 runuser -u "$u" -- pactl "$@"
+    return
+  done
+  return 1
+}
+audio_park() {
+  mkdir -p "$(dirname "$AUDIO_STATE")"
+  : > "$AUDIO_STATE"
+  pa list cards 2>/dev/null \
+    | sed -n -e 's/^\tName: //p' -e 's/^\tActive Profile: //p' \
+    | while read -r card && read -r prof; do
+        [ "$prof" = off ] && continue
+        printf '%s\t%s\n' "$card" "$prof" >> "$AUDIO_STATE"
+        pa set-card-profile "$card" off || log "audio: could not park $card"
+      done
+}
+audio_unpark() {
+  [ -s "$AUDIO_STATE" ] || { rm -f "$AUDIO_STATE"; return 0; }
+  while IFS="$(printf '\t')" read -r card prof; do
+    pa set-card-profile "$card" "$prof" || log "audio: could not restore $card to $prof"
+  done < "$AUDIO_STATE"
+  rm -f "$AUDIO_STATE"
+}
+
 do_suspend() {
   [ -e "$STATE" ] && { log "already suspended"; return 0; }
   mkdir -p "$(dirname "$STATE")"
@@ -170,6 +206,10 @@ do_suspend() {
   else
     log "no KMS blank; falling back to the backlight"
     bl_power 4 || log "no writable bl_power either — SLEEPING WITH THE PANEL LIT"
+  fi
+  if [ "$RETROFORGE_SUSPEND_MODE" = mem ]; then
+    log "parking audio"
+    audio_park
   fi
   log "freezing: $RETROFORGE_SUSPEND_FREEZE_CGROUPS"
   freeze 1
@@ -253,6 +293,7 @@ do_resume() {
   power_leave
   log "resuming: thaw"
   freeze 0
+  audio_unpark
   log "unblank panel"
   # bl_power 0 FIRST and UNCONDITIONALLY, whichever way the blank happened. It is a no-op when the
   # backlight is already on, and if the blank came from the fallback then nothing else will undo it —

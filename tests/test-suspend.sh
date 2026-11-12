@@ -130,6 +130,45 @@ else
   bad "${RULE##*/} sorts before 99-systemd.rules, so its clear is undone"
 fi
 
+CASE="audio-park"
+# A kernel suspend parks every sound card on its "off" profile and puts the old profile back on
+# resume. The shipped audio_park/audio_unpark run against a stub pa() that plays pactl: it prints two
+# cards (one already off) and records what it is asked to set.
+for fn in audio_park audio_unpark; do
+  [ -n "$(extract "$fn")" ] || { echo "could not extract $fn() from the shipped script" >&2; exit 1; }
+done
+{
+  echo 'log() { :; }'
+  echo "AUDIO_STATE=$W/audio-profiles"
+  cat <<'STUB'
+pa() {
+  case "$1" in
+    list) printf 'Card #0\n\tName: alsa_card.platform-sound\n\tDriver: alsa\n\tProfiles:\n\t\toff: Off (sinks: 0)\n\t\tHiFi (Headphones, Speaker): x\n\tActive Profile: HiFi (Headphones, Speaker)\nCard #1\n\tName: alsa_card.usb-dongle\n\tActive Profile: off\n' ;;
+    set-card-profile) printf '%s|%s\n' "$2" "$3" >> "$PA_LOG" ;;
+  esac
+}
+STUB
+  extract audio_park; extract audio_unpark
+} > "$W/audio.sh"
+: > "$W/pa.log"
+sh -c ". $W/audio.sh; PA_LOG=$W/pa.log; audio_park"
+[ "$(cat "$W/pa.log")" = 'alsa_card.platform-sound|off' ] \
+  && ok "parks the active card on off and leaves a card that is already off alone" \
+  || bad "set-card-profile calls: '$(cat "$W/pa.log")'"
+[ "$(cat "$W/audio-profiles")" = "$(printf 'alsa_card.platform-sound\tHiFi (Headphones, Speaker)')" ] \
+  && ok "records the profile to restore, spaces and all" \
+  || bad "state file: '$(cat "$W/audio-profiles")'"
+: > "$W/pa.log"
+sh -c ". $W/audio.sh; PA_LOG=$W/pa.log; audio_unpark"
+[ "$(cat "$W/pa.log")" = 'alsa_card.platform-sound|HiFi (Headphones, Speaker)' ] && [ ! -e "$W/audio-profiles" ] \
+  && ok "restores the recorded profile and removes the state file" \
+  || bad "restore calls: '$(cat "$W/pa.log")', state file still there: $([ -e "$W/audio-profiles" ] && echo yes || echo no)"
+if grep -qE '^\s*audio_park\s*$' "$SUSPEND" && grep -qE '^\s*audio_unpark\s*$' "$SUSPEND"; then
+  ok "do_suspend parks and do_resume unparks"
+else
+  bad "audio_park/audio_unpark are not both called"
+fi
+
 CASE="kernel-sleep-mem-mode"
 # RETROFORGE_SUSPEND_MODE=mem boards suspend the kernel from kernel_sleep. Run the shipped function
 # against a fake /sys/power: libinput is a stub function (the real one would grab this machine's keys)
