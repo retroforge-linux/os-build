@@ -1,0 +1,241 @@
+# retroforge sign + publish an OTA bundle — the `release` half of every bundle release.
+#
+# workflow_call only. Two callers, one recipe:
+#
+#   release-bundle.yml   `ota/v*` tag -> stable or beta, in `release-signing` (a reviewer approves)
+#                        any dispatch -> a dev-signed smoke test, published nowhere
+#   nightly-bundle.yml   schedule     -> nightly, in `nightly-signing` (no reviewer; its own 90-day cert)
+#
+# It wraps the `retroforge-rootfs` artifact the caller's image.yml build uploaded into a RAUC bundle,
+# signs it, uploads the bundle and its metadata as artifacts, and — when `publish` is true — puts it
+# in the R2 bucket under `<channel>/`. Moved here verbatim from release-bundle.yml (2026-11-12) so the
+# nightly path cannot drift from the gated one; release-bundle.yml's header still carries the setup
+# and the reasoning for the build/release split.
+#
+# THE CALLER DECIDES, THIS FILE ENFORCES. `publish` is the caller's statement that this run ships;
+# `environment` is where the keys live. Both are needed for a real signature: a run with `publish`
+# false never reads a key even if the environment holds one, and a run with `publish` true and no
+# environment stops before doing any work (an empty environment has no key and no R2 credentials, so
+# it could only end red after a wasted toolchain build).
+#
+# THE SECRET NAMES ARE INPUTS because the two environments hold different certs under different
+# names: release-signing has RAUC_CERT_PEM/RAUC_KEY_PEM (the ~2-year release cert), nightly-signing
+# has RAUC_NIGHTLY_CERT_PEM/RAUC_NIGHTLY_KEY_PEM (a 90-day cert, docs/ota.md). Distinct names, not
+# the same names in two environments, so a `gh secret set` aimed at the wrong environment cannot
+# replace the release cert with a nightly one.
+name: sign and publish bundle
+
+on:
+  workflow_call:
+    inputs:
+      channel:
+        description: 'Bucket prefix devices on this channel read: stable | beta | nightly. Required when publishing.'
+        required: false
+        type: string
+        default: ''
+      environment:
+        description: 'Deployment environment holding the signing pair and the R2 credentials. Empty = none (dev-signed smoke test).'
+        required: false
+        type: string
+        default: ''
+      publish:
+        description: 'Sign with the environment''s key and publish to R2. False = dev cert, artifacts only.'
+        required: false
+        type: boolean
+        default: false
+      cert_secret:
+        description: 'Name of the environment secret holding the signing cert (PEM)'
+        required: false
+        type: string
+        default: RAUC_CERT_PEM
+      key_secret:
+        description: 'Name of the environment secret holding the signing key (PEM)'
+        required: false
+        type: string
+        default: RAUC_KEY_PEM
+
+permissions:
+  contents: read
+
+jobs:
+  # ONE JOB, ONE APPROVAL. Signing and publishing share a single deployment gate: approving it
+  # means "this tag ships". Both keys live in the same environment, so a second gate on the same
+  # environment would only ask the same reviewer the same question twice. The signed bundle is still
+  # uploaded as an artifact BEFORE the publish step, so a publish that fails on the R2 side leaves a
+  # signed bundle to hand to `make publish-bundle` from a workstation.
+  #
+  # WHY THIS SIGNS A FRESH BUNDLE RATHER THAN RE-SIGNING ONE. `rauc resign` exists and works on our
+  # `format=verity` bundles (it truncates the old signature and regenerates — _reference/rauc/src/
+  # bundle.c, resign_bundle). It was rejected anyway: resigning means the build job first mints a
+  # DEV-cert bundle over the exact payload that is about to ship, and a bundle whose only difference
+  # from the shippable one is which key signed it is precisely the artifact ota/rauc/
+  # manifest.raucm.in's `mode` field exists to keep distinguishable. Wrapping the rootfs here instead
+  # means a published payload is signed exactly once, by the real key, and no other signature over
+  # those bytes ever exists.
+  release:
+    # aarch64, because genbundle.sh runs rauc inside the retroforge-build container and that image is
+    # built for the target arch. Same expression as image.yml's build job so the two cannot drift
+    # onto different runner pools.
+    runs-on: ${{ vars.OVERLAY_RUNNER || 'ubuntu-24.04-arm' }}
+    # A non-publishing run names no environment even if the caller passed one: it would only park a
+    # smoke test behind a reviewer to reach keys it is not going to use.
+    environment: ${{ inputs.publish && inputs.environment || '' }}
+    timeout-minutes: 60
+    steps:
+      # Before anything else: a publishing run without an environment has no key and no credentials,
+      # and one without a channel would publish to whatever publish-bundle.sh defaults to, which is
+      # `stable` — the one direction a mistake here must not go.
+      - name: check the caller's inputs
+        if: inputs.publish
+        env:
+          ENVIRONMENT: ${{ inputs.environment }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          [ -n "$ENVIRONMENT" ] || { echo "::error::publish requested with no environment — there is no key to sign with"; exit 1; }
+          [ -n "$CHANNEL" ] || { echo "::error::publish requested with no channel — refusing to fall back to stable"; exit 1; }
+          case "$CHANNEL" in
+            *[!A-Za-z0-9._-]*) echo "::error::channel '$CHANNEL' is not a URL path segment"; exit 1 ;;
+          esac
+          echo "::notice::signing in '$ENVIRONMENT', publishing to the '$CHANNEL' channel"
+
+      - uses: actions/checkout@v7
+
+      # The R2 token should be scoped to this ONE bucket with Object Read & Write. It can DELETE as
+      # well as add (the prune), so it is a write credential to what every device trusts to say
+      # which bundle to install — but not a signing key: a bundle that does not chain to the
+      # device keyring is rejected on the device whoever uploaded it.
+      #
+      # FIRST, before anything is signed: a run that cannot publish cannot ship, and finding that out
+      # after the signing step would waste the approval on a bundle that goes nowhere. The job stops
+      # without them rather than silently no-opping: a publish that quietly does nothing means the
+      # tag looks shipped and the fleet never sees it. ota/lib-rclone.sh's r2_env would stop too, but
+      # only after the toolchain image is built and the bundle signed.
+      - name: check for publishing credentials
+        if: inputs.publish
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_BASE: ${{ vars.R2_PUBLIC_BASE }}
+          ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          missing=""
+          for v in R2_ACCOUNT_ID R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY R2_BUCKET R2_PUBLIC_BASE; do
+            [ -n "${!v:-}" ] || missing="$missing $v"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::not set in '$ENVIRONMENT':$missing — nothing was signed or published, and this build is NOT shipped."
+            echo "::error::R2_ACCOUNT_ID comes from the CLOUDFLARE_ACCOUNT_ID secret; R2_ACCESS_KEY_ID and R2_SECRET_ACCESS_KEY are secrets; R2_BUCKET and R2_PUBLIC_BASE are variables."
+            exit 1
+          fi
+
+      # Straight into out/images/, where genbundle.sh looks. No RETROFORGE_VERSION here and none
+      # wanted: the bundle's identity comes out of the rootfs.release sidecar that travelled with the
+      # image, never out of this job's environment. That is the invariant genbundle.sh was rewritten
+      # to enforce, and the split would be the perfect way to violate it — this job could trivially
+      # be handed a version that disagrees with the payload's own /etc/retroforge-release.
+      - name: fetch the rootfs
+        uses: actions/download-artifact@v8
+        with:
+          name: retroforge-rootfs
+          path: out/images
+
+      - name: build the toolchain image
+        run: make toolchain
+
+      - name: sign the bundle
+        env:
+          # PUBLISHING RUNS ONLY, in the expression as well as by the environment: belt and braces,
+          # from when the secrets were repo-wide (private repo, no environments, until 2026-11) and
+          # this line was all that kept a dispatch from signing with the real release key.
+          RAUC_CERT_PEM: ${{ inputs.publish && secrets[inputs.cert_secret] || '' }}
+          RAUC_KEY_PEM: ${{ inputs.publish && secrets[inputs.key_secret] || '' }}
+          PUBLISH: ${{ inputs.publish }}
+          CERT_SECRET: ${{ inputs.cert_secret }}
+        run: |
+          set -euo pipefail
+          # $RUNNER_TEMP, never the workspace — the repo tree gets uploaded as artifacts and cached,
+          # and a private key that lands in either is a leaked key. Same convention as docs/ci.md
+          # and as PKIDIR locally (~/retroforge-pki): outside anything the build can sweep up.
+          if [ -n "${RAUC_CERT_PEM:-}" ] && [ -n "${RAUC_KEY_PEM:-}" ]; then
+            pki="$RUNNER_TEMP/pki"
+            mkdir -p "$pki" && chmod 700 "$pki"
+            printf '%s' "$RAUC_CERT_PEM" > "$pki/release.cert.pem"
+            printf '%s' "$RAUC_KEY_PEM"  > "$pki/release.key.pem"
+            chmod 600 "$pki/release.key.pem"
+            make sign-bundle PKIDIR="$pki"
+          elif [ "$PUBLISH" = true ]; then
+            # A publishing run that fell through to the dev cert would only fail later, at
+            # publish-bundle.sh's keyring gate, after the bundle was built and uploaded.
+            echo "::error::$CERT_SECRET (or its key) is not set in this environment — nothing was signed or published"
+            exit 1
+          else
+            echo "::warning::no release signing key configured — this bundle is signed with an ephemeral dev cert and is NOT shippable"
+            make sign-bundle
+          fi
+
+      - name: package a bundle
+        run: |
+          set -euo pipefail
+          mkdir -p upload
+          cp out/images/*.raucb upload/
+          ls -lh upload/ >> "$GITHUB_STEP_SUMMARY"
+
+      # Over the SIGNED bundle: the sum a consumer checks has to be the sum of the bytes they receive,
+      # and those bytes do not exist until the step above runs. card-meta.sh's other half — the
+      # provenance copy of rootfs/manifest.lock — comes from this job's checkout, which is the same
+      # commit the build job used.
+      - name: stage release metadata
+        run: |
+          set -euo pipefail
+          f=$(find upload -maxdepth 1 -name '*.raucb' -print -quit)
+          [ -n "$f" ] && [ -f "$f" ] || { echo "::error::no bundle to hash"; exit 1; }
+          mkdir -p meta
+          image/card-meta.sh "$f" meta
+
+      - name: upload metadata artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: retroforge-bundle-meta
+          path: meta/
+          if-no-files-found: error
+
+      # Before publishing, not after: if the R2 side fails, the signed bundle is already here for
+      # `make publish-bundle` from a workstation, and nothing needs re-signing.
+      - name: upload the image artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: retroforge-bundle
+          path: upload/
+          if-no-files-found: error
+          retention-days: 7
+
+      # Only a publishing run can have produced a signed bundle, and only a signed bundle can be
+      # published. On a smoke test this step would exist solely to fail its own keyring gate.
+      - name: publish to R2
+        if: inputs.publish
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_BASE: ${{ vars.R2_PUBLIC_BASE }}
+          # The caller's channel. publish-bundle.sh reads this (its $2 default) and it is the ONLY
+          # thing that decides which prefix devices are offered this bundle from.
+          RETROFORGE_OTA_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          # An empty channel would silently mean `stable` inside publish-bundle.sh. Checked by the
+          # first step too; repeated here because this is the line that would act on it.
+          [ -n "${RETROFORGE_OTA_CHANNEL:-}" ] || {
+            echo "::error::no channel from the caller — refusing to fall back to stable"
+            exit 1
+          }
+          bundle="$(ls out/images/retroforge-*.raucb)"
+          # publish-bundle.sh's keyring gate runs rauc inside retroforge-build — the image `make
+          # toolchain` built above — so it checks against the PINNED rauc (build/Dockerfile,
+          # RAUC_VERSION), the same one that signed the bundle. Never `apt-get install rauc` here:
+          # Ubuntu's predates verity bundle support, so the gate would fail on every bundle we
+          # produce — indistinguishable, from the log, from a genuinely bad signature.
+          ota/publish-bundle.sh "$bundle"

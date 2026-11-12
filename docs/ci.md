@@ -129,7 +129,9 @@ behind **one** deployment gate, the `release-signing` environment: approving it 
 ships". The signed bundle is uploaded as a workflow artifact before the publish step, so a failed
 publish can be finished from a workstation with `make publish-bundle`. `notes` then cuts the
 notes-only GitHub Release. A manual dispatch signs with an ephemeral dev cert every device rejects
-and skips publishing — it proves the bundle assembles and the verity hashes compute.
+and skips publishing — it proves the bundle assembles and the verity hashes compute. The `release`
+job's steps live in the reusable `sign-publish-bundle.yml` (inputs `channel`, `environment`,
+`publish`, and the names of the cert/key secrets), so every channel signs and publishes the same way.
 
 - **The secrets are environment-scoped.** `RAUC_CERT_PEM` / `RAUC_KEY_PEM` and the `R2_*` secrets
   and variables live in `release-signing`, whose deployment policy accepts `ota/v*` tags only;
