@@ -1,50 +1,60 @@
-# gamescope — built FROM SOURCE via a retroforge-owned PKGBUILD (packages/gamescope/PKGBUILD),
-# NOT fetched from the holo monorepo. build-overlay.sh sees `pkgbuild_local` below and uses that
-# checked-in recipe instead of curl'ing one; makepkg still clones the upstream git source (the
-# gamescope tag + its submodules) named in it.
+# gamescope, built from source with a checked-in PKGBUILD (`pkgbuild_local` below), not fetched
+# from the holo monorepo. build-overlay.sh uses that recipe and applies `patches:` to it; makepkg
+# clones the upstream gamescope tag (pkgver in the PKGBUILD, 3.17.0 now) and the submodule commits
+# recorded at that tag. Each patch is described in patches/README.md.
 #
-# This switched from the holo `pkgbuild_repo` fetch (was pinned at holo's 3.16.17-1) to a local
-# PKGBUILD carrying a newer gamescope (the version is the PKGBUILD's pkgver, which is the single
-# source of truth a bump edits). Reason: 3.16.17's Wayland explicit-sync
-# (linux-drm-syncobj) WSI present path intermittently deadlocks on the first frame on this HW,
-# wedging ~2/3 of cold session starts. We already rebuild gamescope from source for the
-# composite-rotation patch, so we bump the version here (same medicine as packages/mesa) rather than
-# carry a runtime workaround. See docs/bringup-phase2.md step 1e + the gamescope-flip-blocker
-# memory, and packages/README.md for the overlay mechanism.
+# Why we own the recipe: holo pinned 3.16.17, whose explicit-sync present path deadlocked on the
+# first frame on ~2/3 of cold session starts here, and we build from source for our patches anyway.
+# Our first patch, composite rotation when the DPU cannot ROTATE_90 a LINEAR plane, is upstream
+# since 3.16.28 (our PR #2228): gamescope turns it on by itself when the plane lacks the rotation.
 #
-# Why source-built at all: originally because the msm DPU cannot ROTATE_90 a LINEAR plane, so
-# gamescope had to rotate the portrait-native Pocket S2 panel in its GPU composite step. That patch
-# (our PR #2228) is UPSTREAM as of 3.16.28 and was dropped from `patches:` below — upstream
-# auto-engages composite rotation when the primary plane lacks the needed rotation bit, which is the
-# same condition our patch tested, so behaviour is unchanged and no launch flag is needed. We still
-# build from source for the series in patches/ (0001-0030, see patches/README.md): 0001 reuses the freed number for --rotated-output-max-height,
-# which is what lets a panel WIDER than the DPU rotator's 1088-line cap keep scanout rotation (see
-# patches/README.md). 0002-0006 are ours, and 0007/0008 are third-party patches that
-# are not in any gamescope release. 0026-0030 are pre-rotation for a panel the plane cannot rotate
-# (SM6115): layers are turned by a VK_QCOM_rotated_copy blit and scanned out unrotated instead of
-# compositing every frame; 0030 is ours and keeps the DPU colour management of 0014/0018 on a
-# blitted frame. etc/retroforge/session.conf passes --composite-blit (and, on SM6115,
-# --force-composition-rotation); the flags exist only in this patched gamescope.
+# The series, by area (numbers are not compacted, so old commits still resolve; 0006 is a
+# diagnostic kept out of the list):
+#   0001          --rotated-output-max-height: a panel wider than the DPU inline rotator's
+#                 1088-line cap (Pocket S2) renders at 1080 lines and keeps scanout rotation.
+#   0002-0005     night-mode atom, fake output size, FPS-limit atom, Steam focus under
+#                 SteamControlled.
+#   0007          wayland-protocols wrap for the wlroots 0.20 floor.
+#   0014, 0016-0018  colour management on direct scanout through the DPU's CTM and output LUTs.
+#   0019-0021     fragment-shader composite (--composite-graphics), libliftoff plane zpos.
+#   0025          clock-anchored FPS limiter for fixed-refresh panels.
+#   0026-0035     composite blit (--composite-blit): when the plane cannot rotate (SM6115), layers
+#                 are turned by a VK_QCOM_rotated_copy blit and scanned out unrotated instead of
+#                 composited every frame; 0030 keeps the DPU colour management on a blitted frame,
+#                 0032 maps images on a GPU without cached+coherent memory.
+#   0033, 0036    touch on SoC touchscreens: rotated with the panel, no cursor on a touch.
+#   0040-0046     a second panel driven by the same gamescope (--secondary-output,
+#                 --secondary-touch-device), direct scanout first, panel off while unused.
+#   0047-0048     refresh rates from an EDID-less panel's native modes; a refresh-only request
+#                 takes that exact mode.
+#   0049-0050     Steam on another XWayland sees the focus; the boot splash holds until the shell
+#                 draws.
+#   0054-0056     FIFO queue bound, late input sampling, KMS device closed under the wlserver lock.
 #
-# 0014 IS COUPLED TO THE KERNEL and the two must move together. It drives the DPU's CRTC CTM so a
-# directly scanned-out frame is still colour managed (night mode was silently dead on that path
-# once inline rotation made it reachable — HW-confirmed on Pocket FIT 2026-09-13). Setting a CTM
-# only works because kernel patch 0515 carries v3 7/8 of the SMMU series; without it the first CTM
-# re-reserves DPU resources without reprogramming the encoder, CTL_FLUSH is written with zero and
-# the display freezes. If 0515 is ever reverted to a set without 7/8, 0014 must come out in the
-# same commit.
+# Flags that exist only in this gamescope: --rotated-output-max-height (0001),
+# --composite-graphics (0019), --composite-blit (0027), --secondary-output and
+# --secondary-touch-device (0040, 0043). An unknown argument makes gamescope exit, so dropping one
+# of those patches means changing etc/retroforge/session.conf or retroforge-session in the same
+# commit. tests/test-session.sh checks 0040, 0043 and 0049 against this list.
 #
-# Fields:
-#   name           pkgname (must match the PKGBUILD); also the work/ build-dir + repo entry
-#   pkgbuild_local path (relative to this dir) to the checked-in PKGBUILD to build
-#   pkgrel_suffix  numeric suffix appended to the PKGBUILD's pkgrel (N -> N.<suffix>) so pacman
-#                  prefers our build over holo's binary. Integer only (makepkg requires
-#                  pkgrel = integer[.integer]).
-#   patches        space-separated files under ./patches/, applied `patch -p1` in the gamescope
-#                  source root (after `cd gamescope` in prepare()), in the order listed.
+# 0014 depends on the kernel. Setting a CTM only works because kernel patch 0330 carries 8/10 of
+# Dmitry Baryshkov's "drm/msm: fix SMMU fault dumps" v4: without it a colour-management change
+# re-reserves DPU resources without reprogramming the encoder, CTL_FLUSH is written as zero and the
+# display freezes. If 0330 ever loses that part, 0014 comes out in the same commit.
 #
-# To bump gamescope: edit pkgver in packages/gamescope/PKGBUILD, re-verify the patch applies against
-# the new tag (patch -p1 --dry-run on a shallow clone), and re-roll it only if a hunk fails.
+# To bump gamescope: change pkgver in the PKGBUILD, apply the patches to the new tag cumulatively,
+# in this order, on a clone with submodules (several build on earlier ones, so a per-patch dry-run
+# against a clean tree reports false failures; 0020/0021 patch the libliftoff submodule), and
+# re-roll only the ones that fail. Also compare the tag's .gitmodules with the PKGBUILD's source=()
+# and its meson_options.txt with the -D flags in build().
+#
+# Fields (see packages/README.md):
+#   name           pkgname (must match the PKGBUILD); also the work/ build dir and repo entry
+#   pkgbuild_local path, relative to this dir, of the checked-in PKGBUILD
+#   pkgrel_suffix  appended to the PKGBUILD's pkgrel (N -> N.<suffix>) so pacman prefers our build
+#                  over holo's; an integer (makepkg wants pkgrel = integer[.integer])
+#   patches        files under patches/, applied in this order with `patch -p1` in the gamescope
+#                  source root (after `cd gamescope` in prepare())
 name: gamescope
 pkgbuild_local: PKGBUILD
 pkgrel_suffix: 1
