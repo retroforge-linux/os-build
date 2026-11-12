@@ -8,7 +8,7 @@ extends OSPlatform
 ## (core/platform/os/nixos.gd is the model).
 ##
 ## The section: one button walking Check for updates -> Install <version> (progress in its
-## description) -> Restart now, and a Stable / Beta dropdown; switching never asks (plan ota-ui D3)
+## description) -> Restart now, and a Stable / Beta / Nightly dropdown; switching never asks (plan ota-ui D3)
 ## and checks the new channel straight away. Nothing installs or restarts without a press (D2). An
 ## update already installed and waiting for a reboot shows Restart now from the start. A background
 ## check (3 min after start, then every 6 h, never while a game runs) posts one notification per
@@ -365,7 +365,7 @@ func _fill_channels() -> void:
 		_channel.add_item(UpdateStates.channel_name(_channels[i]))
 		if _channels[i] == current:
 			_channel.select(i)
-	_channel.description = UpdateStates.channel_description(listed["pinned"])
+	_channel.description = UpdateStates.channel_description(listed["pinned"], current)
 	_channel.set_meta("pinned", listed["pinned"] != "")
 
 
@@ -501,6 +501,7 @@ func _on_channel_selected(index: int) -> void:
 		_show()
 		return
 	logger.info("update channel: " + _channels[index])
+	_channel.description = UpdateStates.channel_description("", _channels[index])  # set-channel succeeded, so nothing pins it
 	if _step == UpdateStates.Step.AVAILABLE:
 		_step = UpdateStates.Step.IDLE  # that offer was the other channel's
 	check()

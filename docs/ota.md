@@ -22,8 +22,8 @@ until reflashed (or given `OTA_URL` in `/etc/retroforge/ota.conf`).
 |---|---|
 | Storage | Cloudflare R2, bucket `R2_BUCKET`, public read |
 | Public URL | `R2_PUBLIC_BASE` = `https://ota.retroforge.org`, the bucket's custom domain; also the devices' `DEFAULT_URL` |
-| Publisher | `ota/publish-bundle.sh` (rclone, pinned in `ota/rclone.pin`), run by `release-bundle.yml` on `ota/v*` |
-| Retention | 3 bundles per channel (`RETROFORGE_OTA_KEEP`); a bundle is ~530 MiB (measured 2026-10-13) |
+| Publisher | `ota/publish-bundle.sh` (rclone, pinned in `ota/rclone.pin`), run by `release-bundle.yml` on `ota/v*` (stable, beta) and by `nightly-bundle.yml` every night (nightly), both through `sign-publish-bundle.yml` |
+| Retention | 3 bundles per channel (`RETROFORGE_OTA_KEEP`); a bundle is ~530 MiB (measured 2026-10-13), so three channels hold ~4.7 GiB of R2's 10 GB free tier |
 
 ## Layout
 
@@ -36,6 +36,7 @@ until reflashed (or given `OTA_URL` in `/etc/retroforge/ota.conf`).
     latest.json                   -> <R2_PUBLIC_BASE>/stable/latest.json
     retroforge-0.2.0.raucb        -> <R2_PUBLIC_BASE>/stable/retroforge-0.2.0.raucb
   beta/
+  nightly/
 ```
 
 The host itself comes from `OTA_URL` in `/etc/retroforge/ota.conf` or `RETROFORGE_OTA_URL` in the
@@ -79,7 +80,7 @@ OGUI's own updater with:
   progress in its description) -> *Restart now* (`systemctl reboot`). An update already installed
   when the shell starts shows *Restart now* straight away. Nothing installs or restarts without a
   press.
-- **Update channel**, Stable or Beta. Switching either way needs no confirmation and checks the new
+- **Update channel**, Stable, Beta or Nightly. Switching either way needs no confirmation and checks the new
   channel at once; going back to Stable offers stable's release even when it is older than the beta
   running (the check compares for inequality). The dropdown is disabled when `/etc` or the
   environment pins the channel, as on a dev card.
@@ -87,19 +88,21 @@ OGUI's own updater with:
   It posts one notification per version found and never installs.
 
 Channel selection lives in the same program: `retroforge-update channels` lists what a picker offers
-(`stable`, `beta`, plus the channel in effect if it is neither, and a `pinned<TAB><source>` line
+(`stable`, `beta`, `nightly`, plus the channel in effect if it is neither, and a `pinned<TAB><source>` line
 when `/etc` or the environment outranks the user's choice), and `retroforge-update set-channel <name>`
 writes `~/.config/retroforge/ota.conf`. The old Steam-shaped `retroforge-select-branch` is gone.
 
-**Which channels exist:** `stable` and `beta`, each a prefix in the bucket that appears on its first
-publish. `release-bundle.yml` decides between them from the tag's semver pre-release suffix — `ota/v0.3.0`
+**Which channels exist:** `stable`, `beta` and `nightly`, each a prefix in the bucket that appears on
+its first publish. `nightly` is described in [Nightly](#nightly) below; the rest of this paragraph is
+about the two that come from tags. `release-bundle.yml` decides between them from the tag's semver pre-release suffix — `ota/v0.3.0`
 publishes to `stable`, `ota/v0.3.0-beta.1` to `beta`. Not a separate tag namespace, because the
 version string then records the channel and duplicate detection turns on that string: two channels
 publishing the same `0.3.0` would leave a device switching stable → beta believing it is already up
 to date. A beta bundle is signed with the same release key and gated exactly as hard; the channel
 decides who is offered it, not whether it is trustworthy. `card/` tags refuse a pre-release suffix
 outright: there is no beta card, and a card's installer installs from the channel picked in Updates
-whatever the card's own version says.
+whatever the card's own version says. An `ota/` tag with a `-nightly` suffix is refused: only
+`nightly-bundle.yml` publishes to `nightly`.
 
 A choice made in `~/.config` survives an OTA and a slot switch on its own: `/home` is one partition
 shared by both slots. The copy in `/etc` needs `post-install.sh` to carry it, because that one lives
@@ -147,7 +150,8 @@ it always did. It simply gains nothing from adaptive — there is no download to
 
 Step 2 is not optional and is not ceremony. Nothing on the device confirms a trial boot that never
 reaches a session, so a bundle that comes up to a black screen needs about six manual power-cycles to
-recover — on a device with no serial console. Every published bundle gets a hardware install first.
+recover — on a device with no serial console. Every published bundle gets a hardware install first
+— except a nightly, which is published untested by design ([Nightly](#nightly)).
 
 ### The device streams; it does not download
 
@@ -292,6 +296,60 @@ rclone copyto --header-upload "Cache-Control: no-cache" --header-upload "Content
 (The `r2:` remote is what `ota/lib-rclone.sh`'s `r2_env` defines from the `R2_*` variables; source it,
 or configure the same remote by hand.) This only helps devices that have not updated yet; one that
 already installed the bad bundle recovers through the boot failsafe, not through the bucket.
+
+## Nightly
+
+`.github/workflows/nightly-bundle.yml` builds `main` every night at 02:30 UTC and publishes it to
+`nightly/` **with no approval** (plan `.claude/plans/nightly-channel.plan.md`). It is the one channel
+exempt from "every published bundle gets a hardware install first": a device on Nightly takes builds
+nobody has booted, and Settings says so ("daily untested builds") while Nightly is selected.
+
+- **Version** `vX.Y.(Z+1)-nightly.YYYYMMDDHHMM` (UTC), one patch ahead of the last stable `ota/v*`
+  tag, e.g. `v0.0.8-nightly.202611120230`. Unique per run, which a published version must be, and
+  the version in Settings names the channel. The commit is `latest.json`'s `git`.
+- **When it builds.** Not when `main` has not moved since the published nightly, and not when `ci.yml`
+  has not passed on `main`'s HEAD — except that a published nightly over 30 days old is rebuilt
+  anyway, so the bundle on offer is always signed by a cert that is still valid (below). A manual
+  run with `force` builds regardless.
+- **No GitHub Release.** The commits since the previous nightly are in the run's summary.
+- **Where it signs.** The `nightly-signing` environment: deployments from `main` only, no reviewer,
+  holding `RAUC_NIGHTLY_CERT_PEM`/`RAUC_NIGHTLY_KEY_PEM`, `R2_ACCESS_KEY_ID`/`R2_SECRET_ACCESS_KEY`
+  (a token of its own, so it can be revoked without touching releases) and the `R2_BUCKET` /
+  `R2_PUBLIC_BASE` variables. `CLOUDFLARE_ACCOUNT_ID` is repo-wide. The release cert never enters it.
+
+### Nightly signing cert
+
+Nightly bundles are signed by their own cert, not the release one, valid for **90 days**. Devices
+trust the CA rather than a cert, so a nightly-signed bundle would install on a stable device just as
+a release one does — one keyring has no per-channel signer check. What the short life buys is a bound
+on a leak: rauc checks the signer's validity **at install time** (`system.conf` sets no
+`use-bundle-signing-time`), so a leaked nightly key is useless after its expiry, without touching a
+device. The same rule is why the cert has to be renewed on time: a published nightly stops installing
+the day its signer expires.
+
+**Renewing** is by hand, by someone with read access to the private `retroforge-linux/secrets` repo,
+which holds the root CA. That repo's access list is the control: no workflow renews, so the root CA
+key never reaches a CI runner.
+
+```sh
+make renew-nightly-cert                           # the CA from retroforge-linux/secrets, via your gh login
+PKIDIR=~/retroforge-pki make renew-nightly-cert   # or from a local copy of it
+```
+
+`ota/renew-nightly-cert.sh` fetches only `retroforge-pki/ca.cert.pem` and `ca.key.pem` into a private
+tempdir, refuses unless that CA is the committed `ota/rauc/retroforge-ca.pem`, mints a new RSA-4096
+key and a 90-day cert with the release profile (`ota/rauc/release.ext`), verifies it, uploads both to
+`nightly-signing` in `retroforge-linux/os-build` through stdin, and shreds the tempdir. Nothing is
+committed and nothing is kept: the next renewal mints a new pair. Your `gh` login needs admin on
+os-build to write environment secrets.
+
+**When:** `nightly-bundle.yml` files an issue ("Nightly signing cert expires on YYYY-MM-DD") 14 days
+before expiry. Once it has expired, the nightly run fails before building. After renewing, the next
+nightly picks the new cert up.
+
+**If the nightly key leaks:** delete the two `RAUC_NIGHTLY_*` secrets so nothing more is signed, and
+renew. Devices check no revocation list, so the leaked cert stays usable until its expiry, at most
+90 days away.
 
 ## The bucket
 

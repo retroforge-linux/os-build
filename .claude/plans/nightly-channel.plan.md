@@ -1,6 +1,6 @@
 # Plan: nightly OTA channel
 
-**Complexity**: Medium. **Branch**: `feat/nightly-channel`. **Status**: AGREED 2026-11-12 (D1-D6). Phase 1 pushed (66b58240), smoke run pending; Phase 2 task 4 done (renew-nightly-cert).
+**Complexity**: Medium. **Branch**: `feat/nightly-channel`. **Status**: AGREED 2026-11-12 (D1-D6). Phase 1 pushed (66b58240), smoke run pending. Phase 2 done offline (renew-nightly-cert 321a3770, nightly-bundle.yml 94e71c56; nightly-signing env created 2026-11-12, nightly cert uploaded, R2 secrets pending from the Cloudflare account owner). Phase 3 done offline (plugin 0.1.112); HW check pending. One version field YYYYMMDDHHMM, not .YYYYMMDD.HHMM (semver: no leading zero in a numeric field).
 
 ## Summary
 

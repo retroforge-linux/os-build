@@ -509,8 +509,11 @@ func test_update_states() -> void:
 		{"channels": ["stable", "beta", "dev"], "pinned": "/etc/retroforge/ota.conf"})
 	check("channel: the name before the tab", UpdateStates.parse_channel("beta\t/home/player/.config/retroforge/ota.conf\n"), "beta")
 	check("channel: nothing read is empty", UpdateStates.parse_channel(""), "")
-	check("channel names: Stable, Beta, others as they are",
-		[UpdateStates.channel_name("stable"), UpdateStates.channel_name("beta"), UpdateStates.channel_name("dev")], ["Stable", "Beta", "dev"])
+	check("channels: stable, beta and nightly, not pinned",
+		UpdateStates.parse_channels("stable\nbeta\nnightly\n"), {"channels": ["stable", "beta", "nightly"], "pinned": ""})
+	check("channel names: Stable, Beta, Nightly, others as they are",
+		[UpdateStates.channel_name("stable"), UpdateStates.channel_name("beta"), UpdateStates.channel_name("nightly"),
+		 UpdateStates.channel_name("dev")], ["Stable", "Beta", "Nightly", "dev"])
 	var S := UpdateStates.Step
 	check("button: one button walks Check -> Install -> Restart now",
 		[UpdateStates.button_for(S.IDLE, "0.0.3")["button"], UpdateStates.button_for(S.AVAILABLE, "0.0.3", "0.0.4")["button"],
@@ -534,6 +537,14 @@ func test_update_states() -> void:
 		UpdateStates.available_text("0.0.4"), "RetroForge 0.0.4 is available: Settings > General > Updates")
 	check("channel description: says what pins it",
 		UpdateStates.channel_description("/etc/retroforge/ota.conf"), "Set by /etc/retroforge/ota.conf on this device.")
+	check("channel description: nightly says its builds are untested",
+		"untested" in UpdateStates.channel_description("", "nightly"), true)
+	check("channel description: stable and beta keep the plain text",
+		[UpdateStates.channel_description("", "stable"), UpdateStates.channel_description("", "beta")],
+		["Beta gets new versions first. You can switch back to Stable at any time.",
+		 "Beta gets new versions first. You can switch back to Stable at any time."])
+	check("channel description: a pin wins over nightly",
+		UpdateStates.channel_description("/etc/retroforge/ota.conf", "nightly"), "Set by /etc/retroforge/ota.conf on this device.")
 
 ## OGUI's card is 2:3 and draws its texture whole, top-left: a SNES box (wider than tall) left two
 ## thirds of the card empty (ACE, 2026-10-17). A card image is the box scaled to cover the card,

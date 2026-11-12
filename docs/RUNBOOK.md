@@ -108,6 +108,11 @@ An update goes to the **stable** channel unless its version has a pre-release su
 > Updates. Number a beta ahead of the stable release it leads to (`0.3.0-beta.N` before `0.3.0`). Install
 every bundle on hardware before tagging it (`docs/ota.md`, "Cutting an update").
 
+**Nightly** needs no tag and no approval: `nightly-bundle.yml` publishes `main` every night, when it
+moved and `ci.yml` passed on it, signed by a 90-day nightly cert. It is the one channel published
+without a hardware install. Renew that cert with `make renew-nightly-cert` when its issue appears
+(`docs/ota.md`, "Nightly").
+
 The version and commit a card was built from are stamped into `/etc/retroforge-release` on the device
 (`RETROFORGE_VERSION`, `RETROFORGE_GIT`), so a running system can name where it came from.
 

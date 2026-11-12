@@ -8,7 +8,7 @@ extends RefCounted
 enum Step { IDLE, CHECKING, AVAILABLE, INSTALLING, STAGED }
 
 ## The channels' names as the player reads them; any other (a dev card's pin) shows as it is.
-const CHANNEL_NAMES := {"stable": "Stable", "beta": "Beta"}
+const CHANNEL_NAMES := {"stable": "Stable", "beta": "Beta", "nightly": "Nightly"}
 
 
 ## `retroforge-update channels`: the offered channels, then `pinned<TAB><source>` when /etc or the
@@ -50,9 +50,14 @@ static func button_for(step: Step, running: String, offered := "", percent := 0)
 
 
 ## What the channel dropdown says under its title.
-static func channel_description(pinned: String) -> String:
+## What the channel dropdown says under it: who pinned it, else what the channel in effect means.
+## Nightly is built from every day's changes and installed on no device first (plan nightly-channel
+## D5/D6), so it says so while it is the one selected.
+static func channel_description(pinned: String, current := "") -> String:
 	if pinned != "":
 		return "Set by %s on this device." % pinned
+	if current == "nightly":
+		return "Nightly: daily untested builds of the newest changes. You can switch back to Stable at any time."
 	return "Beta gets new versions first. You can switch back to Stable at any time."
 
 

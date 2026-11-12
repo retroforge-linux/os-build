@@ -613,8 +613,8 @@ CASE="channel-picker"
 # file only, and is refused when /etc or the environment outranks it (a dev card's pin).
 PICK="$W/pick/ota.conf"
 run RETROFORGE_OTA_USER_CONFIG="$PICK" channels
-[ "$RC" = 0 ] && [ "$OUT" = "$(printf 'stable\nbeta')" ] \
-  && ok "lists stable and beta" || bad "channels: exit $RC, '$OUT'"
+[ "$RC" = 0 ] && [ "$OUT" = "$(printf 'stable\nbeta\nnightly')" ] \
+  && ok "lists stable, beta and nightly" || bad "channels: exit $RC, '$OUT'"
 run RETROFORGE_OTA_USER_CONFIG="$PICK" set-channel beta
 [ "$RC" = 0 ] && grep -qx 'OTA_CHANNEL=beta' "$PICK" \
   && ok "set-channel writes the user file" || bad "set-channel: exit $RC, file: $(cat "$PICK" 2>&1)"
@@ -630,7 +630,7 @@ run RETROFORGE_OTA_USER_CONFIG="$PICK" RETROFORGE_OTA_CONFIG="$W/etc-dev.conf" s
 [ "$RC" = 1 ] && grep -qx 'OTA_CHANNEL=beta' "$PICK" \
   && ok "a pinned channel refuses the write" || bad "pinned: exit $RC, file: $(cat "$PICK")"
 run RETROFORGE_OTA_USER_CONFIG="$PICK" RETROFORGE_OTA_CONFIG="$W/etc-dev.conf" channels
-[ "$OUT" = "$(printf 'stable\nbeta\ndev\npinned\t%s' "$W/etc-dev.conf")" ] \
+[ "$OUT" = "$(printf 'stable\nbeta\nnightly\ndev\npinned\t%s' "$W/etc-dev.conf")" ] \
   && ok "channels lists the pinned off-picker channel and says it is pinned" \
   || bad "pinned channels printed '$OUT'"
 run set-channel

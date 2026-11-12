@@ -107,11 +107,13 @@ CURL = os.environ.get("RETROFORGE_CURL", "curl")
 DEFAULT_URL = "https://ota.retroforge.org"
 DEFAULT_CHANNEL = "stable"
 
-# The channels the shell's picker offers: the two the release pipeline publishes (release-bundle.yml routes ota/vX.Y.Z to stable and ota/vX.Y.Z-beta.N to beta). `dev`
-# and `test` are hand-seeded test channels with no CI behind them, so they stay off the picker and
-# reachable only by writing USER_CONFIG_FILE by hand. `channels` still lists the channel in effect
-# when it is one of those, so the picker never shows a selection that is not in its own list.
-OFFERED_CHANNELS = ("stable", "beta")
+# The channels the shell's picker offers: the three CI publishes. release-bundle.yml routes
+# ota/vX.Y.Z to stable and ota/vX.Y.Z-beta.N to beta; nightly-bundle.yml publishes main to nightly
+# every night with no approval and no hardware test (plan nightly-channel D6). `dev` and `test` are
+# hand-seeded test channels with no CI behind them, so they stay off the picker and reachable only
+# by writing USER_CONFIG_FILE by hand. `channels` still lists the channel in effect when it is one
+# of those, so the picker never shows a selection that is not in its own list.
+OFFERED_CHANNELS = ("stable", "beta", "nightly")
 
 # The exit-code contract. 7 is "no update available" and is ALSO how every recoverable failure
 # exits: a check that cannot reach the server or cannot parse the manifest must not answer "yes"
