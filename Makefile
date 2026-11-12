@@ -399,7 +399,7 @@ RETROFORGE_CCACHE ?= $(if $(CI),0,1)
 # ==============================================================================
 .PHONY: help all image toolchain kernel fw-linux fw-qcom base overlay verify-lock check-hw-paths \
         rootfs relock \
-        initramfs splash plugin gptk-interpose hidemenu mesa-x86 grub sdcard verify-card test test-disk bundle sign-bundle publish-bundle \
+        initramfs splash plugin gptk-interpose hidemenu mesa-x86 grub sdcard verify-card test test-disk bundle sign-bundle publish-bundle renew-nightly-cert \
         clean clean-base clean-overlay clean-ccache distclean
 
 # An always-out-of-date prerequisite, for rules that must re-evaluate their own inputs every run
@@ -522,6 +522,7 @@ test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-splash-status.sh
 	bash $(TESTS_DIR)/test-update.sh
 	bash $(TESTS_DIR)/test-publish-bundle.sh
+	bash $(TESTS_DIR)/test-renew-nightly-cert.sh
 	bash $(TESTS_DIR)/test-storage.sh
 	bash $(TESTS_DIR)/test-install.sh
 	bash $(TESTS_DIR)/test-ui.sh
@@ -878,6 +879,9 @@ sign-bundle: | $(BUILD_STAMP) ## Sign a RAUC bundle around an EXISTING out/image
 # No dependency on `bundle`: publishing a CI artifact or a bundle built on another machine is a
 # normal thing to do, and re-deriving it here from a possibly-newer tree would publish bytes nobody
 # tested. Pass the file you actually installed on a device.
+renew-nightly-cert: ## Mint a 90-day nightly signing cert into nightly-signing (host; root CA read from retroforge-linux/secrets with your gh login, or PKIDIR=)
+	$(OTA_DIR)/renew-nightly-cert.sh
+
 publish-bundle: ## Publish BUNDLE=<file.raucb> to the OTA bucket (host; needs the R2_* variables)
 	@test -n "$(BUNDLE)" || { echo "pass BUNDLE=out/images/retroforge-<version>.raucb" >&2; exit 2; }
 	$(OTA_DIR)/publish-bundle.sh "$(BUNDLE)" $(CHANNEL)

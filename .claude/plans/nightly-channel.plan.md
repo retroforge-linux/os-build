@@ -1,6 +1,6 @@
 # Plan: nightly OTA channel
 
-**Complexity**: Medium. **Branch**: `feat/nightly-channel`. **Status**: AGREED 2026-11-12 (D1-D6), not started.
+**Complexity**: Medium. **Branch**: `feat/nightly-channel`. **Status**: AGREED 2026-11-12 (D1-D6). Phase 1 pushed (66b58240), smoke run pending; Phase 2 task 4 done (renew-nightly-cert).
 
 ## Summary
 
@@ -15,8 +15,8 @@ Nightly next to Stable and Beta.
 
 | | Decision |
 |---|---|
-| D1 | **Separate nightly signing cert, 90 days**, minted on the workstation from the offline root CA (`~/retroforge-pki/ca.key.pem`) with the same `ota/rauc/release.ext` profile. It lives only in a new **`nightly-signing`** environment: no reviewers, deployment branch `main` only. That environment also holds copies of the R2 secrets and variables. Devices trust the CA, so a nightly-signed bundle installs on any device. That can't be avoided with one keyring, so the short lifetime limits a leaked key to 90 days: rauc checks the signer's validity at install time (`system.conf` has no `use-bundle-signing-time`). The release cert and `release-signing` stay as they are. |
-| D1a | **Renewal = `PKIDIR=~/retroforge-pki make renew-nightly-cert`** (`ota/renew-nightly-cert.sh`): (1) refuses unless `$PKIDIR/ca.cert.pem` has the committed `ota/rauc/retroforge-ca.pem`'s fingerprint, and only reads `ca.key.pem`; (2) mints a NEW RSA-4096 key + cert every time, CN `retroforge OTA nightly`, `NIGHTLY_DAYS` default 90, `-extfile ota/rauc/release.ext`, then `openssl verify`; (3) `gh secret set RAUC_NIGHTLY_CERT_PEM` / `RAUC_NIGHTLY_KEY_PEM --env nightly-signing` from stdin, so the key never appears in argv or history; (4) `shred -u` the local nightly key, leaving GitHub's copy as the only one; (5) prints the expiry. Nothing is committed. |
+| D1 | **Separate nightly signing cert, 90 days**, minted from the root CA (kept in the private `retroforge-linux/secrets` repo) with the same `ota/rauc/release.ext` profile. It lives only in a new **`nightly-signing`** environment: no reviewers, deployment branch `main` only. That environment also holds copies of the R2 secrets and variables. Devices trust the CA, so a nightly-signed bundle installs on any device. That can't be avoided with one keyring, so the short lifetime limits a leaked key to 90 days: rauc checks the signer's validity at install time (`system.conf` has no `use-bundle-signing-time`). The release cert and `release-signing` stay as they are. |
+| D1a | **Renewal = `make renew-nightly-cert`, run by hand** (`ota/renew-nightly-cert.sh`). Who can renew = who can read the private `retroforge-linux/secrets` repo: by default the script fetches only `retroforge-pki/ca.cert.pem` + `ca.key.pem` from it with the caller's own `gh` login into a `umask 077` tempdir (`PKIDIR=` uses a local copy instead). No workflow does this, so the root CA key never reaches a CI runner (agreed 2026-11-12). Then: (1) refuses unless that CA has the committed `ota/rauc/retroforge-ca.pem`'s fingerprint; (2) mints a NEW RSA-4096 key + cert every time, CN `retroforge OTA nightly`, random 128-bit serial (the CA is only read, nothing to commit back), `NIGHTLY_DAYS` default 90, `-extfile ota/rauc/release.ext`, verified against the keyring; (3) `gh secret set RAUC_NIGHTLY_KEY_PEM` then `RAUC_NIGHTLY_CERT_PEM --env nightly-signing` from stdin, never argv; (4) shreds the tempdir: the new key and the fetched CA key. Nothing is committed. |
 | D1b | **Expiry handling in CI**: 14 days before expiry the nightly run opens or updates ONE issue ("nightly signing cert expires on YYYY-MM-DD -- run `make renew-nightly-cert`"), following `upstream-watch.yml`'s pattern. An expired cert stops the run **before signing**, with the same message. |
 | D1c | **Leak response**: delete the `nightly-signing` cert/key secrets, renew, and the leaked cert dies at its expiry (≤ 90 days). Devices check no CRL. |
 | D2 | **Version `X.Y.(Z+1)-nightly.YYYYMMDD.HHMM`** (UTC), from the last stable `ota/vX.Y.Z` tag, e.g. `0.0.8-nightly.20261112.0230`. Unique per run, as `publish-bundle.sh`'s never-overwrite rule requires, and it tells the user which channel they are on. The sha travels in `latest.json`'s `git`. An `ota/` tag carrying `-nightly` is REFUSED by `release-bundle.yml`'s prep, because today it would route to beta. |
@@ -50,7 +50,7 @@ Nightly next to Stable and Beta.
 | `apps/ogui-retroforge-plugin/plugin/update_states.gd` | UPDATE | `"nightly": "Nightly"` + D5 description; plugin version bump |
 | `apps/ogui-retroforge-plugin/plugin/retroforge_os.gd` | UPDATE | show the D5 description when nightly is selected (if it is not driven from `update_states.gd`) |
 | `tests/test-update.sh`, `tests/test-plugin.sh` | UPDATE | nightly in `channels`, `set-channel nightly`, `parse_channels` |
-| `tests/test-renew-nightly-cert.sh` | CREATE | throwaway CA in a tempdir: wrong-CA refusal, profile on the cert (EKU codeSigning, CA:FALSE), 90 d, key removed, `gh` stubbed |
+| `tests/test-renew-nightly-cert.sh` | CREATE | throwaway CA, `gh` stubbed (secret set + api contents): wrong-CA refusal, profile (EKU codeSigning, CA:FALSE), 90 d, keys shredded, fetch from the secrets repo, no access |
 | `docs/ota.md` | UPDATE | channel list, layout, "Nightly" section (D1-D6), "Nightly signing cert" renewal procedure |
 | `docs/RUNBOOK.md` | UPDATE | release section: nightly is automatic and HW-test-exempt |
 | `docs/ci.md` | UPDATE | if it lists workflows / environments |
@@ -64,7 +64,7 @@ Nightly next to Stable and Beta.
 
 ### Phase 2: nightly signing + workflow
 4. `ota/renew-nightly-cert.sh` + `make renew-nightly-cert` + `tests/test-renew-nightly-cert.sh` (D1a).
-5. **User, in GitHub settings**: create the `nightly-signing` environment (no reviewers, deployment branch `main`); copy `CLOUDFLARE_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and the `R2_BUCKET` / `R2_PUBLIC_BASE` variables into it; run `make renew-nightly-cert` once.
+5. **User, in GitHub settings**: create the `nightly-signing` environment (no reviewers, deployment branch `main`); copy `CLOUDFLARE_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` and the `R2_BUCKET` / `R2_PUBLIC_BASE` variables into it; run `make renew-nightly-cert` once (needs read access to `retroforge-linux/secrets`).
 6. `nightly-bundle.yml`: `concurrency: nightly-bundle` (cancel in progress); prep computes D2's version and D3's skip (curl `nightly/latest.json`, `gh api` check-runs for `ci.yml` on HEAD, 30-day age); build via `image.yml` (`artifact: rootfs`, `environment: ''`); release via `sign-publish-bundle.yml` (`channel: nightly`, `environment: nightly-signing`, nightly cert secrets); cert-expiry step (D1b) before signing; commit list to the step summary (D4).
 7. **Validate**: a dispatch publishes `nightly/latest.json`; `curl https://ota.retroforge.org/nightly/latest.json`; on a device `RETROFORGE_OTA_CHANNEL=nightly retroforge-update check` offers it; a second dispatch with no new commit is skipped; a forced one publishes a new version.
 
