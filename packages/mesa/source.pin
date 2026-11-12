@@ -1,28 +1,43 @@
-# mesa — built FROM SOURCE off the upstream RELEASE TARBALL via a retroforge-owned PKGBUILD,
-# NOT fetched from the holo monorepo and NOT a git clone. holo ships an old (25.2.7), all-driver
-# mesa; retroforge only targets Qualcomm Adreno, so packages/mesa/PKGBUILD builds just the freedreno
-# gallium (GL) driver + the freedreno Vulkan driver (Turnip) from the latest mesa release, LLVM/
-# rust and every other driver off. build-overlay.sh sees `pkgbuild_local` below and uses that
-# checked-in PKGBUILD instead of curl'ing one; makepkg still downloads the tarball named in it.
+# mesa, built from the upstream release tarball with a checked-in PKGBUILD (`pkgbuild_local`
+# below), not fetched from the holo monorepo, which ships an older all-driver mesa. The PKGBUILD
+# builds only freedreno: the gallium GL driver and Turnip (Vulkan), with LLVM, rust and every
+# other driver off. pkgver and the tarball's sha256 live in the PKGBUILD; build-overlay.sh
+# pre-seeds the tarball with ./fetch-source.sh (upstream first, then the mirror in ./mirror.pin,
+# both checked against that sha256).
 #
-# This is the "local PKGBUILD" counterpart of gamescope/source.pin (which fetches a holo PKGBUILD).
+# packages/mesa-x86 (the FEX guest driver) builds the same tarball with the same `patches:`, in
+# the same order.
 #
-# Fields:
-#   name           pkgbase (must match the PKGBUILD); also the work/ build-dir name
-#   pkgbuild_local path (relative to this dir) to the checked-in PKGBUILD to build
-#   pkgrel_suffix  numeric suffix appended to the PKGBUILD's pkgrel (N -> N.<suffix>) so pacman
-#                  prefers our build on later upgrades. Integer only (makepkg requires
-#                  pkgrel = integer[.integer]).
-#   patches        space-separated files under ./patches/, applied `patch -p1` in the mesa source
-#                  root (after the first `cd` in prepare()), in the order listed. See
-#                  ./patches/README.md for what each one is and when it can be dropped.
+# The patches, by area (patches/README.md describes each one and when it can go):
+#   0001          Adreno 830 chip ids (SM8750).
+#   0002-0013     pre-rotated presents: Turnip's VK_QCOM_rotated_copy_commands, rotated
+#                 preTransform and optional pre-rotated presents in the Wayland WSI and EGL,
+#                 rotated blits in gallium/freedreno.
+#   0014          the A610's own register table, from the stock Android driver.
+#   0015-0019     Turnip autotune: GMEM vs sysmem from per-GPU costs (0015/0016 are 26.3
+#                 backports, to drop at that bump).
 #
-# Upstream source (informational; the URL + sha also live in the PKGBUILD):
+# Upstream source (informational; build-overlay.sh and fetch-source.sh use the PKGBUILD's):
 #   url:    https://archive.mesa3d.org/mesa-26.2.6.tar.xz
 #   sha256: b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92
 #
-# To bump mesa: edit pkgver (and the tarball sha256) in packages/mesa/PKGBUILD, update the
-# url/sha256 lines above, and re-roll any patches under ./patches/ against the new tag.
+# To bump mesa:
+#   1. Download the tarball and its .sig, verify the signature and check the signer against the
+#      fingerprint in the PKGBUILD's provenance note (mesa publishes no .sha256sum).
+#   2. Set pkgver and sha256sums in the PKGBUILD, and the url/sha256 lines above.
+#   3. Set sha512 in ./mirror.pin from Fedora's lookaside (empty if Fedora has not packaged it).
+#   4. Apply the patches to the new tree cumulatively, in this order, and re-roll the ones that
+#      fail; drop the ones the release carries.
+#   5. `make relock`: the mesa rows in rootfs/manifest.lock carry a hash of this file, its patches
+#      and the PKGBUILD (packages/inputhash.sh), and so do the other packages mesa emits.
+#
+# Fields (see packages/README.md):
+#   name           pkgbase (must match the PKGBUILD); also the work/ build dir name
+#   pkgbuild_local path, relative to this dir, of the checked-in PKGBUILD
+#   pkgrel_suffix  appended to the PKGBUILD's pkgrel (N -> N.<suffix>) so pacman prefers our build
+#                  over holo's; an integer (makepkg wants pkgrel = integer[.integer])
+#   patches        files under patches/, applied in this order with `patch -p1` in the mesa source
+#                  root (after the first `cd` in prepare())
 name: mesa
 pkgbuild_local: PKGBUILD
 pkgrel_suffix: 1
