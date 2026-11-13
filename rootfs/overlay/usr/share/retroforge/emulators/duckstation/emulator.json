@@ -3,7 +3,8 @@
     "DuckStation (PlayStation): the upstream AppImage, mounted; its real binary is run, never AppRun.",
     "-batch quits when the game closes, so OpenGamepadUI gets the panel back instead of DuckStation's own UI; -- ends options in case a ROM name starts with '-'.",
     "gui_args (Main menu > Emulators > Open): Big Picture is the pad-driven UI (the desktop one needs a mouse); no -batch, which would quit at once with no game.",
-    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 quick load, R1 quick save (the selected slot, game slot 1), R2 fast-forward, Start quit — as keyboard F1-F4, bound in the seeded settings.ini [Hotkeys] (LoadSelectedSaveState, SaveSelectedSaveState, FastForward, PowerOff). PowerOff is the pause menu's shut down: resume state and memory cards written, and -batch quits the app. Select + Start (pause menu) stays."
+    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 quick load, R1 quick save (the selected slot, game slot 1), R2 fast-forward, Start quit — as keyboard F1-F4, bound in the seeded settings.ini [Hotkeys] (LoadSelectedSaveState, SaveSelectedSaveState, FastForward, PowerOff). PowerOff is the pause menu's shut down: resume state and memory cards written, and -batch quits the app. Select + Start (pause menu) stays.",
+    "achievements: the player's one RetroAchievements sign-in (Settings > Library > RetroAchievements) and Hardcore toggle, written into settings.ini [Cheevos] at every launch (plan standalone-cheevos). DuckStation keeps Token encrypted with /etc/machine-id and the user name: {duckstation_token}."
   ],
   "format": "appimage",
   "binary": "usr/bin/duckstation-qt",
@@ -23,6 +24,35 @@
     {
       "file": "settings.ini",
       "to": ".local/share/duckstation/settings.ini"
+    }
+  ],
+  "achievements": [
+    {
+      "file": ".local/share/duckstation/settings.ini",
+      "format": "ini",
+      "separator": " = ",
+      "set": [
+        {
+          "section": "Cheevos",
+          "key": "Enabled",
+          "value": "{enabled}"
+        },
+        {
+          "section": "Cheevos",
+          "key": "ChallengeMode",
+          "value": "{hardcore}"
+        },
+        {
+          "section": "Cheevos",
+          "key": "Username",
+          "value": "{user}"
+        },
+        {
+          "section": "Cheevos",
+          "key": "Token",
+          "value": "{duckstation_token}"
+        }
+      ]
     }
   ]
 }

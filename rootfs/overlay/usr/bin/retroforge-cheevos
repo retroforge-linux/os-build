@@ -18,7 +18,10 @@
 # ~/.config/retroarch/retroarch.cfg (cheevos_password stays empty), the file made 0600 before the
 # token goes in, under umask 077 (the temporary file write_atomic renames into place too). curl runs
 # with -q (no ~/.curlrc), https only, certificates checked. RetroArch signs in with that token at every game, as after a sign-in in its own
-# menu.
+# menu. The standalone emulators with RetroAchievements (DuckStation, ARMSX2, PPSSPP, Dolphin,
+# Flycast) get the same name, token and hardcore setting from retroforge-launch at each of their
+# launches, read from this file (the achievements module in /usr/lib/retroforge/python): this tool
+# never writes their files, so nothing here waits on them running.
 #
 # RETROARCH RUNNING: RetroArch writes retroarch.cfg back from memory when it exits
 # (config_save_on_exit), so a change made while it runs would be undone: login, logout and hardcore

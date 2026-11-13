@@ -39,6 +39,10 @@
 #    "stub": {"psn": "%RPCS3_GAMEID%:{text}"},     a ROM with this extension is a stub: a text file
 #                                                  whose first line replaces "{text}", and the
 #                                                  result replaces "{rom}" (below)
+#    "achievements": [{"file": ..., "format": ..., "set": [...]}],   where the emulator keeps its
+#                                                  RetroAchievements sign-in: the player's one
+#                                                  sign-in is written there at every launch
+#                                                  (the achievements module's header)
 #    "notes": ["..."]}                             why, for people; ignored here
 #
 # Anything else in it, or a format this script does not know, is refused (exit 2): a definition that
@@ -83,6 +87,7 @@ import os
 import re
 import shutil
 
+import achievements
 import emuopts
 from launch_common import EMU_DATA_DIR, ENV, HOME, Exit, device_field, log
 from launch_formats import FORMATS
@@ -93,7 +98,7 @@ SYSTEM_ID = re.compile(r"[a-z0-9_]+")
 DEFINITION_KEYS = {"format", "root", "binary", "args", "gui_args", "system_args", "system_requires",
                    "system_settings", "env",
                    "seed", "sync", "install", "stub", "core_dumps", "exit_resend",
-                   "gamepad_profile", "notes"}
+                   "gamepad_profile", "achievements", "notes"}
 EXIT_RESEND_MAX = 30  # s: an exit_resend longer than this is a typo, not a plan
 ROM = "{rom}"
 FILE = "{file}"
@@ -244,6 +249,12 @@ def load_definition(emulator):
     gamepad_profile = d.get("gamepad_profile")
     if gamepad_profile is not None and not safe_relative(gamepad_profile):
         raise bad("gamepad_profile must be a relative path next to this file, without '..'")
+    cheevos = d.get("achievements", [])
+    if not (isinstance(cheevos, list) and all(achievements.entry_ok(e, safe_relative) for e in cheevos)):
+        raise bad('achievements entries must be {"file": <path under $HOME>, "format": <one of '
+                  f'{", ".join(achievements.FORMATS)}>, ...}} as the achievements module\'s header '
+                  'says: "set" lists for files of settings, "value" for a secret, one-line values '
+                  f'whose only {{...}} are {", ".join(achievements.PLACEHOLDERS)}')
     exit_resend = d.get("exit_resend")
     if exit_resend is not None and not (isinstance(exit_resend, (int, float)) and not isinstance(exit_resend, bool)
                                         and 0 < exit_resend <= EXIT_RESEND_MAX):
@@ -251,7 +262,7 @@ def load_definition(emulator):
     return {"format": d["format"], "root": d.get("root"), "binary": d["binary"], "args": args, "gui_args": gui_args,
             "system_args": system_args, "system_requires": system_requires, "system_settings": system_settings, "env": env, "seed": seed,
             "sync": sync, "install": install, "stub": stub, "core_dumps": core_dumps,
-            "exit_resend": exit_resend, "gamepad_profile": gamepad_profile}
+            "exit_resend": exit_resend, "gamepad_profile": gamepad_profile, "achievements": cheevos}
 
 
 REQUIRE_STATUSES = {"missing-file", "not-installed"}  # what the plugin turns into a message

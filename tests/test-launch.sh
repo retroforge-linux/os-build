@@ -139,6 +139,8 @@ export RETROFORGE_LAUNCH_CONF="$LAUNCH_CONF" RETROFORGE_EMU_DATA_DIR="$SEED_DIR"
 export RETROFORGE_EMU_DIR="$T/emus" RETROFORGE_MOUNTS="$T/mounts"
 # The launcher seeds first-run settings into $HOME: never let a test run reach the real one.
 export HOME="$T/home"
+# DuckStation's token is encrypted with the machine-id: never the host's.
+printf '0123456789abcdef0123456789abcdef\n' > "$T/machine-id"; export RETROFORGE_MACHINE_ID="$T/machine-id"
 unset XDG_CONFIG_HOME  # the player conf must be found under $HOME/.config
 export RETROFORGE_LAUNCH_STATUS="$T/launch.status.default"
 mkdir -p "$HOME"
@@ -147,6 +149,9 @@ reset_logs() { rm -f "$T"/{emu,appimage,fusermount}.log "$T/stop-emu" "$T/one-te
 field() { sed -n "s/^$1=//p" "$T/emu.log" | head -1; }
 wait_for() { for _ in $(seq 100); do eval "$1" && return 0; sleep 0.05; done; return 1; }
 emu_up() { grep -qx up "$T/emu.log" 2>/dev/null; }
+# seeded_from <seed> <file>: the file starts with the whole seed (the launcher may add the
+# RetroAchievements sign-in section after it: plan standalone-cheevos).
+seeded_from() { [ -f "$2" ] && cmp -s -n "$(stat -c %s "$1")" "$1" "$2"; }
 # Start a launcher in the background and track it for cleanup; its PID lands in $lpid.
 start_launcher() { "$LAUNCH" psx "$ROM" 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"; }
 # Wait for a launcher with a deadline: a hung launcher must FAIL the suite, not hang `make test`.
@@ -578,7 +583,7 @@ rm -rf "$HOME"; mkdir -p "$HOME"
 reset_logs
 start_launcher
 wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
-cmp -s "$DS_SEED" "$seeded" && ok "first launch copies the image's settings.ini into ~/.local/share/duckstation" \
+seeded_from "$DS_SEED" "$seeded" && ok "first launch copies the image's settings.ini into ~/.local/share/duckstation" \
   || bad "first launch did not seed $seeded"
 touch "$T/stop-emu"; reap_launcher "$lpid"
 echo "player changed this" > "$seeded"
@@ -586,8 +591,31 @@ reset_logs
 start_launcher
 wait_for emu_up || bad "the emulator never started"
 touch "$T/stop-emu"; reap_launcher "$lpid"
-[ "$(cat "$seeded")" = "player changed this" ] && ok "an existing settings file is never overwritten" \
-  || bad "a later launch overwrote the player's settings"
+[ "$(head -1 "$seeded")" = "player changed this" ] && ! grep -qv '^player changed this$\|^\[Cheevos\]$\|^[A-Za-z]* = ' "$seeded" \
+  && ok "an existing settings file is never overwritten (only the sign-in section added)" \
+  || bad "a later launch overwrote the player's settings: $(cat "$seeded")"
+# The RetroAchievements sign-in (plan standalone-cheevos) goes in after the seed, never before it:
+# the seed is whole and the sign-in is the [Cheevos] section after it. Signed out here (no retroarch.cfg).
+rm -rf "$HOME"; mkdir -p "$HOME"
+reset_logs
+start_launcher
+wait_for emu_up || bad "the emulator never started"
+touch "$T/stop-emu"; reap_launcher "$lpid"
+[ "$(sed -n '/^\[Cheevos\]$/,$p' "$seeded")" = "$(printf '[Cheevos]\nEnabled = false\nChallengeMode = false\nUsername = \nToken = ')" ] \
+  && ok "signed out: [Cheevos] off, no name, no token, after the whole seed" || bad "[Cheevos] after a signed-out launch: $(sed -n '/^\[Cheevos\]$/,$p' "$seeded")"
+mkdir -p "$HOME/.config/retroarch"
+printf 'cheevos_username = "Player1"\ncheevos_token = "AbCdEf0123456789"\ncheevos_hardcore_mode_enable = "true"\n' > "$HOME/.config/retroarch/retroarch.cfg"
+reset_logs
+start_launcher
+wait_for emu_up || bad "the emulator never started"
+touch "$T/stop-emu"; reap_launcher "$lpid"
+dsini() { sed -n "/^\[Cheevos\]$/,\$s/^$1 = //p" "$seeded"; }
+[ "$(dsini Enabled)" = true ] && [ "$(dsini ChallengeMode)" = true ] && [ "$(dsini Username)" = Player1 ] \
+  && ok "signed in: DuckStation gets the name, achievements on, Hardcore as set" || bad "[Cheevos]: $(sed -n '/^\[Cheevos\]$/,$p' "$seeded")"
+[ -n "$(dsini Token)" ] && [ "$(dsini Token)" != AbCdEf0123456789 ] && ! grep -q AbCdEf0123456789 "$seeded" \
+  && ok "signed in: DuckStation's token is its encrypted form, never the plain one" || bad "Token = '$(dsini Token)'"
+[ "$(stat -c %a "$seeded")" = 600 ] && ok "settings.ini holding the token is 0600" || bad "settings.ini mode $(stat -c %a "$seeded")"
+seeded_from "$DS_SEED" "$seeded" && ok "the seed is still whole above the sign-in" || bad "the sign-in broke the seed"
 # A definition is data, checked before anything runs: anything off is exit 2, never a guess.
 BAD="$T/data-bad"; mkdir -p "$BAD/duckstation"; cp "$DS_SEED" "$BAD/duckstation/"
 bad_def() {  # bad_def <what> <python edit of d>: write it, expect exit 2 and nothing seeded
@@ -962,7 +990,7 @@ for board in dual single; do
   wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
   touch "$T/stop-emu"; reap_launcher "$lpid"
   want="$DS_SEED"; [ "$board" = dual ] && want="$DUAL/duckstation/settings-dual.ini"
-  cmp -s "$want" "$seeded" && ok "a $board-screen board is seeded with $(basename "$want")" \
+  seeded_from "$want" "$seeded" && ok "a $board-screen board is seeded with $(basename "$want")" \
     || bad "a $board-screen board did not get $(basename "$want")"
 done
 
@@ -1348,7 +1376,7 @@ rm -rf "$HOME"; mkdir -p "$HOME"
 reset_logs
 "$LAUNCH" --gui duckstation 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
 wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
-cmp -s "$DS_SEED" "$HOME/.local/share/duckstation/settings.ini" \
+seeded_from "$DS_SEED" "$HOME/.local/share/duckstation/settings.ini" \
   && ok "--gui seeds first-run settings too (the GUI may be the first start)" || bad "--gui did not seed settings.ini"
 self="$(field self)"
 case "$self" in

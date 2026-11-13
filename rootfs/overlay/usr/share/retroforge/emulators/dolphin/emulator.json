@@ -3,7 +3,8 @@
     "Dolphin (GameCube and Wii): pkgforge-dev's 'anylinux' repackaging of the Dolphin release, a sharun bundle; the appimage-sharun format handles its /tmp path links and runs it on the image's Turnip.",
     "-b quits when the game stops, so OpenGamepadUI gets the panel back; -e takes the game file.",
     "gui_args: Dolphin's own window (touch screen; Dolphin has no pad-driven UI).",
-    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state slot 1, R1 save it, R2 no speed limit (held), Start stop — as keyboard F1-F4, bound in the seeded Hotkeys.ini on Dolphin's XInput2 keyboard. Stop with -b quits Dolphin, the same clean path as Select + Start; save states stay in Dolphin's own folder."
+    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state slot 1, R1 save it, R2 no speed limit (held), Start stop — as keyboard F1-F4, bound in the seeded Hotkeys.ini on Dolphin's XInput2 keyboard. Stop with -b quits Dolphin, the same clean path as Select + Start; save states stay in Dolphin's own folder.",
+    "achievements: the player's one RetroAchievements sign-in and Hardcore toggle, written into RetroAchievements.ini [Achievements] at every launch (plan standalone-cheevos). HardcoreEnabled defaults to True in Dolphin: always written."
   ],
   "format": "appimage-sharun",
   "binary": "bin/dolphin-emu",
@@ -31,6 +32,39 @@
     {
       "file": "Hotkeys.ini",
       "to": ".config/dolphin-emu/Hotkeys.ini"
+    }
+  ],
+  "achievements": [
+    {
+      "file": ".config/dolphin-emu/RetroAchievements.ini",
+      "format": "ini",
+      "separator": " = ",
+      "bool": [
+        "True",
+        "False"
+      ],
+      "set": [
+        {
+          "section": "Achievements",
+          "key": "Enabled",
+          "value": "{enabled}"
+        },
+        {
+          "section": "Achievements",
+          "key": "HardcoreEnabled",
+          "value": "{hardcore}"
+        },
+        {
+          "section": "Achievements",
+          "key": "Username",
+          "value": "{user}"
+        },
+        {
+          "section": "Achievements",
+          "key": "ApiToken",
+          "value": "{token}"
+        }
+      ]
     }
   ]
 }

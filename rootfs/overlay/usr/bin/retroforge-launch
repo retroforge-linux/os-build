@@ -12,7 +12,8 @@
 # Emulators are not in the image: the plugin downloads each one into /home/player/emulators/. Which
 # emulator runs a system, and the emulator.json that says how, with the seeds, sync and per-system
 # settings it puts into $HOME: launch_def. How each download format runs: launch_formats. The PSN
-# inbox: psn_inbox. Per-emulator options: emuopts. All four live in /usr/lib/retroforge/python.
+# inbox: psn_inbox. Per-emulator options: emuopts. The RetroAchievements sign-in a standalone
+# emulator gets at every launch: achievements. All five live in /usr/lib/retroforge/python.
 #
 # CPU pinning (CPUS=big): the emulator is started on the device's fast cores, so its threads stay
 # off the little cluster and do not migrate across clusters; background work (audio, input, Wi-Fi)
@@ -129,6 +130,7 @@ import time
 # bytecode: /usr is read-only on the device, and in the repo it would land inside rootfs/overlay).
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
+import achievements  # noqa: E402
 import emuopts  # noqa: E402
 from launch_common import (CONFIG_HOME, EMU_DATA_DIR, EMU_DIR, ENV, HOME, VRAM_REPORT_LIMIT_VARS,  # noqa: E402
                            Exit, device_field, emulator_child, log)
@@ -402,6 +404,10 @@ def load_options(emulator, definition):
     return options
 
 
+def log_warning(msg):
+    log(f"warning: {msg}")
+
+
 def options_warning(emulator):
     return lambda msg: log(f"warning: {emulator}: {msg}")
 
@@ -460,6 +466,7 @@ def run(argv):
             if rom is not None else definition["gui_args"])
     seed_first_run(emulator, definition["seed"])
     sync_files(emulator, definition["sync"])
+    achievements.apply(emulator, definition["achievements"], HOME, log_warning)
     if rom is not None:
         apply_system_settings(emulator, definition["system_settings"], system)
     todo = missing_installs(emulator, definition["install"], rom is not None)

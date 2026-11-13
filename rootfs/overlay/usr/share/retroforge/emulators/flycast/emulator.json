@@ -4,7 +4,8 @@
     "-config window:fullscreen=yes (also in the seed); the ROM must be the LAST argument (Flycast ignores everything after it). Started with a game, the menu's Exit quits Flycast instead of returning to its game list.",
     "Select + Start opens Flycast's menu (pad mapping file); SIGTERM quits cleanly (resume state saved), no dialog.",
     "gui_args: Flycast's own pad-driven UI and game list (~/roms/dc).",
-    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state (the current slot, 0: the one AutoSaveState also writes on exit), R2 fast-forward on/off, Start quit (btn_escape: dc_exit, as SIGTERM) — as keyboard F1-F4, bound in the seeded keyboard mapping (kbd.cfg, SDL_Keyboard.cfg: Flycast's keyboard defaults no longer load)."
+    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state (the current slot, 0: the one AutoSaveState also writes on exit), R2 fast-forward on/off, Start quit (btn_escape: dc_exit, as SIGTERM) — as keyboard F1-F4, bound in the seeded keyboard mapping (kbd.cfg, SDL_Keyboard.cfg: Flycast's keyboard defaults no longer load).",
+    "achievements: the player's one RetroAchievements sign-in and Hardcore toggle, written into emu.cfg [achievements] at every launch (plan standalone-cheevos)."
   ],
   "format": "appimage-sharun",
   "binary": "bin/flycast",
@@ -31,6 +32,39 @@
     {
       "file": "kbd.cfg",
       "to": ".config/flycast/mappings/SDL_Keyboard.cfg"
+    }
+  ],
+  "achievements": [
+    {
+      "file": ".config/flycast/emu.cfg",
+      "format": "ini",
+      "separator": " = ",
+      "bool": [
+        "yes",
+        "no"
+      ],
+      "set": [
+        {
+          "section": "achievements",
+          "key": "Enabled",
+          "value": "{enabled}"
+        },
+        {
+          "section": "achievements",
+          "key": "HardcoreMode",
+          "value": "{hardcore}"
+        },
+        {
+          "section": "achievements",
+          "key": "UserName",
+          "value": "{user}"
+        },
+        {
+          "section": "achievements",
+          "key": "Token",
+          "value": "{token}"
+        }
+      ]
     }
   ]
 }
