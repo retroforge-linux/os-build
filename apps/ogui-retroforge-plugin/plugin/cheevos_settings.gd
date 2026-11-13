@@ -1,6 +1,8 @@
 extends RefCounted
 ## Settings > Library > "RetroAchievements": the player's RetroAchievements account for RetroArch
-## (gb, gbc, gba, snes, md, segacd, n64; plan retroarch), and RetroArch's hardcore mode.
+## (gb, gbc, gba, snes, md, segacd, n64; plan retroarch), and RetroArch's hardcore mode. The launcher
+## writes the same sign-in and hardcore setting into DuckStation, ARMSX2, PPSSPP, Dolphin and Flycast
+## at each of their launches (plan standalone-cheevos; the achievements module).
 ##
 ## Everything goes through /usr/bin/retroforge-cheevos. The password goes to the tool on stdin
 ## (scrape_runner.gd, the ScreenScraper sign-in's runner) and is cleared from the field after every
@@ -49,7 +51,7 @@ func attach() -> bool:
 	label.text = "RetroAchievements"
 	_user = input_scene.instantiate()
 	_user.title = "RetroAchievements user name"
-	_user.description = "Earn achievements in Game Boy, SNES and Mega Drive games."
+	_user.description = "Earn achievements in %s games." % CheevosText.SYSTEMS
 	_password = input_scene.instantiate()
 	_password.title = "RetroAchievements password"
 	_password.description = ""

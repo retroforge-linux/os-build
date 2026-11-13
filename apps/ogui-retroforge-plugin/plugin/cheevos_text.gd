@@ -5,6 +5,9 @@ extends RefCounted
 
 const PREFIX := "retroforge-cheevos: "
 const NOT_SIGNED_IN := "Not signed in. A free account from retroachievements.org."
+## Every system whose emulator takes the sign-in: RetroArch's cores (plan retroarch) and the standalone
+## emulators the launcher hands it to (plan standalone-cheevos).
+const SYSTEMS := "Game Boy, SNES, Mega Drive, N64, PlayStation, PS2, PSP, GameCube, Wii and Dreamcast"
 
 
 ## A failed login, logout or hardcore change, from the tool's exit code and its last stderr line.
@@ -32,5 +35,5 @@ static func failure_text(code: int, error: String) -> String:
 ## The account row's description, from `retroforge-cheevos status` ({} when it could not run).
 static func account_text(status: Dictionary) -> String:
 	if status.get("signed_in", false) == true:
-		return "Signed in as %s. Game Boy, SNES and Mega Drive games earn achievements." % str(status.get("user"))
+		return "Signed in as %s. %s games earn achievements." % [str(status.get("user")), SYSTEMS]
 	return NOT_SIGNED_IN

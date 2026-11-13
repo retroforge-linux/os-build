@@ -476,7 +476,7 @@ func test_cheevos_text() -> void:
 	check("cheevos: a strange answer", CheevosText.failure_text(8, ""), "RetroAchievements did not answer as expected. Try again later.")
 	check("cheevos: the tool missing (-1)", CheevosText.failure_text(-1, ""), "This build has no RetroAchievements sign-in.")
 	check("cheevos: signed in", CheevosText.account_text({"signed_in": true, "user": "Player1"}),
-		"Signed in as Player1. Game Boy, SNES and Mega Drive games earn achievements.")
+		"Signed in as Player1. Game Boy, SNES, Mega Drive, N64, PlayStation, PS2, PSP, GameCube, Wii and Dreamcast games earn achievements.")
 	check("cheevos: signed out", CheevosText.account_text({"signed_in": false, "user": null}),
 		"Not signed in. A free account from retroachievements.org.")
 	check("cheevos: no status (tool missing)", CheevosText.account_text({}), "Not signed in. A free account from retroachievements.org.")
