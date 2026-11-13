@@ -1,13 +1,13 @@
 # Kernel source pin. kernel/build.sh reads the five fields below; CI's upstream-watch reads
 # `version:`. Everything else here is notes for the next bump and the next HW gate.
 #
-# Current: 7.3.3, pinned 2026-11-08 (issue #37, PR #38). Builds and boots; the per-board HW gate
+# Current: 7.3.4, pinned 2026-11-13 (issue #42). Builds; not booted yet. The per-board HW gate
 # for the 7.3 series is not finished (see "7.3.x on hardware" below).
-version:    7.3.3
-url:        https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.3.tar.xz
-sha256:     79c66dde66cd96877fcde8f7d36aec946b1f423d2b97b5a7b1751b75c764f3d1
-git_tag:    v7.3.3
-git_commit: d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
+version:    7.3.4
+url:        https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.4.tar.xz
+sha256:     b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f
+git_tag:    v7.3.4
+git_commit: 7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
 
 # ============================== The fields ==============================
 #
@@ -17,10 +17,10 @@ git_commit: d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
 # it by WKD or from keyserver.ubuntu.com; keys.openpgp.org serves it without user IDs and gpg then
 # reports "no public key"). That key has no trust path here, so the check that counts is
 # continuity: the same signed file still lists the pins we shipped before with the hashes we
-# recorded. Re-checked 2026-11-12:
+# recorded. Re-checked 2026-11-13:
+#   7.3.3   79c66dde66cd96877fcde8f7d36aec946b1f423d2b97b5a7b1751b75c764f3d1
 #   7.3.1   fa595aad93734f829c963c2a90ef7c3673224fd7fdae7b49406e397cde2de231
 #   7.2.11  fd0fc479f983a8c05313f13e9c36330fe6651cf725396748c40d5cd93fa1e6a4
-#   7.2.10  2feaa70453e91f541be6a5c9078d8168e081af45a3d9718054850538cff2ebf3
 # On each bump, add the outgoing pin and drop the oldest; three is enough for a chain.
 #
 # git_commit is the dereferenced tag (`git ls-remote origin 'v<version>^{}'`), not the annotated
@@ -54,9 +54,73 @@ git_commit: d50d994bffa3c7c6db2d8bc4c5f0c55e3f46b0cd
 #   7.2.11  2026-10-15  no HW gate run before 7.3.1 replaced it.
 #   7.3.1   2026-10-30  new series: ten of ours landed and were deleted, the rest rebased.
 #   7.3.3   2026-11-08  issue #37: nothing of ours landed, no patch changed.
+#   7.3.4   2026-11-13  issue #42: 0896 landed and was deleted, 0975 regenerated, 1166 now
+#                       load-bearing.
 #
 # A point release inside a series is a prediction about effort, never about risk: 7.2.5 needed a
 # new patch and 7.2.6 broke Wi-Fi, and both were found on hardware, not by an offline gate.
+
+# ============================== 7.3.4 ==============================
+#
+# 1254 commits, 1138 files. No qcom dts/dtsi we include moved (only ipq9574, shikra, sdm845
+# boards), no dt-bindings header, no adreno or DPU commit; the one drm/msm change we build is a
+# DSI VM leak fix. Ported from Nova-Deck 0e44aa0e, re-measured here: sha256 from the signed .asc
+# above, git_commit from `git ls-remote ... 'v7.3.4^{}'` (and 'v7.3.3^{}' gives back the old pin).
+#
+# Landed: 0896 (Val Packett, q6afe clk vote response type), stable f3c7bee984aa. It reversed at
+# --fuzz=0 against pristine 7.3.4 and was deleted. Upstream does not carry it, so this is ours
+# alone: SM6115 and SM8250 vote the LPASS core clocks through q6afe.
+#
+# Load-bearing now: 1166. Stable took "misc: fastrpc: Allocate entire reserved memory for Audio PD
+# in probe" (827cf4797be4) without the two "Make ADSP remote heaps no-map" dts patches. The driver
+# assigns the whole ADSP remote heap to the DSP at rpmsg probe whenever the region is declared and
+# the node has qcom,vmids: our SM8250 and SM8750 ADSP nodes. 1166 makes those pages no-map; keep
+# it until v7.4. SM4450, SM6115, SM8550 and SM8650 declare no remote heap.
+#
+# Regenerated: 0975 (fastrpc interrupted invokes). The same fastrpc commit replaced the channel's
+# `remote_heap` with remote_heap_addr/_size, which two of 0975's hunks had as context. The +/- lines
+# are unchanged; the regenerated patch on pristine 7.3.4 gives the same file as the hand-fixed one.
+#
+# Intersection with our patches, 21 files, all read:
+#   ufs/core/ufshcd.c (1086)       abort/eh_timed_out/clear_lu_cmds double release and completion
+#                                  fixes, a clock-scaling vs device-command deadlock, stale UIC
+#                                  result byte cleared before peer DME retries.
+#   qdsp6 q6apm.c (0897), q6apm-dai.c (0854, 0860), q6asm-dai.c (0880), q6afe.c (0895)
+#                                  a full ring's position wraps to 0 (q6apm-dai + q6asm-dai), hw
+#                                  pointer reset with the fragment queue, three DSP-buffer unmap
+#                                  fixes; q6afe is 0896's landing. The q6apm-dai pointer change is
+#                                  on the path after 0854's push-pull branch, i.e. not the
+#                                  playback path we use since push-pull.
+#   lpass-wsa-macro.c (0855)       Compander1 CTL3/CTL7 at the v2.5 addresses on v2.5+ silicon, in
+#                                  wsa_macro_set_spkr_mode(); 0855 only adds sleep handlers.
+#   fastrpc.c (0975)               the probe-time assign above, plus a map_attach double free.
+#   iris_vpu_common.c (1099)       power domain dropped after the clocks, AHB bridge reset.
+#   dsi_host.c (0410 0420 0430)    a VM leak in dsi_tx_buf_alloc_6g().
+#   qcom-ipcc.c (0055)             NULL chan guard + lock in shutdown; 0055 is the IRQ flag.
+#   qcom_battmgr.c (0930 0940-0943)  charger supplies notified of online changes.
+#   pmic_glink_altmode.c (1044), ucsi.c (1042), pcie-qcom.c + pci-imx6.c (1060 1065 1067),
+#   ath12k/wmi.c (1010 1025), arm64 Kconfig/process.c/fault.c + kernel/sys.c (0010 0020 0025),
+#   kernel-parameters.txt (1040)   small fixes, none in a hunk of ours.
+# Beside us, not intersecting: geni-se firmware-load fixes (every GENI serial engine), mac80211
+# frames queued while off-channel, ath11k dp_srng leak, iris/venus iova from the restrict region,
+# qcom_smbx (not built here: our SM8250/SM6115 charger is 0910's driver).
+#
+# PATCHES: all 313 (0896 out) applied cumulatively at --fuzz=0, no rejects. DROP CHECK: 540
+# (patch, file) pairs reverse-applied --dry-run --fuzz=0 to pristine 7.3.4: only 0896's reverses.
+# Positive control on the patched tree: 464 reverse (the rest are files a later patch edits
+# again). ChangeLog subjects vs our patch subjects: 0896 only. CONFIG: all 809 symbols named in
+# kernel/*.config exist in the patched tree (CONFIG_x / CONFIG_ARCH_x are comment placeholders).
+# BUILD: `make kernel` green on the branch tip (0268/0270/0275 in, 1065 out): vmlinuz.efi + 35 dtbs
+# + modules (7.3.4) staged. Warnings only in our own drivers (chipone_tddi, qcom-spmi-haptics,
+# rmi4, wcd939x-usbss) and the fragment-comment `.config` noise; none in a file 7.3.4 touched. The
+# unshipped-qcom list names no symbol that is new in 7.3.4.
+#
+# Owed on hardware, besides the series list below: audio on both DSP stacks through a long
+# session (q6apm on ACE/S2/FIT/Odin 3, q6asm on Max/Thor Lite/Air Y Pro; listen for a loop or
+# stutter at a period boundary, check xruns), SM6115 + SM8250 LPASS clock votes now through
+# stable's q6afe, SM8250 ADSP + fastrpc probe clean with 1166 under the probe-time assign (no
+# SError at boot), WSA speakers on ACE/S2/FIT with no `ASoC error (-5)`, UFS through suspend on
+# an internal install, USB-C alt mode plug/unplug.
 
 # ============================== 7.3.3 ==============================
 #

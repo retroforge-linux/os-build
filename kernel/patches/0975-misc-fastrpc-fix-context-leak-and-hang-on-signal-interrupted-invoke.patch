@@ -68,7 +68,10 @@ context refcount rather than by migrating mmaps to a channel-level
 list.
 
 [RetroForge: v3 <20261002-anandu-fastrpc-interrupted-invoke-v3-v3-1-31e90439d2ba@oss.qualcomm.com>,
- rebased onto 7.3.3 (its channel ctx has remote_heap). put_work_scheduled is set
+ rebased onto 7.3.3 (its channel ctx has remote_heap), then onto 7.3.4, whose
+ "misc: fastrpc: Allocate entire reserved memory for Audio PD in probe" replaced
+ remote_heap with remote_heap_addr/_size: two hunks' context only, the +/- lines
+ are unchanged. put_work_scheduled is set
  with xchg() instead of under fl->lock, as in armada-os's backport (529261d):
  fastrpc_rpmsg_callback() runs in hard IRQ. fastrpc_notify_users() uses the same
  helper.]
@@ -80,10 +83,10 @@ Signed-off-by: Srinivas Kandagatla <srinivas.kandagatla@oss.qualcomm.com>
 Signed-off-by: Anandu Krishnan E <anandu.e@oss.qualcomm.com>
 ---
 diff --git a/drivers/misc/fastrpc.c b/drivers/misc/fastrpc.c
-index d4fac2c..d670445 100644
+index adc6f85..5a87440 100644
 --- a/drivers/misc/fastrpc.c
 +++ b/drivers/misc/fastrpc.c
-@@ -263,6 +263,7 @@ struct fastrpc_invoke_ctx {
+@@ -261,6 +261,7 @@ struct fastrpc_invoke_ctx {
  	int pid;
  	int client_id;
  	u32 sc;
@@ -91,7 +94,7 @@ index d4fac2c..d670445 100644
  	u64 *fdlist;
  	u32 *crc;
  	/* Poll memory that DSP updates */
-@@ -273,6 +274,8 @@ struct fastrpc_invoke_ctx {
+@@ -271,6 +272,8 @@ struct fastrpc_invoke_ctx {
  	bool is_work_done;
  	/* process updates poll memory instead of glink response */
  	bool is_polled;
@@ -100,15 +103,15 @@ index d4fac2c..d670445 100644
  	struct kref refcount;
  	struct list_head node; /* list of ctxs */
  	struct completion work;
-@@ -318,7 +321,6 @@ struct fastrpc_channel_ctx {
+@@ -320,7 +323,6 @@ struct fastrpc_channel_ctx {
+ 	u32 dsp_attributes[FASTRPC_MAX_DSP_ATTRIBUTES];
  	struct fastrpc_device *secure_fdevice;
  	struct fastrpc_device *fdevice;
- 	struct fastrpc_buf *remote_heap;
 -	struct list_head invoke_interrupted_mmaps;
  	bool secure;
  	bool unsigned_support;
  	bool poll_mode_supported;
-@@ -338,6 +340,7 @@ struct fastrpc_user {
+@@ -340,6 +342,7 @@ struct fastrpc_user {
  	struct list_head user;
  	struct list_head maps;
  	struct list_head pending;
@@ -116,7 +119,7 @@ index d4fac2c..d670445 100644
  	struct list_head mmaps;
  
  	struct fastrpc_channel_ctx *cctx;
-@@ -564,7 +567,12 @@ static void fastrpc_user_free(struct kref *ref)
+@@ -566,7 +569,12 @@ static void fastrpc_user_free(struct kref *ref)
  	fastrpc_buf_free(fl->init_mem);
  
  	list_for_each_entry_safe(ctx, n, &fl->pending, node) {
@@ -130,7 +133,7 @@ index d4fac2c..d670445 100644
  		fastrpc_context_put(ctx);
  	}
  
-@@ -603,6 +611,11 @@ static void fastrpc_context_free(struct kref *ref)
+@@ -605,6 +613,11 @@ static void fastrpc_context_free(struct kref *ref)
  	cctx = ctx->cctx;
  	fl = ctx->fl;
  
@@ -142,7 +145,7 @@ index d4fac2c..d670445 100644
  	for (i = 0; i < ctx->nbufs; i++)
  		fastrpc_map_put(ctx->maps[i]);
  
-@@ -614,6 +627,7 @@ static void fastrpc_context_free(struct kref *ref)
+@@ -616,6 +629,7 @@ static void fastrpc_context_free(struct kref *ref)
  
  	kfree(ctx->maps);
  	kfree(ctx->olaps);
@@ -150,7 +153,7 @@ index d4fac2c..d670445 100644
  	kfree(ctx);
  
  	/* Release the reference taken in fastrpc_context_alloc() */
-@@ -639,6 +653,44 @@ static void fastrpc_context_put_wq(struct work_struct *work)
+@@ -641,6 +655,44 @@ static void fastrpc_context_put_wq(struct work_struct *work)
  	fastrpc_context_put(ctx);
  }
  
@@ -195,7 +198,7 @@ index d4fac2c..d670445 100644
  #define CMP(aa, bb) ((aa) == (bb) ? 0 : (aa) < (bb) ? -1 : 1)
  static int olaps_cmp(const void *a, const void *b)
  {
-@@ -719,7 +771,15 @@ static struct fastrpc_invoke_ctx *fastrpc_context_alloc(
+@@ -721,7 +773,15 @@ static struct fastrpc_invoke_ctx *fastrpc_context_alloc(
  			kfree(ctx);
  			return ERR_PTR(-ENOMEM);
  		}
@@ -212,7 +215,7 @@ index d4fac2c..d670445 100644
  		fastrpc_get_buff_overlaps(ctx);
  	}
  
-@@ -763,6 +823,7 @@ err_idr:
+@@ -765,6 +825,7 @@ err_idr:
  	fastrpc_channel_ctx_put(cctx);
  	kfree(ctx->maps);
  	kfree(ctx->olaps);
@@ -220,7 +223,7 @@ index d4fac2c..d670445 100644
  	kfree(ctx);
  
  	return ERR_PTR(ret);
-@@ -1323,10 +1384,18 @@ static inline int fastrpc_wait_for_response(struct fastrpc_invoke_ctx *ctx,
+@@ -1325,10 +1386,18 @@ static inline int fastrpc_wait_for_response(struct fastrpc_invoke_ctx *ctx,
  	int err = 0;
  
  	if (kernel) {
@@ -240,7 +243,7 @@ index d4fac2c..d670445 100644
  	}
  
  	return err;
-@@ -1353,8 +1422,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
+@@ -1355,8 +1424,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
  				   struct fastrpc_invoke_args *args)
  {
  	struct fastrpc_invoke_ctx *ctx = NULL;
@@ -250,7 +253,7 @@ index d4fac2c..d670445 100644
  	int err = 0;
  
  	if (!fl->sctx)
-@@ -1368,9 +1436,21 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
+@@ -1370,9 +1438,21 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
  		return -EPERM;
  	}
  
@@ -275,7 +278,7 @@ index d4fac2c..d670445 100644
  
  	err = fastrpc_get_args(kernel, ctx);
  	if (err)
-@@ -1390,6 +1470,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
+@@ -1392,6 +1472,7 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
  	if (handle > FASTRPC_MAX_STATIC_HANDLE && fl->pd == USER_PD && fl->poll_mode)
  		ctx->is_polled = true;
  
@@ -283,7 +286,7 @@ index d4fac2c..d670445 100644
  	err = fastrpc_wait_for_completion(ctx, kernel);
  	if (err)
  		goto bail;
-@@ -1407,21 +1488,13 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
+@@ -1409,21 +1490,13 @@ static int fastrpc_internal_invoke(struct fastrpc_user *fl,  u32 kernel,
  		goto bail;
  
  bail:
@@ -309,7 +312,7 @@ index d4fac2c..d670445 100644
  	}
  
  	if (err)
-@@ -1738,6 +1811,7 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
+@@ -1725,6 +1798,7 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
  {
  	struct fastrpc_user *fl = (struct fastrpc_user *)file->private_data;
  	struct fastrpc_channel_ctx *cctx = fl->cctx;
@@ -317,7 +320,7 @@ index d4fac2c..d670445 100644
  	unsigned long flags;
  
  	fastrpc_release_current_dsp_process(fl);
-@@ -1746,6 +1820,18 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
+@@ -1733,6 +1807,18 @@ static int fastrpc_device_release(struct inode *inode, struct file *file)
  	list_del(&fl->user);
  	spin_unlock_irqrestore(&cctx->lock, flags);
  
@@ -336,7 +339,7 @@ index d4fac2c..d670445 100644
  	fastrpc_session_free(cctx, fl->sctx);
  	file->private_data = NULL;
  	/* Release the reference taken in fastrpc_device_open */
-@@ -1775,6 +1861,7 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
+@@ -1762,6 +1848,7 @@ static int fastrpc_device_open(struct inode *inode, struct file *filp)
  	spin_lock_init(&fl->lock);
  	mutex_init(&fl->mutex);
  	INIT_LIST_HEAD(&fl->pending);
@@ -344,7 +347,7 @@ index d4fac2c..d670445 100644
  	INIT_LIST_HEAD(&fl->maps);
  	INIT_LIST_HEAD(&fl->mmaps);
  	INIT_LIST_HEAD(&fl->user);
-@@ -1880,6 +1967,7 @@ static int fastrpc_invoke(struct fastrpc_user *fl, char __user *argp)
+@@ -1867,6 +1954,7 @@ static int fastrpc_invoke(struct fastrpc_user *fl, char __user *argp)
  	}
  
  	err = fastrpc_internal_invoke(fl, false, inv.handle, inv.sc, args);
@@ -352,7 +355,7 @@ index d4fac2c..d670445 100644
  	kfree(args);
  
  	return err;
-@@ -2635,7 +2723,6 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
+@@ -2632,7 +2720,6 @@ static int fastrpc_rpmsg_probe(struct rpmsg_device *rpdev)
  	rdev->dma_mask = &data->dma_mask;
  	dma_set_mask_and_coherent(rdev, DMA_BIT_MASK(32));
  	INIT_LIST_HEAD(&data->users);
@@ -360,7 +363,7 @@ index d4fac2c..d670445 100644
  	spin_lock_init(&data->lock);
  	idr_init(&data->ctx_idr);
  	data->domain_id = domain_id;
-@@ -2668,13 +2755,19 @@ static void fastrpc_notify_users(struct fastrpc_user *user)
+@@ -2665,13 +2752,19 @@ static void fastrpc_notify_users(struct fastrpc_user *user)
  		ctx->retval = -EPIPE;
  		complete(&ctx->work);
  	}
@@ -381,17 +384,17 @@ index d4fac2c..d670445 100644
  	struct fastrpc_user *user;
  	unsigned long flags;
  
-@@ -2691,9 +2784,6 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
+@@ -2688,9 +2781,6 @@ static void fastrpc_rpmsg_remove(struct rpmsg_device *rpdev)
  	if (cctx->secure_fdevice)
  		misc_deregister(&cctx->secure_fdevice->miscdev);
  
 -	list_for_each_entry_safe(buf, b, &cctx->invoke_interrupted_mmaps, node)
 -		list_del(&buf->node);
 -
- 	if (cctx->remote_heap)
- 		fastrpc_buf_free(cctx->remote_heap);
- 
-@@ -2760,9 +2850,11 @@ static int fastrpc_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
+ 	if (cctx->remote_heap_size && cctx->vmcount) {
+ 		u64 src_perms = 0;
+ 		int err, i;
+@@ -2774,9 +2864,11 @@ static int fastrpc_rpmsg_callback(struct rpmsg_device *rpdev, void *data,
  	/*
  	 * The DMA buffer associated with the context cannot be freed in
  	 * interrupt context so schedule it through a worker thread to
