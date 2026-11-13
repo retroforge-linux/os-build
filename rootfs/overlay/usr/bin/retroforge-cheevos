@@ -1,55 +1,45 @@
 #!/usr/bin/env python3
-# retroforge-cheevos — the player's RetroAchievements sign-in for RetroArch (plan retroarch Phase 3).
+# retroforge-cheevos — the player's RetroAchievements sign-in (plans retroarch Phase 3, standalone-cheevos).
 #
 #     retroforge-cheevos login <user>     -> the password on stdin (one line); checked with
 #                                            retroachievements.org, the token saved; JSON status on stdout
-#     retroforge-cheevos logout           -> the name and token removed from RetroArch's settings
-#     retroforge-cheevos hardcore on|off  -> RetroArch's hardcore mode (no save states, rewind, cheats)
-#     retroforge-cheevos status           -> JSON on stdout: signed_in, user, hardcore, retroarch_running
+#     retroforge-cheevos logout           -> the name and token removed
+#     retroforge-cheevos hardcore on|off  -> hardcore mode (no save states, rewind, cheats)
+#     retroforge-cheevos status           -> JSON on stdout: signed_in, user, hardcore
 #
 # THE CALLER IS THE RETROFORGE OGUI PLUGIN (Settings > Library > RetroAchievements). Exit status:
-# 0 ok, 2 bad invocation, 3 network (retroachievements.org not reached), 5 local (a file, or
-# RetroArch running: see below), 7 the sign-in refused (wrong name or password), 8 an answer that
-# is not RetroAchievements' login (the site busy or changed). stderr says why, in English.
+# 0 ok, 2 bad invocation, 3 network (retroachievements.org not reached), 5 local (the sign-in file
+# cannot be read or written), 7 the sign-in refused (wrong name or password), 8 an answer that is not
+# RetroAchievements' login (the site busy or changed). stderr says why, in English.
+#
+# WHERE IT LIVES: ~/.config/retroforge/retroachievements.json, RetroForge's own file (0600), written
+# by this tool only; the achievements module (/usr/lib/retroforge/python) has its format, the old
+# place it is read from on a home that predates it (RetroArch's retroarch.cfg), and how
+# retroforge-launch writes it into RetroArch and every standalone emulator with RetroAchievements
+# (DuckStation, ARMSX2, PPSSPP, Dolphin, Flycast) at each of their launches. No emulator's file is
+# touched here, so nothing waits on an emulator running: a change reaches it at its next launch.
 #
 # SECRETS. The password is read from stdin, never argv, and goes to curl on stdin too (-K -: a
 # config holding the URL and the form), so no process list ever shows it. It is never written
-# anywhere: only the token RetroAchievements answers with is kept, as cheevos_token in RetroArch's
-# ~/.config/retroarch/retroarch.cfg (cheevos_password stays empty), the file made 0600 before the
+# anywhere: only the token RetroAchievements answers with is kept, the file made 0600 before the
 # token goes in, under umask 077 (the temporary file write_atomic renames into place too). curl runs
-# with -q (no ~/.curlrc), https only, certificates checked. RetroArch signs in with that token at every game, as after a sign-in in its own
-# menu. The standalone emulators with RetroAchievements (DuckStation, ARMSX2, PPSSPP, Dolphin,
-# Flycast) get the same name, token and hardcore setting from retroforge-launch at each of their
-# launches, read from this file (the achievements module in /usr/lib/retroforge/python): this tool
-# never writes their files, so nothing here waits on them running.
+# with -q (no ~/.curlrc), https only, certificates checked.
 #
-# RETROARCH RUNNING: RetroArch writes retroarch.cfg back from memory when it exits
-# (config_save_on_exit), so a change made while it runs would be undone: login, logout and hardcore
-# refuse with exit 5 then. A home where RetroArch never ran gets the image's seed first: a
-# retroarch.cfg holding only the sign-in would keep the seed out for good (the launcher never seeds
-# over an existing file).
-#
-# TEST SEAMS (tests/test-cheevos.sh): RETROFORGE_CURL, RETROFORGE_EMU_DATA_DIR, RETROFORGE_PROC.
+# TEST SEAMS (tests/test-cheevos.sh): RETROFORGE_CURL.
 import json
 import os
 import re
-import shutil
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
-import emuopts  # noqa: E402
+import achievements  # noqa: E402
 
 EXIT_OK, EXIT_USAGE, EXIT_NET, EXIT_LOCAL, EXIT_LOGIN, EXIT_ANSWER = 0, 2, 3, 5, 7, 8
 CURL = os.environ.get("RETROFORGE_CURL", "curl")
-EMU_DATA_DIR = os.environ.get("RETROFORGE_EMU_DATA_DIR", "/usr/share/retroforge/emulators")
-PROC = os.environ.get("RETROFORGE_PROC", "/proc")
 HOME = os.path.expanduser("~")
-CFG = os.path.join(HOME, ".config/retroarch/retroarch.cfg")
-SEED = os.path.join(EMU_DATA_DIR, "retroarch", "retroarch.cfg")
 LOGIN_URL = "https://retroachievements.org/dorequest.php"
-USER = re.compile(r"[A-Za-z0-9_.-]{1,64}")   # RetroAchievements names are letters and digits
-TOKEN = re.compile(r"[A-Za-z0-9]{8,128}")
+USER, TOKEN = achievements.USER, achievements.TOKEN  # RetroAchievements names are letters and digits
 PASSWORD_MAX = 256
 ANSWER_MAX = 64 << 10  # bytes: login2's answer is a few hundred
 
@@ -75,76 +65,26 @@ def version():
     return "dev"
 
 
-def retroarch_running():
-    """Whether a RetroArch runs: argv[0] .../bin/retroarch (what the launcher starts: HW 2026-11-09,
-    /tmp/.mount_<id>/bin/retroarch --config ...) or the kernel's name for it is retroarch (a build
-    that runs its binary through a bundled ld.so). It fails open (a missed RetroArch undoes the
-    change at its exit), so both are checked."""
+def current():
+    """The sign-in as it is now; exit 5 when it cannot be read (never overwritten blind)."""
+    s = achievements.read_sign_in(HOME, log)
+    if s is None:
+        raise Fail(EXIT_LOCAL, "the RetroAchievements sign-in cannot be read")
+    return s
+
+
+def kept_hardcore():
+    """Hardcore as it is now, for a sign-in or sign-out that replaces the rest: off when the sign-in
+    cannot be read (the player's explicit sign-in or sign-out must not be stuck behind a broken file)."""
+    s = achievements.read_sign_in(HOME, log)
+    return s.hardcore if s is not None else False
+
+
+def save(s):
     try:
-        pids = [p for p in os.listdir(PROC) if p.isdigit()]
-    except OSError:
-        return False
-    for pid in pids:
-        try:
-            with open(os.path.join(PROC, pid, "cmdline"), "rb") as f:
-                argv = f.read(4096).split(b"\0")
-        except OSError:
-            continue
-        if argv[0].endswith(b"/bin/retroarch") or any(a.endswith(b"/shared/bin/retroarch") for a in argv[1:3]):
-            return True
-        try:
-            with open(os.path.join(PROC, pid, "comm"), "rb") as f:
-                if f.read(64).strip() == b"retroarch":
-                    return True
-        except OSError:
-            pass
-    return False
-
-
-def refuse_if_running():
-    if retroarch_running():
-        raise Fail(EXIT_LOCAL, "RetroArch is running: close the game first (RetroArch writes its own "
-                               "settings back when it exits, undoing this)")
-
-
-def read_cfg():
-    try:
-        with open(CFG) as f:
-            return f.read()
-    except FileNotFoundError:
-        return None
+        achievements.save_sign_in(HOME, s)
     except OSError as err:
-        raise Fail(EXIT_LOCAL, f"cannot read {CFG}: {err}")
-
-
-def prepare_cfg():
-    """retroarch.cfg as text, 0600: the image's seed first when RetroArch never ran."""
-    try:
-        os.makedirs(os.path.dirname(CFG), exist_ok=True)
-        if not os.path.lexists(CFG):
-            fd = os.open(CFG, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "wb") as dst, open(SEED, "rb") as src:
-                shutil.copyfileobj(src, dst)
-        os.chmod(CFG, 0o600)
-    except OSError as err:
-        raise Fail(EXIT_LOCAL, f"cannot prepare {CFG}: {err}")
-    return read_cfg()
-
-
-def write_cfg(settings):
-    """Set each key = "value" in retroarch.cfg (RetroArch's own quoting), atomically, 0600 kept."""
-    text = prepare_cfg()
-    for key, value in settings.items():
-        text = emuopts.ini_set(text, "", key, f'"{value}"', " = ")
-    try:
-        emuopts.write_atomic(CFG, text.encode())
-    except OSError as err:
-        raise Fail(EXIT_LOCAL, f"cannot write {CFG}: {err}")
-
-
-def cfg_value(text, key):
-    raw = emuopts.ini_get(text or "", "", key)
-    return raw.strip().strip('"') if raw is not None else ""
+        raise Fail(EXIT_LOCAL, f"cannot save the RetroAchievements sign-in: {err}")
 
 
 def curl_quote(value):
@@ -188,7 +128,6 @@ def cmd_login(user):
         raise Fail(EXIT_USAGE, "login needs a RetroAchievements user name (letters and digits)")
     if not password or len(password) > PASSWORD_MAX or not password.isprintable():
         raise Fail(EXIT_USAGE, "login needs the password on stdin, one line")
-    refuse_if_running()
     answer = ask_login(user, password)
     if answer.get("Success") is not True:
         why = "".join(c for c in str(answer.get("Error") or "") if c.isprintable())[:200]
@@ -196,32 +135,25 @@ def cmd_login(user):
     name, token = str(answer.get("User") or ""), str(answer.get("Token") or "")
     if not (USER.fullmatch(name) and TOKEN.fullmatch(token)):
         raise Fail(EXIT_ANSWER, "RetroAchievements' answer holds no usable name and token")
-    refuse_if_running()  # again: a game may have started during the request (up to a minute)
-    write_cfg({"cheevos_enable": "true", "cheevos_username": name, "cheevos_token": token,
-               "cheevos_password": ""})
+    save(achievements.SignIn(name, token, kept_hardcore()))
     log(f"signed in as {name}")
     return cmd_status()
 
 
 def cmd_logout():
-    refuse_if_running()
-    if read_cfg() is not None:
-        write_cfg({"cheevos_username": "", "cheevos_token": "", "cheevos_password": ""})
+    save(achievements.SignIn(hardcore=kept_hardcore()))
     return EXIT_OK
 
 
 def cmd_hardcore(state):
-    refuse_if_running()
-    write_cfg({"cheevos_hardcore_mode_enable": "true" if state == "on" else "false"})
+    s = current()
+    save(achievements.SignIn(s.user, s.token, state == "on"))
     return EXIT_OK
 
 
 def cmd_status():
-    text = read_cfg()
-    user, token = cfg_value(text, "cheevos_username"), cfg_value(text, "cheevos_token")
-    print(json.dumps({"signed_in": bool(user and token), "user": user or None,
-                      "hardcore": cfg_value(text, "cheevos_hardcore_mode_enable") == "true",
-                      "retroarch_running": retroarch_running()}, sort_keys=True))
+    s = current()
+    print(json.dumps({"signed_in": s.signed_in, "user": s.user or None, "hardcore": s.hardcore}, sort_keys=True))
     return EXIT_OK
 
 
@@ -240,7 +172,7 @@ def main(argv):
 
 if __name__ == "__main__":
     # Every file and folder this tool makes is the player's alone, write_atomic's temporary file
-    # included: it holds the token before it is renamed over retroarch.cfg.
+    # included: it holds the token before it is renamed over the sign-in file.
     os.umask(0o077)
     try:
         sys.exit(main(sys.argv[1:]))

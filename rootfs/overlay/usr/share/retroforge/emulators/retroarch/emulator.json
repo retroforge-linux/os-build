@@ -6,8 +6,9 @@
     "Seed retroarch.cfg (RetroArch rewrites the whole file on exit, so no comments; it keeps our keys, writing paths back as ~/...): Vulkan, PipeWire, the SDL2 joypad driver with our one autoconfig (retroforge-pad.cfg: InputPlumber's virtual Xbox Elite 2 pad, 045e:0b00 = 1118/2816, matched by ids; the AppImage ships no autoconfig, no assets, no core info); RGUI menu (needs no assets); system_directory = the flat ~/bios (Mupen64Plus-Next will write its Mupen64plus/ folder there: accepted); pause_nonactive off (gamescope focus).",
     "system_settings: savefile_directory / savestate_directory = ~/saves/<system>, ~/states/<system> before every game, and sort_savefiles_enable / sort_savestates_enable off: on by default they put saves in a per-core subfolder (HW 2026-11-09). RetroArch writes its in-memory values back on exit, hence before every game, not only in the seed. Saves are <rom>.srm, as armGBA standalone named them.",
     "Exit: one SIGTERM (OGUI's Exit) is RetroArch's normal quit in under a second, SRAM and config written (HW 2026-11-09); quit_press_twice only applies to the key. RetroArch's menu: Select + Start (input_menu_toggle_gamepad_combo 4); keyboard F5.",
-    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state, R2 fast-forward (held), Start quit (pressed twice) -- keyboard F1-F4 bound in the seed. RetroAchievements: cheevos_enable on, hardcore off by default (D3; hardcore blocks loading states).",
-    "gui_args: RetroArch's menu, no content (Main menu > Emulators > Open)."
+    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state, R2 fast-forward (held), Start quit (pressed twice) -- keyboard F1-F4 bound in the seed. RetroAchievements: hardcore off by default (D3; hardcore blocks loading states).",
+    "gui_args: RetroArch's menu, no content (Main menu > Emulators > Open).",
+    "achievements: the player's one RetroAchievements sign-in and Hardcore toggle (~/.config/retroforge/retroachievements.json, Settings > Library > RetroAchievements) written into retroarch.cfg before every start, RetroArch's quoting (plan standalone-cheevos): cheevos_enable off when signed out, cheevos_password always empty (only the token is kept). A sign-in in RetroArch's own menu is replaced at the next launch; RetroArch writing retroarch.cfg back 0644 at exit is tightened again then."
   ],
   "format": "appimage-sharun",
   "binary": "bin/retroarch",
@@ -159,6 +160,40 @@
     {
       "file": "Mupen64Plus-Next.opt",
       "to": ".config/retroarch/config/Mupen64Plus-Next/Mupen64Plus-Next.opt"
+    }
+  ],
+  "achievements": [
+    {
+      "file": ".config/retroarch/retroarch.cfg",
+      "format": "ini",
+      "separator": " = ",
+      "set": [
+        {
+          "section": "",
+          "key": "cheevos_enable",
+          "value": "\"{enabled}\""
+        },
+        {
+          "section": "",
+          "key": "cheevos_hardcore_mode_enable",
+          "value": "\"{hardcore}\""
+        },
+        {
+          "section": "",
+          "key": "cheevos_username",
+          "value": "\"{user}\""
+        },
+        {
+          "section": "",
+          "key": "cheevos_token",
+          "value": "\"{token}\""
+        },
+        {
+          "section": "",
+          "key": "cheevos_password",
+          "value": "\"\""
+        }
+      ]
     }
   ]
 }

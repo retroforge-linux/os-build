@@ -595,7 +595,7 @@ touch "$T/stop-emu"; reap_launcher "$lpid"
   && ok "an existing settings file is never overwritten (only the sign-in section added)" \
   || bad "a later launch overwrote the player's settings: $(cat "$seeded")"
 # The RetroAchievements sign-in (plan standalone-cheevos) goes in after the seed, never before it:
-# the seed is whole and the sign-in is the [Cheevos] section after it. Signed out here (no retroarch.cfg).
+# the seed is whole and the sign-in is the [Cheevos] section after it. Signed out here (no sign-in file).
 rm -rf "$HOME"; mkdir -p "$HOME"
 reset_logs
 start_launcher
@@ -603,8 +603,8 @@ wait_for emu_up || bad "the emulator never started"
 touch "$T/stop-emu"; reap_launcher "$lpid"
 [ "$(sed -n '/^\[Cheevos\]$/,$p' "$seeded")" = "$(printf '[Cheevos]\nEnabled = false\nChallengeMode = false\nUsername = \nToken = ')" ] \
   && ok "signed out: [Cheevos] off, no name, no token, after the whole seed" || bad "[Cheevos] after a signed-out launch: $(sed -n '/^\[Cheevos\]$/,$p' "$seeded")"
-mkdir -p "$HOME/.config/retroarch"
-printf 'cheevos_username = "Player1"\ncheevos_token = "AbCdEf0123456789"\ncheevos_hardcore_mode_enable = "true"\n' > "$HOME/.config/retroarch/retroarch.cfg"
+mkdir -p "$HOME/.config/retroforge"  # the sign-in file retroforge-cheevos writes
+printf '{"version": 1, "user": "Player1", "token": "AbCdEf0123456789", "hardcore": true}\n' > "$HOME/.config/retroforge/retroachievements.json"
 reset_logs
 start_launcher
 wait_for emu_up || bad "the emulator never started"

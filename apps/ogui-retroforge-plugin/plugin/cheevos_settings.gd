@@ -1,14 +1,14 @@
 extends RefCounted
-## Settings > Library > "RetroAchievements": the player's RetroAchievements account for RetroArch
-## (gb, gbc, gba, snes, md, segacd, n64; plan retroarch), and RetroArch's hardcore mode. The launcher
-## writes the same sign-in and hardcore setting into DuckStation, ARMSX2, PPSSPP, Dolphin and Flycast
-## at each of their launches (plan standalone-cheevos; the achievements module).
+## Settings > Library > "RetroAchievements": the player's one RetroAchievements account and hardcore
+## mode, for RetroArch (gb, gbc, gba, snes, md, segacd, n64; plan retroarch) and the standalone
+## emulators that have RetroAchievements (DuckStation, ARMSX2, PPSSPP, Dolphin, Flycast; plan
+## standalone-cheevos): the launcher writes it into each at its next start (the achievements module).
 ##
 ## Everything goes through /usr/bin/retroforge-cheevos. The password goes to the tool on stdin
 ## (scrape_runner.gd, the ScreenScraper sign-in's runner) and is cleared from the field after every
-## attempt; only the token RetroAchievements answers with is kept, in RetroArch's own 0600
-## retroarch.cfg, never in OGUI's settings. RetroArch rewrites that file when it exits, so the tool
-## refuses a change while RetroArch runs and the page says to close the game first.
+## attempt; only the token RetroAchievements answers with is kept, in RetroForge's own 0600
+## ~/.config/retroforge/retroachievements.json, never in OGUI's settings. No emulator's file is
+## written from here, so a change is allowed while a game runs (it reaches that emulator next time).
 
 const ScrapeRunner := preload("scrape_runner.gd")
 const CheevosText := preload("cheevos_text.gd")

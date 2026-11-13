@@ -1,20 +1,31 @@
-# achievements — the player's RetroAchievements sign-in, handed to the standalone emulators by
-# retroforge-launch (.claude/plans/standalone-cheevos.plan.md).
+# achievements — the player's RetroAchievements sign-in: where RetroForge keeps it, and how
+# retroforge-launch hands it to every emulator that has rcheevos (.claude/plans/standalone-cheevos.plan.md).
 #
-# ONE SIGN-IN. The player signs in once, in Settings > Library > RetroAchievements
-# (/usr/bin/retroforge-cheevos), which keeps the name and the token RetroAchievements answered with in
-# RetroArch's ~/.config/retroarch/retroarch.cfg (cheevos_username, cheevos_token, 0600), with the
-# Hardcore toggle (cheevos_hardcore_mode_enable). A sign-in made in RetroArch's own menu lands in the
-# same keys. The token belongs to the account, not to the program that asked for it, so every
-# rcheevos client takes it.
+# ONE SIGN-IN, RETROFORGE'S OWN FILE. The player signs in once, in Settings > Library >
+# RetroAchievements (/usr/bin/retroforge-cheevos). The name and the token RetroAchievements answered
+# with, and the Hardcore toggle, are kept in ~/.config/retroforge/retroachievements.json (0600, written
+# by retroforge-cheevos only):
 #
-# AT EVERY LAUNCH of an emulator whose emulator.json has an "achievements" list (game or Open), after
-# the first-run seed (a file made first would keep the seed out for good), retroforge-launch writes
-# that sign-in into the emulator's own files. The emulator is not running then, so its write-back at
-# exit cannot undo it. RetroForge owns the sign-in: signed out here means signed out there (empty
-# name and token, achievements off), and what the player changes in an emulator's own menu is
-# replaced at its next launch. Hardcore is written either way: Dolphin and PPSSPP default to it ON,
-# which would refuse the Guide+L1 load-state hotkey.
+#   {"version": 1, "user": "Player1", "token": "...", "hardcore": false}     signed out: "" and ""
+#
+# Not in an emulator's settings: RetroArch rewrites retroarch.cfg from memory when it exits (a change
+# made while it ran would be undone) and may write it back 0644; resetting its settings would sign
+# the player out of everything. The token belongs to the account, not to the program that asked for
+# it, so every rcheevos client takes it.
+#
+# BEFORE THAT FILE EXISTED (plan retroarch Phase 3, plugin 0.1.110-0.1.114), the sign-in lived in
+# RetroArch's retroarch.cfg (cheevos_username, cheevos_token, cheevos_hardcore_mode_enable). While
+# the file is missing, that is read instead (never written from here: reading the status or starting
+# a game creates nothing); the player's first Sign in, Sign out or Hardcore change creates the file,
+# which wins from then on.
+#
+# AT EVERY LAUNCH of an emulator whose emulator.json has an "achievements" list (game or Open; RetroArch
+# included), after the first-run seed (a file made first would keep the seed out for good),
+# retroforge-launch writes that sign-in into the emulator's own files. The emulator is not running then,
+# so its write-back at exit cannot undo it. RetroForge owns the sign-in: signed out here means signed
+# out there (empty name and token, achievements off), and what the player changes in an emulator's own
+# menu (RetroArch's included) is replaced at its next launch. Hardcore is written either way: Dolphin
+# and PPSSPP default to it ON, which would refuse the Guide+L1 load-state hotkey.
 #
 #   "achievements": [{"file": ".config/x/x.ini", "format": "ini", "separator": " = ",
 #                     "bool": ["True", "False"],                 the file's words (default true/false)
@@ -33,10 +44,10 @@
 # The "secret" format is a file that IS the value (PPSSPP's PSP/SYSTEM/ppsspp_retroachievements.dat),
 # removed when the value is empty.
 #
-# SECRETS. A file a token goes into is 0600 before the token is in it, and written under umask 077 (the
-# temporary file write_atomic renames into place holds the token too). Neither a token nor a name is
-# ever logged. A sign-in in retroarch.cfg that is not a RetroAchievements name and token (a hand edit)
-# is treated as signed out, never written into another file.
+# SECRETS. The sign-in file and every file a token goes into are 0600 before the token is in them, and
+# written under umask 077 (the temporary file write_atomic renames into place holds the token too).
+# Neither a token nor a name is ever logged. A sign-in that is not a RetroAchievements name and token
+# (a hand edit) is treated as signed out, never written into another file.
 #
 # DUCKSTATION encrypts its token (src/core/achievements.cpp EncryptLoginToken, tag v0.1-11894):
 # base64(AES-128-CBC(token zero-padded to 16 bytes)), with SHA-256(the bytes of /etc/machine-id, newline
@@ -45,14 +56,16 @@
 # device; the key comes from world-readable data: obfuscation, not secrecy. openssl does the AES, the
 # token on its stdin.
 #
-# A file that cannot be written is a warning, never a blocked game. A retroarch.cfg that cannot be
-# read writes nothing (unknown is not signed out); a DuckStation token that cannot be encrypted
+# A file that cannot be written is a warning, never a blocked game. A sign-in that cannot be read (the
+# file unreadable or not ours, or the old retroarch.cfg unreadable) writes nothing: unknown is not
+# signed out; a DuckStation token that cannot be encrypted
 # (no machine-id, no openssl) writes that file signed out, never the previous player's name and token.
 #
 # Test seams (tests/test-achievements.sh): RETROFORGE_MACHINE_ID, RETROFORGE_OPENSSL.
 
 import base64
 import hashlib
+import json
 import os
 import re
 import subprocess
@@ -61,7 +74,10 @@ import emuopts
 
 MACHINE_ID = os.environ.get("RETROFORGE_MACHINE_ID", "/etc/machine-id")
 OPENSSL = os.environ.get("RETROFORGE_OPENSSL", "openssl")
-RETROARCH_CFG = os.path.join(".config", "retroarch", "retroarch.cfg")  # under $HOME
+STORE = os.path.join(".config", "retroforge", "retroachievements.json")  # under $HOME
+STORE_VERSION = 1
+STORE_MAX = 4096  # bytes: a name and a token
+RETROARCH_CFG = os.path.join(".config", "retroarch", "retroarch.cfg")  # the old place (header)
 USER = re.compile(r"[A-Za-z0-9_.-]{1,64}")   # retroforge-cheevos' checks, kept in step
 TOKEN = re.compile(r"[A-Za-z0-9]{8,128}")
 PLACEHOLDERS = ("{user}", "{token}", "{duckstation_token}", "{enabled}", "{hardcore}")
@@ -74,7 +90,7 @@ AES_BLOCK = 16
 
 
 class SignIn:
-    """What retroarch.cfg holds: user and token both set (valid) or both "", and hardcore."""
+    """The sign-in: user and token both set (valid) or both "", and hardcore."""
 
     def __init__(self, user="", token="", hardcore=False):
         self.user, self.token, self.hardcore = user, token, hardcore
@@ -89,26 +105,68 @@ def _cfg_value(text, key):
     return raw.strip().strip('"') if raw is not None else ""
 
 
-def read_sign_in(home, warn):
-    """The sign-in from RetroArch's retroarch.cfg; signed out when it is missing or holds no valid pair.
-    None when it cannot be read: unknown is not signed out, so nothing is written (a passing read
-    error must not sign the player out of every emulator)."""
+def _checked(user, token, hardcore, where, warn):
+    """A SignIn from raw values: a pair that is not a name and token is signed out (warned)."""
+    if not (user and token):
+        return SignIn(hardcore=hardcore)
+    if not (isinstance(user, str) and isinstance(token, str) and USER.fullmatch(user) and TOKEN.fullmatch(token)):
+        warn(f"the RetroAchievements sign-in in {where} is not a name and token: treated as signed out")
+        return SignIn(hardcore=hardcore)
+    return SignIn(user, token, hardcore)
+
+
+def _read_store(path, warn):
+    """The sign-in file as a SignIn; FileNotFoundError when it is missing; None when it is not ours."""
+    with open(path, "rb") as f:
+        raw = f.read(STORE_MAX + 1)
     try:
-        with open(os.path.join(home, RETROARCH_CFG), encoding="utf-8") as f:
+        d = json.loads(raw.decode("utf-8")) if len(raw) <= STORE_MAX else None
+    except (UnicodeError, ValueError):
+        d = None
+    if not (isinstance(d, dict) and d.get("version") == STORE_VERSION
+            and isinstance(d.get("hardcore"), bool)):
+        warn(f"{path} is not a RetroAchievements sign-in: the emulators' own left as they are")
+        return None
+    return _checked(d.get("user") or "", d.get("token") or "", d["hardcore"], path, warn)
+
+
+def _read_retroarch(path, warn):
+    """The old place (header), read only; signed out when it is missing."""
+    try:
+        with open(path, encoding="utf-8") as f:
             text = f.read()
     except FileNotFoundError:
         return SignIn()
+    user, token = _cfg_value(text, "cheevos_username"), _cfg_value(text, "cheevos_token")
+    return _checked(user, token, _cfg_value(text, "cheevos_hardcore_mode_enable") == "true", path, warn)
+
+
+def read_sign_in(home, warn):
+    """The player's sign-in: RetroForge's file, else (never created yet) the old retroarch.cfg; signed
+    out when neither exists. None when it cannot be read: unknown is not signed out, so nothing is
+    written (a passing read error must not sign the player out of every emulator)."""
+    try:
+        try:
+            return _read_store(os.path.join(home, STORE), warn)
+        except FileNotFoundError:
+            return _read_retroarch(os.path.join(home, RETROARCH_CFG), warn)
     except (OSError, UnicodeError) as err:
         warn(f"cannot read the RetroAchievements sign-in, the emulators' own left as they are: {err}")
         return None
-    user, token = _cfg_value(text, "cheevos_username"), _cfg_value(text, "cheevos_token")
-    hardcore = _cfg_value(text, "cheevos_hardcore_mode_enable") == "true"
-    if not (user and token):
-        return SignIn(hardcore=hardcore)
-    if not (USER.fullmatch(user) and TOKEN.fullmatch(token)):
-        warn("the RetroAchievements sign-in in retroarch.cfg is not a name and token: treated as signed out")
-        return SignIn(hardcore=hardcore)
-    return SignIn(user, token, hardcore)
+
+
+def save_sign_in(home, s):
+    """Write the sign-in file (0600 before the token goes in, umask 077 for the temporary file).
+    Raises OSError."""
+    path = os.path.realpath(os.path.join(home, STORE))
+    data = json.dumps({"version": STORE_VERSION, "user": s.user, "token": s.token, "hardcore": s.hardcore},
+                      sort_keys=True) + "\n"
+    old = os.umask(0o077)
+    try:
+        _tighten(path)
+        emuopts.write_atomic(path, data.encode())
+    finally:
+        os.umask(old)
 
 
 # ----------------------------------------------------------------------------------- validation --

@@ -15,8 +15,9 @@
 #     in secrets.ini (a stale one in PCSX2.ini would be moved over ours); PPSSPP in a file of its own,
 #     which must go when the player signs out;
 #   - a file holding a token is 0600, and no temporary file is left behind;
-#   - a retroarch.cfg edited by hand into something that is not a name and token is never copied
-#     into five other files;
+#   - a sign-in edited by hand into something that is not a name and token is never copied into six
+#     other files; a home that signed in before RetroForge's own file existed (the sign-in in
+#     retroarch.cfg) keeps it, and that file wins once it exists;
 #   - one file that cannot be written never stops the game, nor the other files.
 #
 # The launcher's own run (after the seed, game and --gui) is covered in test-launch.sh.
@@ -48,7 +49,7 @@ os.umask(UMASK)
 PASS = FAIL = 0
 CASE = ""
 USER, TOKEN = "Player1", "AbCdEf0123456789"
-EMUS = ("duckstation", "armsx2", "ppsspp", "dolphin", "flycast")
+EMUS = ("retroarch", "duckstation", "armsx2", "ppsspp", "dolphin", "flycast")
 
 
 def check(what, got, want):
@@ -83,7 +84,20 @@ def fresh_home(name):
     return home
 
 
+STORE = ".config/retroforge/retroachievements.json"
+
+
 def sign_in(home, user=USER, token=TOKEN, hardcore=False):
+    """RetroForge's sign-in file, as retroforge-cheevos writes it."""
+    ach.save_sign_in(home, ach.SignIn(user, token, hardcore))
+
+
+def raw_sign_in(home, text):
+    write(os.path.join(home, STORE), text)
+
+
+def old_sign_in(home, user=USER, token=TOKEN, hardcore=False):
+    """The sign-in as plugin 0.1.110-0.1.114 kept it: in RetroArch's retroarch.cfg."""
     write(os.path.join(home, ".config/retroarch/retroarch.cfg"),
           f'cheevos_enable = "true"\ncheevos_username = "{user}"\ncheevos_token = "{token}"\n'
           f'cheevos_hardcore_mode_enable = "{"true" if hardcore else "false"}"\nvideo_driver = "vulkan"\n')
@@ -118,6 +132,7 @@ def ds_decrypt(value, user, machine_id_path):
 DS, AX, AXS = ".local/share/duckstation/settings.ini", ".config/ARMSX2/inis/PCSX2.ini", ".config/ARMSX2/inis/secrets.ini"
 PP, PPD = ".config/ppsspp/PSP/SYSTEM/ppsspp.ini", ".config/ppsspp/PSP/SYSTEM/ppsspp_retroachievements.dat"
 DL, FC = ".config/dolphin-emu/RetroAchievements.ini", ".config/flycast/emu.cfg"
+RA = ".config/retroarch/retroarch.cfg"
 MID = os.path.join(T, "machine-id")
 
 # =================================================================================================
@@ -131,7 +146,7 @@ for emu in EMUS:
         check(f"{emu}: emulator.json loads", str(err), "")
 others = sorted(os.path.basename(os.path.dirname(p)) for p in glob.glob(os.path.join(os.environ["RETROFORGE_EMU_DATA_DIR"], "*/emulator.json")))
 for emu in others:
-    if emu in EMUS or emu == "retroarch":
+    if emu in EMUS:
         continue
     check(f"{emu}: no achievements (no RetroAchievements support)", load_definition(emu)["achievements"], [])
 if len(DEFS) != len(EMUS):
@@ -156,6 +171,9 @@ check("Dolphin: off, HardcoreEnabled written False (its default is True)",
       ["False", "False", "", ""])
 check("Flycast: yes/no words", [ini(H, FC, "achievements", k) for k in ("Enabled", "HardcoreMode", "UserName", "Token")],
       ["no", "no", "", ""])
+check("RetroArch: quoted, off, no name, no token, no password",
+      [ini(H, RA, "", k) for k in ("cheevos_enable", "cheevos_hardcore_mode_enable", "cheevos_username", "cheevos_token", "cheevos_password")],
+      ['"false"', '"false"', '""', '""', '""'])
 check("no warnings", warnings, [])
 
 # =================================================================================================
@@ -187,11 +205,15 @@ check("Dolphin: name and ApiToken", [ini(H, DL, "Achievements", k) for k in ("En
       ["True", "True", USER, TOKEN])
 check("Flycast: name and Token", [ini(H, FC, "achievements", k) for k in ("Enabled", "HardcoreMode", "UserName", "Token")],
       ["yes", "yes", USER, TOKEN])
+check("RetroArch: quoted name and token, password empty",
+      [ini(H, RA, "", k) for k in ("cheevos_enable", "cheevos_hardcore_mode_enable", "cheevos_username", "cheevos_token", "cheevos_password")],
+      ['"true"', '"true"', f'"{USER}"', f'"{TOKEN}"', '""'])
+check("the sign-in file itself is 0600", mode(os.path.join(H, STORE)), 0o600)
 check("every file holding a token is 0600 (an existing 0644 one tightened)",
-      {p: mode(os.path.join(H, p)) for p in (DS, AXS, PPD, DL, FC)}, {p: 0o600 for p in (DS, AXS, PPD, DL, FC)})
+      {p: mode(os.path.join(H, p)) for p in (DS, AXS, PPD, DL, FC, RA)}, {p: 0o600 for p in (DS, AXS, PPD, DL, FC, RA)})
 check("no temporary file left", [p for p in glob.glob(os.path.join(H, "**/*.retroforge-*"), recursive=True)], [])
 check("no warnings", warnings, [])
-again = {p: read(os.path.join(H, p)) for p in (DS, AX, AXS, PP, PPD, DL, FC)}
+again = {p: read(os.path.join(H, p)) for p in (DS, AX, AXS, PP, PPD, DL, FC, RA)}
 for emu in EMUS:
     run(emu, H)
 check("a second launch changes nothing", {p: read(os.path.join(H, p)) for p in again}, again)
@@ -207,7 +229,7 @@ check("RetroForge's sign-in and Hardcore win at the next launch, their other set
 
 # =================================================================================================
 CASE = "signed out after a sign-in"
-write(os.path.join(H, ".config/retroarch/retroarch.cfg"), 'cheevos_username = ""\ncheevos_token = ""\ncheevos_hardcore_mode_enable = "false"\n')
+sign_in(H, "", "", False)
 for emu in EMUS:
     run(emu, H)
 check("every name and token gone, achievements off",
@@ -218,7 +240,7 @@ check("PPSSPP's token file removed", os.path.exists(os.path.join(H, PPD)), False
 check("no warnings", warnings, [])
 
 # =================================================================================================
-CASE = "a retroarch.cfg that is not a sign-in"
+CASE = "a sign-in file that is not a sign-in"
 H = fresh_home("garbage")
 sign_in(H, token="has spaces and $(stuff)")
 run("dolphin", H)
@@ -227,9 +249,37 @@ check("treated as signed out: nothing of it copied", [ini(H, DL, "Achievements",
 check("...with a warning that names no value", (len(warnings), "$(stuff)" in "".join(warnings), USER in "".join(warnings)), (1, False, False))
 warnings.clear()
 H = fresh_home("half")
-write(os.path.join(H, ".config/retroarch/retroarch.cfg"), 'cheevos_username = "Player1"\ncheevos_token = ""\n')
+raw_sign_in(H, '{"version": 1, "user": "Player1", "token": "", "hardcore": false}')
 run("flycast", H)
 check("a name without a token is signed out, silently", (ini(H, FC, "achievements", "UserName"), warnings), ("", []))
+for what, text in [("not JSON", "not json\n"), ("another version", '{"version": 2, "user": "", "token": "", "hardcore": false}'),
+                   ("hardcore not a boolean", '{"version": 1, "user": "", "token": "", "hardcore": "yes"}')]:
+    H = fresh_home("notours")
+    write(os.path.join(H, FC), "[achievements]\nUserName = Kept\n")
+    raw_sign_in(H, text)
+    run("flycast", H)
+    check(f"{what}: nothing written (unknown is not signed out), one warning",
+          (ini(H, FC, "achievements", "UserName"), len(warnings)), ("Kept", 1))
+    warnings.clear()
+
+# =================================================================================================
+CASE = "a sign-in from before (in retroarch.cfg)"
+H = fresh_home("old")
+old_sign_in(H, hardcore=True)
+for emu in EMUS:
+    run(emu, H)
+check("no sign-in file yet: retroarch.cfg's is handed to the others",
+      [ini(H, DL, "Achievements", k) for k in ("Username", "ApiToken", "HardcoreEnabled")], [USER, TOKEN, "True"])
+check("...and written back unchanged into retroarch.cfg", [ini(H, RA, "", k) for k in ("cheevos_username", "cheevos_token")],
+      [f'"{USER}"', f'"{TOKEN}"'])
+check("...without creating the sign-in file", os.path.exists(os.path.join(H, STORE)), False)
+sign_in(H, "", "", False)
+for emu in EMUS:
+    run(emu, H)
+check("once the file exists it wins: signed out everywhere, retroarch.cfg included",
+      [ini(H, DL, "Achievements", "ApiToken"), ini(H, RA, "", "cheevos_token"), ini(H, RA, "", "cheevos_username")],
+      ["", '""', '""'])
+check("no warnings", warnings, [])
 
 # =================================================================================================
 CASE = "failures are warnings"
@@ -261,21 +311,21 @@ check("the other emulators are unaffected", ini(H, FC, "achievements", "Token"),
 check("the umask is put back", os.umask(UMASK), UMASK)
 
 # =================================================================================================
-CASE = "a retroarch.cfg that cannot be read"
+CASE = "a sign-in file that cannot be read"
 H = fresh_home("unreadable")
 sign_in(H)
 for emu in EMUS:
     run(emu, H)
 before = {p: read(os.path.join(H, p)) for p in (DS, AXS, PPD, DL, FC)}
-os.chmod(os.path.join(H, ".config/retroarch/retroarch.cfg"), 0)
-if os.access(os.path.join(H, ".config/retroarch/retroarch.cfg"), os.R_OK):
+os.chmod(os.path.join(H, STORE), 0)
+if os.access(os.path.join(H, STORE), os.R_OK):
     check("(running as root: an unreadable file cannot be made; case skipped)", True, True)
 else:
     for emu in EMUS:
         run(emu, H)
     check("nothing written: unknown is not signed out", {p: read(os.path.join(H, p)) for p in before}, before)
     check("one warning per launch", len(warnings), len(EMUS))
-os.chmod(os.path.join(H, ".config/retroarch/retroarch.cfg"), 0o600)
+os.chmod(os.path.join(H, STORE), 0o600)
 warnings.clear()
 
 # =================================================================================================
@@ -296,7 +346,7 @@ check("a symlink is kept, its target written and made 0600",
 write(os.path.join(real, "token.dat"), TOKEN)
 os.makedirs(os.path.dirname(os.path.join(H, PPD)), exist_ok=True)
 os.symlink(os.path.join(real, "token.dat"), os.path.join(H, PPD))
-write(os.path.join(H, ".config/retroarch/retroarch.cfg"), 'cheevos_username = ""\ncheevos_token = ""\n')
+sign_in(H, "", "")
 run("ppsspp", H)
 check("signed out through a symlinked .dat: the token file itself is removed", os.path.exists(os.path.join(real, "token.dat")), False)
 check("no warnings", warnings, [])

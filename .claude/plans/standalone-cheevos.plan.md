@@ -1,7 +1,8 @@
 # RetroAchievements for the standalone emulators — plan
 
 Status: written 2026-11-13 (branch feat/standalone-cheevos), design as agreed in chat 2026-11-13.
-Phase 1 DONE offline 2026-11-13 (not pushed); Phase 2 (HW) pending.
+Phase 1 DONE offline 2026-11-13 (not pushed); D1 REVISED the same day (user: the token in its own
+file, not RetroArch's settings), done offline; Phase 2 (HW) pending.
 
 ## Why
 
@@ -41,14 +42,23 @@ world-readable data anyway: obfuscation, not secrecy).
 
 ## Decisions (agreed 2026-11-13)
 
-- **D1 One sign-in, the one we have.** `retroforge-cheevos` and RetroArch's `retroarch.cfg`
-  (`cheevos_username`, `cheevos_token`, `cheevos_hardcore_mode_enable`) stay the only place the
-  sign-in lives. A sign-in or sign-out made in RetroArch's own menu counts too (same file).
+- **D1 One sign-in, in RetroForge's own file** (revised 2026-11-13; first draft kept it in
+  RetroArch's `retroarch.cfg`). `~/.config/retroforge/retroachievements.json`
+  (`{"version": 1, "user", "token", "hardcore"}`, 0600), written by `retroforge-cheevos` only.
+  Why not `retroarch.cfg`: RetroArch rewrites it at exit (the tool had to refuse changes while it
+  ran), may write it back 0644, and resetting RetroArch's settings would sign the player out of
+  everything. RetroArch becomes the sixth `achievements` entry, written at launch like the others
+  (quoted values, `cheevos_password` always empty). A sign-in made in RetroArch's own menu no
+  longer counts for the others: replaced at RetroArch's next launch (D3).
+- **D1b Homes that signed in before the file** (plugin 0.1.110-0.1.114): while the file is missing,
+  the sign-in is read from `retroarch.cfg`, read only (status and launches create nothing); the
+  player's first Sign in / Sign out / Hardcore change creates the file, which wins from then on.
+  A sign-in file that is not one (not JSON, another version) writes nothing at launch and makes
+  `status`/`hardcore` exit 5; Sign in and Sign out replace it (the player is never stuck).
 - **D2 Written at launch, by the launcher.** Before each start of one of the five (game or Open),
   `retroforge-launch` writes the name, token, enabled flag and hardcore into that emulator's files,
   after the first-run seed (a file made first would keep the seed out for good). The emulator is
-  not running then, so its own write-back on exit cannot undo it (why `retroforge-cheevos` refuses
-  while RetroArch runs). Stays written, like an emulator-level option: no restore journal.
+  not running then, so its own write-back on exit cannot undo it. Stays written, like an emulator-level option: no restore journal.
 - **D3 RetroForge owns the sign-in.** Signed out in RetroForge: an empty name and token, achievements
   off, PPSSPP's token file removed. A sign-in or sign-out made in an emulator's own menu is replaced
   at its next launch. (Existing devices: a player who signed in only inside DuckStation/PPSSPP/...
@@ -95,9 +105,22 @@ world-readable data anyway: obfuscation, not secrecy).
   the previous name/token kept); paths resolved before 0600 / unlink (symlinked settings). Left: a
   `.retroforge-<hex>` temp file after a power cut mid-write (0600, clutter only; emuopts-wide).
 
+### D1 revision notes (2026-11-13)
+
+- `achievements.py`: `read_sign_in` (file, else the old retroarch.cfg, else signed out; None =
+  unknown) and `save_sign_in`. `retroforge-cheevos`: no RetroArch-running check, no seeding of
+  retroarch.cfg, exit 5 = the sign-in file; status JSON drops `retroarch_running` (unused).
+- Plugin: exit 5 is one message ("Your RetroAchievements sign-in could not be saved."), the
+  "close the game first" text is gone.
+- Tests: test-cheevos 49, test-achievements 83 (RetroArch as the sixth emulator, the old-place
+  cases), test-launch 587, test-plugin 561 with Godot 4.7.1 arm64 + OGUI 0.47.0 compile.
+
 ## Phase 2 — HW (dev card)
 
-1. Sign in in Settings; start one game per emulator: each shows its own "logged in as" toast.
+0. On a card that already had a RetroArch sign-in (0.1.110+): still signed in after the update,
+   in RetroArch and the five; the first Hardcore toggle creates retroachievements.json.
+1. Sign in in Settings; start one game per emulator (RetroArch included): each shows its own
+   "logged in as" toast. Sign in while a RetroArch game runs: allowed, reaches it next launch.
 2. DuckStation: the token decrypts (no login prompt) — proves the machine-id newline / key details.
 3. ARMSX2 2.9 and the pkgforge Dolphin are built with achievements (menu shows them).
 4. Hardcore off: Guide+L1 loads a state in each; Hardcore on: refused, the emulator says hardcore.

@@ -468,11 +468,8 @@ func test_cheevos_text() -> void:
 		"RetroAchievements refused your user name or password.")
 	check("cheevos: offline", CheevosText.failure_text(3, "retroforge-cheevos: retroachievements.org not reached"),
 		"RetroAchievements could not be reached. Check the network and try again.")
-	check("cheevos: RetroArch running is its own message",
-		CheevosText.failure_text(5, "retroforge-cheevos: RetroArch is running: close the game first (RetroArch writes...)"),
-		"Close the game first: RetroArch is running and would undo this.")
-	check("cheevos: any other local failure", CheevosText.failure_text(5, "retroforge-cheevos: cannot write x"),
-		"RetroArch's settings could not be saved.")
+	check("cheevos: a local failure (the sign-in file)", CheevosText.failure_text(5, "retroforge-cheevos: cannot save the RetroAchievements sign-in: x"),
+		"Your RetroAchievements sign-in could not be saved.")
 	check("cheevos: a strange answer", CheevosText.failure_text(8, ""), "RetroAchievements did not answer as expected. Try again later.")
 	check("cheevos: the tool missing (-1)", CheevosText.failure_text(-1, ""), "This build has no RetroAchievements sign-in.")
 	check("cheevos: signed in", CheevosText.account_text({"signed_in": true, "user": "Player1"}),
