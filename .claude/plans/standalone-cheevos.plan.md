@@ -1,6 +1,7 @@
 # RetroAchievements for the standalone emulators — plan
 
 Status: written 2026-11-13 (branch feat/standalone-cheevos), design as agreed in chat 2026-11-13.
+Phase 1 DONE offline 2026-11-13 (not pushed); Phase 2 (HW) pending.
 
 ## Why
 
@@ -79,6 +80,20 @@ world-readable data anyway: obfuscation, not secrecy).
 - `retroforge-cheevos` header + plugin wording (cheevos_settings.gd / cheevos_text.gd: the systems
   list), plugin version bump, test-plugin.sh strings.
 - Security review (token handling, file modes, argv) before commit.
+
+### Phase 1 notes (2026-11-13)
+
+- `achievements.py` + `achievements` in launch_def / the five emulator.json; applied after
+  `seed_first_run` + `sync_files`, game and `--gui`. Plugin 0.1.114: the systems list in
+  `cheevos_text.gd` (`SYSTEMS`), used by the user-name row and the signed-in line.
+- Tests: `tests/test-achievements.sh` 71 (in `make test`); `test-launch.sh` 587 (seed checks now
+  "file starts with the whole seed": the [Cheevos] section follows it; a signed-out and a signed-in
+  DuckStation launch end to end); test-cheevos 43, test-plugin 152 (no Godot), emuopts/emu/emu-cores
+  green.
+- Security review: no CRITICAL/HIGH. Fixed: an unreadable retroarch.cfg writes nothing (was: signed
+  out everywhere); a DuckStation token that cannot be encrypted writes that file signed out (was:
+  the previous name/token kept); paths resolved before 0600 / unlink (symlinked settings). Left: a
+  `.retroforge-<hex>` temp file after a power cut mid-write (0600, clutter only; emuopts-wide).
 
 ## Phase 2 — HW (dev card)
 
