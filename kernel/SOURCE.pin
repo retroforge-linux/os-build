@@ -98,7 +98,7 @@ git_commit: 7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
 #   dsi_host.c (0410 0420 0430)    a VM leak in dsi_tx_buf_alloc_6g().
 #   qcom-ipcc.c (0055)             NULL chan guard + lock in shutdown; 0055 is the IRQ flag.
 #   qcom_battmgr.c (0930 0940-0943)  charger supplies notified of online changes.
-#   pmic_glink_altmode.c (1044), ucsi.c (1042), pcie-qcom.c + pci-imx6.c (1060 1065 1067),
+#   pmic_glink_altmode.c (1044), ucsi.c (1042), pcie-qcom.c + pci-imx6.c (1060 1067),
 #   ath12k/wmi.c (1010 1025), arm64 Kconfig/process.c/fault.c + kernel/sys.c (0010 0020 0025),
 #   kernel-parameters.txt (1040)   small fixes, none in a hunk of ours.
 # Beside us, not intersecting: geni-se firmware-load fixes (every GENI serial engine), mac80211
