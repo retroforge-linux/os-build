@@ -43,8 +43,11 @@ while read -r src dst sha _rest; do
   # Retry, because this loop makes one request per pinned file and a single transient 5xx from
   # the cgit frontend would otherwise abort a build 30+ minutes in (seen: a 503 on qca/htnv20.bin
   # during the ota/v0.2.4 release). curl's default exponential backoff, capped so a genuinely
-  # dead upstream still fails the build promptly instead of stalling the job.
-  curl -fsSL --retry 5 --retry-all-errors --retry-max-time 120 \
+  # dead upstream still fails the build promptly instead of stalling the job. --connect-timeout
+  # is what makes the retries real: without it one unreachable-host attempt waits out the
+  # kernel's TCP SYN timeout (133 s, nightly 2026-11-14), which alone exceeds --retry-max-time
+  # and so no retry is ever made.
+  curl -fsSL --connect-timeout 20 --retry 5 --retry-all-errors --retry-max-time 120 \
     -o "$tmp" "${BASE}/${src}?id=${COMMIT}" \
     || { echo "download failed: $src" >&2; rm -f "$tmp"; exit 1; }
   echo "${sha}  ${tmp}" | sha256sum -c - >/dev/null \
