@@ -1,0 +1,12 @@
+# Keep the Renesas uPD720201 USB 3 controller (the AYANEO SM8550 Pockets' gamepad
+# host, on PCIe 1) from waking the system.
+#
+# Wake-enabled, it stops pcie-qcom from taking PCIe 1 down for suspend
+# (pci_host_common_d3cold_possible), so the link and its votes stay up and the
+# SoC never collapses; and a USB wakeup pending from the pad makes
+# hcd_pci_suspend return -EBUSY, which aborts the suspend (HW 2026-11-14, Pocket
+# ACE). Cost: the pad cannot wake the device; the power key does.
+#
+# "bind" as well as "add": xhci-pci-renesas is a module and binds after the PCI
+# device is added, and the HCD core enables wakeup when it binds.
+ACTION=="add|bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x1912", ATTR{device}=="0x0014", ATTR{power/wakeup}="disabled"

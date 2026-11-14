@@ -1,0 +1,30 @@
+From: Philippe Simons <simons.philippe@gmail.com>
+Subject: [PATCH] clk: qcom: gcc-sm8550: let the PCIe 1 GDSC collapse in suspend
+
+0143 makes the PCIe 0 controller GDSC collapsible, which is all the
+Retroid Pocket Nova needs: it only uses PCIe 0. The AYANEO Pockets also
+run PCIe 1, for the Renesas uPD720201 USB 3 controller the gamepad sits
+behind. With pcie_1_gdsc left at PWRSTS_RET_ON, gdsc_disable() keeps it
+powered across system suspend, and the SoC never reaches its low power
+states: HW 2026-11-14, Pocket ACE, 7.3.4, no pcie_ports=compat, both
+links taken down for suspend (PCIe 1 retrained on resume), apps RSC
+sleep set all zero, yet 0 s in aosd/cxsd/ddr over three suspends while
+apss collapsed.
+
+Same change as 0143 for the PCIe 1 controller GDSC: VOTABLE and
+RETAIN_FF_ENABLE stay, the PHY GDSC is left alone.
+
+[ Armada's 0566 and Kettle Linux's 40-kettle/1463 flip all four PCIe
+  GDSCs; this is the second of those, as 0143 is the first. ]
+---
+--- a/drivers/clk/qcom/gcc-sm8550.c
++++ b/drivers/clk/qcom/gcc-sm8550.c
+@@ -3025,7 +3025,7 @@
+ 	.pd = {
+ 		.name = "pcie_1_gdsc",
+ 	},
+-	.pwrsts = PWRSTS_RET_ON,
++	.pwrsts = PWRSTS_OFF_ON,
+ 	.flags = VOTABLE | POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+ 
