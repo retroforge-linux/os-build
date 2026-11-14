@@ -63,6 +63,8 @@ echo "[grub] autogen.sh (regenerating the module tables for the retroforge stanz
 ( cd "$SRCDIR" && ./autogen.sh )
 grep -q retroforge "$SRCDIR/grub-core/Makefile.in" \
   || { echo "autogen.sh did not pick up the retroforge module — is patch 0003 applied?" >&2; exit 1; }
+grep -q retroforge_radiomac "$SRCDIR/grub-core/Makefile.in" \
+  || { echo "autogen.sh did not pick up the retroforge_radiomac module — is patch 0007 applied?" >&2; exit 1; }
 
 BUILDDIR="$WORK/build"
 rm -rf "$BUILDDIR"; mkdir -p "$BUILDDIR"
@@ -109,10 +111,12 @@ make -j"$(nproc)" AWK=gawk
 #                           older roots' stage-2 configs still call
 MODULES="boot linux part_gpt fat btrfs loadenv search search_fs_file \
 search_fs_uuid search_label chain reboot halt sleep test true echo read \
-configfile regexp probe normal minicmd gfxterm efi_gop font all_video retroforge"
+configfile regexp probe normal minicmd gfxterm efi_gop font all_video retroforge \
+retroforge_radiomac"
 
 echo "[grub] grub-mkimage"
 test -f grub-core/retroforge.mod || { echo "retroforge.mod was not built — is patch 0003 applied?" >&2; exit 1; }
+test -f grub-core/retroforge_radiomac.mod || { echo "retroforge_radiomac.mod was not built — is patch 0007 applied?" >&2; exit 1; }
 ./grub-mkimage -d grub-core -O arm64-efi -p /EFI/steamos $MODULES \
   -o "$OUT/grubaa64.efi"
 

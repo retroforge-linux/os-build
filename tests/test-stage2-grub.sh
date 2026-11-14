@@ -381,6 +381,15 @@ for slot in A B; do
     || bad "grub-$lc.cfg picks the default before it reads OpenABL's model"
   ln_term=$(grep -n '^terminal_output gfxterm$' "$cfg" | cut -d: -f1)
 
+  # Radio addresses. The fixup applies when `linux` boots, so the command has to run before any
+  # menuentry can be chosen, and after the terminal is up so its failure can be read.
+  ln_mac=$(grep -n '^if retroforge_radiomac; then$' "$cfg" | cut -d: -f1)
+  ln_entry=$(grep -n '^menuentry ' "$cfg" | head -1 | cut -d: -f1)
+  [ -n "$ln_mac" ] && [ -n "$ln_term" ] && [ -n "$ln_entry" ] \
+    && [ "$ln_mac" -gt "$ln_term" ] && [ "$ln_mac" -lt "$ln_entry" ] \
+    && ok "grub-$lc.cfg arms retroforge_radiomac after the terminal and before the first entry" \
+    || bad "grub-$lc.cfg does not call retroforge_radiomac between terminal_output and the menu"
+
   # Console. rotation is read once, when the video driver builds the framebuffer render target, so
   # a `set rotation=` that lands AFTER terminal_output parses fine, ships, and does nothing — the
   # ordering is the whole assertion. The colours have no such constraint.
@@ -430,8 +439,8 @@ for slot in A B; do
   [ "$n_short" -eq 0 ] && ok "grub-$lc.cfg holds every diagnostic for 10s or more" \
     || bad "grub-$lc.cfg has $n_short arm(s) pausing under 10s — unreadable on a handheld panel"
   n_sleep=$(grep -cE '^ *sleep 10$' "$cfg")
-  [ "$n_sleep" -eq 3 ] && ok "grub-$lc.cfg: all 3 diagnostic arms pause 10s" \
-    || bad "grub-$lc.cfg has $n_sleep 10s pauses, expected 3 (an arm lost its dwell, or gained one)"
+  [ "$n_sleep" -eq 4 ] && ok "grub-$lc.cfg: all 4 diagnostic arms pause 10s" \
+    || bad "grub-$lc.cfg has $n_sleep 10s pauses, expected 4 (an arm lost its dwell, or gained one)"
 
   if command -v grub-script-check >/dev/null 2>&1; then
     grub-script-check "$cfg" 2>"$T/gscerr" \
