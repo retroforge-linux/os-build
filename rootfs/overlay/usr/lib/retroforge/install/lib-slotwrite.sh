@@ -263,21 +263,11 @@ seed_var() {  # <dev> <slot> <mnt> <source>
   # deliberately after the copy that would otherwise clobber it.
   printf '%s\n' "$SLOT" >"$mnt/lib/retroforge/slot"
 
-  # THE SECOND THING THE COPY MUST NOT KEEP: /var/lib/retroforge/mac-wifi, the write-once record of
-  # this device's derived Wi-Fi MAC. Deleted so the target re-derives it from the machine-id that
-  # the copy above just carried over (gen-mac.sh: sha256(machine-id)).
-  #
-  # On a healthy device this is a no-op in effect -- same machine-id in, same MAC out, so the
-  # address is stable across the update, which is the requirement. It matters for the devices where
-  # it is NOT a no-op: a unit flashed before the MAC-collision fix has a COLLIDING address persisted
-  # here, and because the file is write-once and outranks the derivation, that unit keeps the bad
-  # MAC forever.
-  rm -f "$mnt/lib/retroforge/mac-wifi"
-
-  # THE THIRD: an enable link for the pairing daemon in the /etc overlay upper. Pairing was always on
-  # until the shell got its Remote access switch, which starts and stops it (plan ota-ui D5); an
-  # older image's link copied here would start it at every boot of the target, accepting SSH keys
-  # with nobody having turned pairing on. The unit has no [Install] any more, so nothing recreates it.
+  # THE SECOND THING THE COPY MUST NOT KEEP: an enable link for the pairing daemon in the /etc
+  # overlay upper. Pairing was always on until the shell got its Remote access switch, which starts
+  # and stops it (plan ota-ui D5); an older image's link copied here would start it at every boot of
+  # the target, accepting SSH keys with nobody having turned pairing on. The unit has no [Install]
+  # any more, so nothing recreates it.
   rm -f "$mnt/lib/overlays/etc/upper/systemd/system/multi-user.target.wants/retroforge-pairingd.service"
 
   # Put the caller's handler back exactly as it was -- `trap - EXIT` only when there was nothing.

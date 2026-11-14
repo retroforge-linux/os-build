@@ -134,13 +134,12 @@ boot_from() {  # <A|B>
   write_grubenv "ORDER=$target $booted" A_OK=1 A_TRY=0 B_OK=1 B_TRY=0
 }
 
-# A running /var with the pieces that have to survive an update, plus the two that must not.
+# A running /var with the pieces that have to survive an update, plus the one that must not.
 seed_var() {
   mkdir -p "$SB/var/lib/retroforge" \
            "$SB/var/lib/overlays/etc/upper/NetworkManager/system-connections" \
            "$SB/var/lib/overlays/etc/work" "$SB/var/lib/systemd"
   printf 'a\n'          >"$SB/var/lib/retroforge/slot"
-  printf 'de:ad:be:ef:00:01\n' >"$SB/var/lib/retroforge/mac-wifi"
   printf '7070e56b\n'   >"$SB/var/lib/overlays/etc/upper/machine-id"
   printf '[wifi]\n'     >"$SB/var/lib/overlays/etc/upper/NetworkManager/system-connections/home.nmconnection"
   printf 'ssh-ed25519\n' >"$SB/var/lib/overlays/etc/upper/ssh_host_ed25519_key"
@@ -594,13 +593,11 @@ expect_rc 0
 expect_file "$(tvar B)/lib/retroforge/slot" 'B'
 done_
 
-t "the-mac-seed-does-not-survive-the-copy"
-# Write-once and outranks the derivation, so a unit flashed before the MAC-collision fix keeps a
-# colliding address forever unless an update clears it. Deleting it re-derives from the machine-id
-# the copy just carried over — same id, same MAC, so a healthy device sees no change.
+t "the-machine-id-survives-the-copy"
+# The device's identity: journald, D-Bus and the /etc overlay all key on it, so an update must not
+# turn the device into a new machine.
 run
 expect_rc 0
-expect_absent "$(tvar B)/lib/retroforge/mac-wifi"
 expect_file "$(tvar B)/lib/overlays/etc/upper/machine-id" '7070e56b'
 done_
 

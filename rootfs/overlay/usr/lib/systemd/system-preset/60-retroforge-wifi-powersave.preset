@@ -1,5 +1,5 @@
 # retroforge: Wi-Fi power save as the board profile asks (issue #27). /etc/machine-id is empty on a
 # fresh image, so systemd runs preset-all on first boot, where the stock 99-default.preset is
 # "disable *"; this keeps it enabled. A build-time multi-user.target.wants link ships alongside as a
-# fallback (cf. 60-retroforge-macgen.preset).
+# fallback (cf. 60-retroforge-powerbuttond.preset).
 enable retroforge-wifi-powersave.service

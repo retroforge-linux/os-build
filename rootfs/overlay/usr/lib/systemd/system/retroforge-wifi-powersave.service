@@ -2,7 +2,7 @@
 Description=retroforge Wi-Fi power save as the board profile asks
 # Writes (or removes) a NetworkManager drop-in under /run from the board profile's
 # RETROFORGE_WIFI_POWERSAVE (/usr/lib/retroforge/wifi-powersave): it must land before NetworkManager
-# reads its config, as retroforge-macgen.service does.
+# reads its config.
 DefaultDependencies=no
 After=local-fs.target
 Before=NetworkManager.service network-pre.target shutdown.target
