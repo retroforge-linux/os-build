@@ -2,7 +2,7 @@
 
 Status: written 2026-11-13 (branch feat/standalone-cheevos), design as agreed in chat 2026-11-13.
 Phase 1 DONE offline 2026-11-13 (not pushed); D1 REVISED the same day (user: the token in its own
-file, not RetroArch's settings), done offline; Phase 2 (HW) pending.
+file, not RetroArch's settings), done offline; Phase 2 (HW) mostly HW-OK on Pocket FIT 2026-11-14 (notes below), merged to main.
 
 ## Why
 
@@ -128,3 +128,24 @@ world-readable data anyway: obfuscation, not secrecy).
 6. Modes after each emulator exits: the token files' mode (0644 after exit = acceptable only because
    the next launch re-tightens; note which ones).
 7. One unlock in one standalone (softcore), seen on retroachievements.org.
+
+### Phase 2 notes (2026-11-14, Pocket FIT, dev card 91487d90, fresh card)
+
+- Step 0 not run: fresh card, no earlier sign-in.
+- 1: DONE. Settings sign-in writes retroachievements.json (0600). Each emulator logged in at its
+  first launch, on the seeded config: RetroArch (armgba core, gba), DuckStation, Flycast, PPSSPP,
+  ARMSX2 and Dolphin. Dolphin's log shows "loki666 logged in successfully". Its red "not supported
+  for this title" popup came from RetroAchievements: the NSMB Wii WBFS hash is not in RA's list,
+  although NSMB Wii (game 95) is.
+- 2: DONE. DuckStation accepted the encrypted token and added its own AvatarURL.
+- 3: DONE. ARMSX2 and Dolphin both log in.
+- 4: Hardcore on reached DuckStation (ChallengeMode) and Flycast (HardcoreMode), and both said
+  hardcore. Guide+L1 refusal not tried.
+- 5: DONE on DuckStation and Flycast: Enabled off, user and token emptied, the emulators' own keys
+  (DuckStation AvatarURL) kept. PPSSPP `.dat` removal not checked.
+- 6: Flycast emu.cfg, DuckStation settings.ini and ARMSX2 PCSX2.ini/secrets.ini stay 0600 after
+  exit; ARMSX2 moves the token from PCSX2.ini to its secrets.ini. Dolphin rewrites
+  RetroAchievements.ini as 0644 at exit, and the next launch re-tightens it (home is 0700).
+- 7: not tried.
+- Found along the way, not this branch: Flycast silent on a board without a mic (SDL3 opens the
+  retroforge-fallback node), issue #45.
