@@ -869,6 +869,7 @@
 				 &config_noc SLAVE_SDCC_2 QCOM_ICC_TAG_ALWAYS>;
 		interconnect-names = "sdhc-ddr", "cpu-sdhc";
 		power-domains = <&rpmhpd RPMHPD_CX>;
+		operating-points-v2 = <&sdhc2_opp_table>;
 		pinctrl-0 = <&sdc2_default>;
 		pinctrl-names = "default";
 		vmmc-supply = <&vreg_l24b_2p96>;
@@ -879,6 +880,25 @@
 		qcom,dll-config = <0x0007642c>;
 		qcom,ddr-config = <0x80040868>;
 		status = "okay";
+
+		/* kBps from the stock DTB, CX corners from vendor gcc-ravelin.c */
+		sdhc2_opp_table: opp-table {
+			compatible = "operating-points-v2";
+
+			opp-100000000 {
+				opp-hz = /bits/ 64 <100000000>;
+				required-opps = <&rpmhpd_opp_low_svs>;
+				opp-peak-kBps = <1600000 280000>;
+				opp-avg-kBps = <50000 0>;
+			};
+
+			opp-202000000 {
+				opp-hz = /bits/ 64 <202000000>;
+				required-opps = <&rpmhpd_opp_svs_l1>;
+				opp-peak-kBps = <5600000 1500000>;
+				opp-avg-kBps = <104000 0>;
+			};
+		};
 	};
 
 	apps_smmu: iommu@15000000 {
@@ -1459,6 +1479,13 @@
 		data-pins {
 			pins = "sdc2_data";
 			drive-strength = <10>;
+			bias-pull-up;
+		};
+
+		cd-pins {
+			pins = "gpio101";
+			function = "gpio";
+			drive-strength = <2>;
 			bias-pull-up;
 		};
 	};

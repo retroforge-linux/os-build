@@ -1113,9 +1113,19 @@
 };
 
 &sdhc_1 {
+        pinctrl-0 = <&sdc1_state_on>;
+        pinctrl-1 = <&sdc1_state_off>;
+        pinctrl-names = "default", "sleep";
+
         vmmc-supply = <&vreg_l24a_2p96>;
         vqmmc-supply = <&vreg_l11a_1p8>;
 
+        /* stock qcom,dll-hsr-list */
+        qcom,dll-config = <0x000f642c>;
+        qcom,ddr-config = <0x80040850>;
+
+        no-sd;
+        no-sdio;
         non-removable;
         supports-cqe;
         cap-mmc-hw-reset;
