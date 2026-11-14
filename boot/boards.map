@@ -19,7 +19,9 @@
 # (3x A510), 0-1 on SM8650 (2x A520). The SM8250 rows carry no irqaffinity, so
 # the kernel's default spread applies there, and their column is empty. The SM8550
 # rows' allow_mismatched_32bit_el0 / fw_devlink.strict / pcie_ports are SoC
-# workarounds and are deliberately absent from the SM8250 rows; so is the
+# workarounds and are deliberately absent from the SM8250 rows (the Nova and the
+# AYANEO rows drop pcie_ports=compat: with portdrv bound, the kernel takes the
+# PCIe links down for suspend and the SoC can collapse); so is the
 # 045e:028e USB polling quirk, which only some boards carry.
 # The SM6115 rows (MANGMI Air X, three panel variants of one board — the DTS
 # decides the panel driver, so the user has to pick the right one — and the
@@ -45,13 +47,13 @@
 # beyond our common line. No irqaffinity until a tuning pass measures one (ROCKNIX sets none),
 # and no allow_mismatched_32bit_el0: both clusters run 32-bit EL0.
 anbernic-rg55g1	Anbernic RG 55G1	sm4450-anbernic-rg55g1	gpt
-ayaneo-pocket-ace	AYANEO Pocket ACE	qcs8550-ayaneo-pocketace	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
-ayaneo-pocket-dmg	AYANEO Pocket DMG	qcs8550-ayaneo-pocketdmg	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
-ayaneo-pocket-ds	AYANEO Pocket DS	qcs8550-ayaneo-pocketds	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
-ayaneo-pocket-evo	AYANEO Pocket EVO	qcs8550-ayaneo-pocketevo	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
-ayaneo-pocket-s1k	AYANEO Pocket S 1K	qcs8550-ayaneo-pockets1k	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
+ayaneo-pocket-ace	AYANEO Pocket ACE	qcs8550-ayaneo-pocketace	allow_mismatched_32bit_el0 fw_devlink.strict=1 irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
+ayaneo-pocket-dmg	AYANEO Pocket DMG	qcs8550-ayaneo-pocketdmg	allow_mismatched_32bit_el0 fw_devlink.strict=1 irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
+ayaneo-pocket-ds	AYANEO Pocket DS	qcs8550-ayaneo-pocketds	allow_mismatched_32bit_el0 fw_devlink.strict=1 irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
+ayaneo-pocket-evo	AYANEO Pocket EVO	qcs8550-ayaneo-pocketevo	allow_mismatched_32bit_el0 fw_devlink.strict=1 irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
+ayaneo-pocket-s1k	AYANEO Pocket S 1K	qcs8550-ayaneo-pockets1k	allow_mismatched_32bit_el0 fw_devlink.strict=1 irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
 ayaneo-pocket-s2	AYANEO Pocket S2	sm8650-ayaneo-ps2	irqaffinity=0-1 usbcore.interrupt_interval_override=045e:028e:2
-ayaneo-pocket-s2k	AYANEO Pocket S 2K	qcs8550-ayaneo-pockets2k	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
+ayaneo-pocket-s2k	AYANEO Pocket S 2K	qcs8550-ayaneo-pockets2k	allow_mismatched_32bit_el0 fw_devlink.strict=1 irqaffinity=0-2 usbcore.interrupt_interval_override=045e:028e:2
 ayn-odin-2	AYN Odin 2	qcs8550-ayn-odin2	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2
 ayn-odin-2-mini	AYN Odin 2 Mini	qcs8550-ayn-odin2mini	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2
 ayn-odin-2-portal	AYN Odin 2 Portal	qcs8550-ayn-odin2portal	allow_mismatched_32bit_el0 fw_devlink.strict=1 pcie_ports=compat irqaffinity=0-2
