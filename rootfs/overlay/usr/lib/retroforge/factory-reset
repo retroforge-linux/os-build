@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+# retroforge factory reset — carries out a reset the player asked for in Settings (issue #40,
+# .claude/plans/factory-reset.plan.md).
+#
+#     factory-reset --var-dev <the booted /var device, e.g. /dev/mmcblk0p6>
+#
+# WHO RUNS IT: the initramfs (image/initramfs/init), at the boot after the request, chrooted into the
+# read-only root it has just mounted and BEFORE it mounts /var: the /etc overlay lives on /var, and a
+# mounted /var cannot be reformatted. So this runs with nothing of the device's state in use. It is in
+# the OS, not the initramfs, for its tools (mkfs.ext4, tar, zstd) and for the two libraries every
+# other writer of slots and homes already shares (lib-slotwrite.sh, lib-homestage.sh).
+#
+# THE REQUEST is RETROFORGE-ESP:/retroforge/factory-reset, written by the reset UI after the player's
+# consent (installer/uiflow.py, reset mode):
+#
+#     level=soft|hard
+#     nonce=<anything>
+#     tries=<n>          absent = 0
+#
+# On the shared ESP because nothing here wipes it and both slots boot from it. No request: exit 0,
+# nothing touched (the initramfs only calls this when the file is there, but a stale call is harmless).
+#
+# WHAT A RESET IS (plan D1, D2): the device as a freshly flashed card starts, the OS slots untouched.
+#   /home soft  everything goes except player/{roms,bios,saves,states} -- the four SMB shares. The
+#               offload tree (/home/.retroforge: logs, /root, pacman cache) goes too; the next boot
+#               recreates it and seeds it from the read-only root (retroforge-offload-prepare), which
+#               is what brings a dev card's SSH key back.
+#   /home hard  a new filesystem (mkfs_home, the installer's) and an empty staged player home.
+#   var-a/var-b BOTH reseeded from /usr/lib/retroforge/var-seed.tar.zst with seed_var, as the
+#               installer does: Wi-Fi, pairings, machine-id, SSH host keys gone. Both, because the
+#               OTA path copies the running /var onto the other slot, and a stale one would bring the
+#               old state back on a rollback.
+# The Wi-Fi/Bluetooth addresses are GRUB's (retroforge_radiomac), not /var's: they come back the same.
+#
+# ONLY THIS DISK. The partitions are the ones named RETROFORGE-ESP, retroforge-home, retroforge-var-A
+# and -B ON THE DISK THAT HOLDS --var-dev, found through sysfs (PARTNAME in each partition's uevent):
+# the initramfs has no udev, and /dev/disk/by-partlabel would pick any disk -- a second card carries
+# the same names (69-retroforge-bootdisk.rules has the same rule for the running system).
+#
+# RESUMABLE. Every step can run again, and the request is removed LAST: a power cut anywhere redoes
+# the whole reset at the next boot. `tries` counts the attempts; at MAX_TRIES the request is left
+# alone and this exits 3 without touching anything, so a reset that cannot succeed (a dying card)
+# costs a few boots, never a device that reboots forever.
+#
+# Exit: 0 done (or nothing asked), 2 usage, 3 gave up (MAX_TRIES), 1 a step failed (the request
+# stays, with its try counted; a request with no valid level is removed, nothing reset). Logs on stderr; the initramfs sends them to /dev/kmsg.
+#
+# Test seams (tests/test-factory-reset.sh): SYSFS, DEVDIR, RUNDIR, LIBDIR, VAR_SEED; PATH for
+# mount/umount/mkfs.ext4; PLAYER_UID/PLAYER_GID (lib-homestage.sh).
+set -uo pipefail
+
+PROG=${0##*/}
+log() { printf '[%s] %s\n' "$PROG" "$1" >&2; }
+die() { printf '[%s] ERROR: %s\n' "$PROG" "$1" >&2; exit 1; }
+
+SYSFS=${SYSFS:-/sys}
+DEVDIR=${DEVDIR:-/dev}
+RUNDIR=${RUNDIR:-/run/retroforge-reset}
+LIBDIR=${LIBDIR:-/usr/lib/retroforge/install}
+VAR_SEED=${VAR_SEED:-/usr/lib/retroforge/var-seed.tar.zst}
+REQUEST=retroforge/factory-reset           # on the ESP
+MAX_TRIES=3
+KEEP_SOFT=(roms bios saves states)         # plan D1: the four shares, nothing else
+
+# shellcheck source=install/lib-slotwrite.sh
+. "$LIBDIR/lib-slotwrite.sh" || die "cannot load $LIBDIR/lib-slotwrite.sh"
+# shellcheck source=install/lib-homestage.sh
+. "$LIBDIR/lib-homestage.sh" || die "cannot load $LIBDIR/lib-homestage.sh"
+
+usage() { printf 'usage: %s --var-dev <device>\n' "$PROG" >&2; exit 2; }
+
+VAR_DEV=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --var-dev) VAR_DEV="${2:-}"; shift 2 || usage ;;
+    *) usage ;;
+  esac
+done
+[ -n "$VAR_DEV" ] || usage
+
+declare -A PART=()   # GPT name -> device node, on --var-dev's disk only
+
+# Every partition of the disk holding --var-dev, by GPT name. sysfs: class/block/<part> links into
+# .../block/<disk>/<part>, whose siblings with a `partition` file are the disk's partitions.
+find_parts() {
+  local name link diskdir p uevent pname devname
+  name=${VAR_DEV##*/}
+  link="$SYSFS/class/block/$name"
+  [ -e "$link" ] || die "$VAR_DEV is not a block device in $SYSFS"
+  # Physical: `cd link/..` would resolve the .. by name, back into class/block.
+  diskdir=$(cd -P "$link" 2>/dev/null && cd .. && pwd -P) || die "cannot find the disk holding $VAR_DEV"
+  for p in "$diskdir"/*/; do
+    [ -f "$p/partition" ] || continue
+    uevent="$p/uevent"
+    pname=$(sed -n 's/^PARTNAME=//p' "$uevent" 2>/dev/null)
+    devname=$(sed -n 's/^DEVNAME=//p' "$uevent" 2>/dev/null)
+    [ -n "$pname" ] && [ -n "$devname" ] && PART[$pname]="$DEVDIR/$devname"
+  done
+  local need
+  for need in RETROFORGE-ESP retroforge-home retroforge-var-A retroforge-var-B; do
+    [ -n "${PART[$need]:-}" ] || die "no $need on the disk holding $VAR_DEV"
+  done
+}
+
+# key=value from the request; empty when absent.
+field() { sed -n "s/^$1=//p" "$RUNDIR/esp/$REQUEST" | head -1; }
+
+# The request with tries+1, replaced atomically (vfat renames in place) and on disk before any wipe.
+count_try() {
+  local tries="$1" level="$2" nonce="$3" tmp="$RUNDIR/esp/$REQUEST.new"
+  printf 'level=%s\nnonce=%s\ntries=%s\n' "$level" "$nonce" "$((tries + 1))" >"$tmp" \
+    && sync "$tmp" && mv -f "$tmp" "$RUNDIR/esp/$REQUEST" && sync "$RUNDIR/esp" \
+    || die "cannot record the attempt in the request"
+}
+
+# Everything in <dir> except the names given (and lost+found), dotfiles included.
+clear_except() {  # <dir> <keep>...
+  local dir="$1" e base k keep
+  shift
+  for e in "$dir"/* "$dir"/.[!.]* "$dir"/..?*; do
+    [ -e "$e" ] || [ -L "$e" ] || continue
+    base=${e##*/}
+    keep=0
+    for k in lost+found "$@"; do [ "$base" = "$k" ] && keep=1; done
+    [ "$keep" = 1 ] && continue
+    rm -rf -- "$e" || die "cannot remove $e"
+  done
+}
+
+reset_home() {  # soft|hard
+  local dev="${PART[retroforge-home]}" mnt="$RUNDIR/home"
+  if [ "$1" = hard ]; then
+    mkfs_home "$dev"
+    log "home: new filesystem on $dev"
+  fi
+  mount "$dev" "$mnt" || die "cannot mount home ($dev)"
+  if [ "$1" = soft ]; then
+    clear_except "$mnt" player
+    [ -d "$mnt/player" ] && clear_except "$mnt/player" "${KEEP_SOFT[@]}"
+    log "home: kept player/{${KEEP_SOFT[*]}}, everything else removed"
+  fi
+  stage_player_home "$mnt"
+  sync -f "$mnt" 2>/dev/null || sync
+  umount "$mnt" || die "cannot unmount home"
+}
+
+main() {
+  find_parts
+  mkdir -p "$RUNDIR/esp" "$RUNDIR/home" "$RUNDIR/var" || die "cannot create $RUNDIR"
+  mount "${PART[RETROFORGE-ESP]}" "$RUNDIR/esp" || die "cannot mount the ESP (${PART[RETROFORGE-ESP]})"
+  # The ESP comes off on every way out from here, so the initramfs's own mount of nothing stays clean.
+  trap 'umount "$RUNDIR/esp" 2>/dev/null' EXIT
+
+  if [ ! -f "$RUNDIR/esp/$REQUEST" ]; then
+    log "no reset requested"
+    exit 0
+  fi
+  local level nonce tries
+  level=$(field level); nonce=$(field nonce); tries=$(field tries)
+  case "$level" in
+    soft|hard) ;;
+    *)  # Not one our UI writes: nothing can be done with it, and keeping it would log this every boot.
+        rm -f "$RUNDIR/esp/$REQUEST"; sync "$RUNDIR/esp"
+        die "the request names no level (soft or hard): '$level' -- removed, nothing reset" ;;
+  esac
+  case "$tries" in ''|*[!0-9]*) tries=0 ;; esac
+  if [ "$tries" -ge "$MAX_TRIES" ]; then
+    log "the $level reset failed $tries times: giving up, the request stays on the ESP ($REQUEST)"
+    exit 3
+  fi
+  count_try "$tries" "$level" "$nonce"
+  log "$level reset, attempt $((tries + 1)) of $MAX_TRIES (home ${PART[retroforge-home]}, var ${PART[retroforge-var-A]} ${PART[retroforge-var-B]})"
+
+  [ -f "$VAR_SEED" ] || die "no /var seed at $VAR_SEED"
+  reset_home "$level"
+  seed_var "${PART[retroforge-var-A]}" A "$RUNDIR/var" "$VAR_SEED"
+  seed_var "${PART[retroforge-var-B]}" B "$RUNDIR/var" "$VAR_SEED"
+
+  rm -f "$RUNDIR/esp/$REQUEST" && sync "$RUNDIR/esp" || die "cannot remove the request"
+  log "$level reset done"
+}
+
+main

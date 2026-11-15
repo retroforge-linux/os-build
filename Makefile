@@ -469,6 +469,7 @@ check-hw-paths: ## Check every board's hardware-map pins against its DTB (out/dt
 test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-bootctl.sh
 	bash $(TESTS_DIR)/test-post-install.sh
+	bash $(TESTS_DIR)/test-factory-reset.sh
 	bash $(TESTS_DIR)/test-boot-disk.sh
 	bash $(TESTS_DIR)/test-pairingd.sh
 	bash $(TESTS_DIR)/test-power-led.sh
