@@ -243,6 +243,18 @@ degrade() {
 }
 
 # ---------------------------------------------------------------------------------------------
+# Factory reset (Settings > General > Factory reset; .claude/plans/factory-reset.plan.md)
+# ---------------------------------------------------------------------------------------------
+# HERE, between the root and /var: the reset reformats both /var slots, so /var and the /etc overlay
+# on it must not be mounted yet, and it runs out of the root just mounted. The hook looks for the
+# request on this disk's ESP and hands over to the OS's /usr/lib/retroforge/factory-reset; it never
+# stops the boot (factory-reset-hook.sh's header). Without a retroforge.var= there is no slot to reset
+# and the block below degrades on its own.
+if [ -n "$VARSPEC" ] && [ -f /usr/lib/retroforge/factory-reset-hook.sh ] && _rdev=$(resolve "$VARSPEC"); then
+  . /usr/lib/retroforge/factory-reset-hook.sh && factory_reset_hook "$_rdev" "$SYSROOT"
+fi
+
+# ---------------------------------------------------------------------------------------------
 # /var + the /etc overlay
 # ---------------------------------------------------------------------------------------------
 # Kept inline rather than in a function: a $(...) capture would run the mounts in a subshell

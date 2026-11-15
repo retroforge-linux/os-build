@@ -470,6 +470,7 @@ test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-bootctl.sh
 	bash $(TESTS_DIR)/test-post-install.sh
 	bash $(TESTS_DIR)/test-factory-reset.sh
+	bash $(TESTS_DIR)/test-factory-reset-hook.sh
 	bash $(TESTS_DIR)/test-boot-disk.sh
 	bash $(TESTS_DIR)/test-pairingd.sh
 	bash $(TESTS_DIR)/test-power-led.sh
@@ -777,7 +778,7 @@ $(ROOTFS): $(KERNEL) $(INITRAMFS) $(GRUB) boot/esp-dtbs.sh $(BASE_STAMP) $(FW_LI
 # ==============================================================================
 # The initramfs mounts the slot's root + var + efi partition, stacks the /etc overlay, and
 # switch_roots. It is staged out of the base rootfs (bash + util-linux), so the base is a prereq.
-$(INITRAMFS): $(IMAGE_DIR)/mkinitramfs.sh $(IMAGE_DIR)/initramfs/init $(SPLASH_BIN) $(SPLASH_ASSET) $(BASE_STAMP) | $(BUILD_STAMP)
+$(INITRAMFS): $(IMAGE_DIR)/mkinitramfs.sh $(IMAGE_DIR)/initramfs/init $(IMAGE_DIR)/initramfs/factory-reset-hook.sh $(SPLASH_BIN) $(SPLASH_ASSET) $(BASE_STAMP) | $(BUILD_STAMP)
 	$(INBUILD) $(IMAGE_DIR)/mkinitramfs.sh /src/work/base
 
 # The boot splash: a static aarch64 drawer plus the flattened logo. Both are initramfs payload,

@@ -33,12 +33,13 @@ IMG="$OUT/initramfs.cpio.zst"
 # partition table, and findfs the rest, both without udev; mkdir creates the overlay upper/work and
 # the /efi mountpoint on first boot; sleep paces the device-probe poll.
 #
-# NO umount: the init mounts only INSIDE the btrfs root ($SYSROOT/efi, $SYSROOT/var), so every
-# mount survives switch_root attached to the new root's filesystem, and the shared ESP is never
-# mounted at all (the booted system mounts it at /esp from /etc/fstab). The old design-C need
-# for a pre-switch_root umount — a still-mounted initramfs-root /esp becoming an orphan and
-# gpt-auto mounting the same vfat twice — is gone with the ESP-state code.
-BINS=(bash mount switch_root partx findfs mkdir sleep)
+# The init's own mounts are all INSIDE the btrfs root ($SYSROOT/efi, $SYSROOT/var), so they survive
+# switch_root attached to the new root's filesystem. umount and chroot are the factory reset hook's
+# (image/initramfs/factory-reset-hook.sh): it mounts the ESP read-only just long enough to look for a
+# request, and on a request binds /dev /proc /sys /run into the root, chroots into it to run the OS's
+# /usr/lib/retroforge/factory-reset, and unbinds all of it again -- nothing it mounts reaches
+# switch_root (a still-mounted /esp there was design C's orphan-and-double-mount problem).
+BINS=(bash mount umount switch_root partx findfs mkdir sleep chroot)
 
 # The boot splash. Three files, staged whole rather than resolved through copy_deps() below,
 # because the drawer is STATIC on purpose (apps/retroforge-splash/src/retroforge-splash.c explains
@@ -109,6 +110,7 @@ for b in "${BINS[@]}"; do
 done
 
 install -m0755 "$INIT" "$stage/init"
+install -D -m0644 "$ROOT/image/initramfs/factory-reset-hook.sh" "$stage/usr/lib/retroforge/factory-reset-hook.sh"
 
 # --- boot splash --------------------------------------------------------------------------
 # Missing pieces are a hard error, not a warning. A splash that silently is not in the cpio
