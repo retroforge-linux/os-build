@@ -224,8 +224,11 @@ fi
   #       unpack it and panics before any log reaches a disk.
   #   =y  CPU_IDLE + ARM_PSCI_CPUIDLE: without them every core idles in WFI, a battery and heat
   #       cost with no other symptom. defconfig had CPU_IDLE only through ACPI's select.
+  #   =y  USB_STORAGE + USB_UAS: a root on a USB drive. With UAS a module, usb-storage refuses a
+  #       UAS drive and the initramfs, which loads no modules, never sees it.
   for pair in CFG80211=m MAC80211=m TOUCHSCREEN_CHIPONE_TDDI=m VIDEO_QCOM_IRIS=m VIDEO_QCOM_VENUS=m \
               NETFILTER_NETLINK=y EFI_ZBOOT=y KERNEL_GZIP=y RD_ZSTD=y CPU_IDLE=y ARM_PSCI_CPUIDLE=y \
+              USB_STORAGE=y USB_UAS=y \
               BLK_DEV_DM=y DM_VERITY=y VFAT_FS=y BLK_DEV_LOOP=y \
               ZRAM=y ZRAM_BACKEND_ZSTD=y \
               DRM_MSM=y PCIE_QCOM=y PCI_PWRCTRL_GENERIC=y MMC_SDHCI_MSM=y SCSI_UFSHCD=y \

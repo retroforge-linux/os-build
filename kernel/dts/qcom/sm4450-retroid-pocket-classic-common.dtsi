@@ -829,7 +829,11 @@
 		phy-names = "usb2-phy", "usb3-phy";
 		dr_mode = "otg";
 		usb-role-switch;
-		role-switch-default-mode = "peripheral";
+		/*
+		 * Host until UCSI reports a role. UCSI runs on the ADSP, which starts from the root
+		 * filesystem, so a root on a USB drive is only reached with the port already a host.
+		 */
+		role-switch-default-mode = "host";
 
 		ports {
 			#address-cells = <1>;

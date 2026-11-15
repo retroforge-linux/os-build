@@ -1374,6 +1374,12 @@
  *  USB
  * ===================================================================== */
 &usb {
+	/*
+	 * Host until UCSI reports a role. UCSI runs on the ADSP, which starts from the root
+	 * filesystem, so a root on a USB drive is only reached with the port already a host.
+	 */
+	role-switch-default-mode = "host";
+
 	status = "okay";
 };
 
