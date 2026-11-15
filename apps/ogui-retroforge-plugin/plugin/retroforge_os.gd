@@ -20,6 +20,9 @@ extends OSPlatform
 ## and stop that one unit. The switch shows the daemon's real state, read again whenever Settings >
 ## General opens, so it never claims "on" after a crash or "off" while it still listens.
 ##
+## Last, Factory reset: two rows (keep games / erase everything), each confirmed in OGUI's dialog, starting
+## retroforge-reset@soft|hard.service, whose own screen takes the pad-sequence consent.
+##
 ## Between them, on a card only, Internal storage: one button that asks release-info what would be
 ## installed, confirms in OGUI's dialog, and starts retroforge-installer.service, which ends this
 ## session and takes the panel (polkit 50-retroforge-installer.rules). --no-block because the session
@@ -40,6 +43,20 @@ const INSTALLER_UNIT := "retroforge-installer.service"
 const BOOT_MEDIUM := "/usr/lib/retroforge/install/boot-medium"
 const RELEASE_INFO := "/usr/lib/retroforge/install/release-info"
 const INSTALL_TEXT := "Install RetroForge beside Android, so the device runs without this card."
+## Factory reset (issue #40, .claude/plans/factory-reset.plan.md): the unit of each level, and its rows.
+const RESET_UNIT := "retroforge-reset@%s.service"
+const RESET_ROWS := {
+	"soft": {
+		"name": "RetroForgeResetSoft", "text": "Reset settings, keep games", "button": "Reset",
+		"description": "Keeps your ROMs, BIOS files, saves and states. Erases settings, Wi-Fi, sign-ins and downloads.",
+		"confirm": "Restart and reset this device? Your ROMs, BIOS files, saves and states are kept; everything else is erased. You confirm on the next screen.",
+	},
+	"hard": {
+		"name": "RetroForgeResetHard", "text": "Erase everything", "button": "Erase",
+		"description": "Erases everything you put on this device, ROMs and saves included. The RetroForge version stays.",
+		"confirm": "Restart and erase everything on this device? ROMs, saves and settings are erased for good. You confirm on the next screen.",
+	},
+}
 
 var notification_manager := load("res://core/global/notification_manager.tres") as NotificationManager
 var button_scene := load("res://core/ui/components/card_button_setting.tscn") as PackedScene
@@ -93,6 +110,7 @@ func ready(root: Window) -> void:
 	_add_remote_access(box)
 	_add_separator_under(box, "Appearance")
 	_add_internal_install(box)
+	_add_factory_reset(box)
 
 
 func detach() -> void:
@@ -289,6 +307,48 @@ func _on_install_pressed() -> void:
 	if code != 0:
 		logger.warn("systemctl start %s exited %d: %s" % [INSTALLER_UNIT, code, start.stderr])
 		_notify("Could not start the installer")
+
+
+## Factory reset, last in Settings > General: one row per level. Each confirms in OGUI's dialog and starts
+## retroforge-reset@<level>.service, which ends this session and takes the consent on the panel before
+## anything is written (polkit 50-retroforge-reset.rules); --no-block because the session asking is the
+## one being stopped. On a card and on an internal install alike.
+func _add_factory_reset(box: Node) -> void:
+	var label = section_scene.instantiate()
+	label.text = "Factory reset"
+	var rows: Array[Node] = []
+	for level in ["soft", "hard"]:
+		var row = button_scene.instantiate()
+		row.name = RESET_ROWS[level]["name"]
+		row.text = RESET_ROWS[level]["text"]
+		rows.append(row)
+	# In the tree first, for the reason _add_updater gives.
+	for node in [label, HSeparator.new()] + rows:
+		box.add_child(node)
+		_nodes.append(node)
+	for i in rows.size():
+		var level: String = ["soft", "hard"][i]
+		rows[i].button_text = RESET_ROWS[level]["button"]
+		rows[i].description = RESET_ROWS[level]["description"]
+		rows[i].button_up.connect(_on_reset_pressed.bind(level, rows[i]))
+
+
+func _on_reset_pressed(level: String, row: Control) -> void:
+	var dialog = (Engine.get_main_loop() as SceneTree).get_first_node_in_group("dialog")
+	if not dialog:  # never start it unconfirmed
+		logger.warn("no OGUI dialog to confirm the factory reset with")
+		return
+	dialog.open(row, RESET_ROWS[level]["confirm"], RESET_ROWS[level]["button"], "Cancel")
+	if not await dialog.choice_selected:
+		return
+	var unit := RESET_UNIT % level
+	var start := Command.create(systemctl, ["--no-block", "start", unit])
+	var code := -1
+	if start.execute() == OK:
+		code = await start.finished as int
+	if code != 0:
+		logger.warn("systemctl start %s exited %d: %s" % [unit, code, start.stderr])
+		_notify("Could not start the factory reset")
 
 
 func _on_general_entered(_from: State) -> void:

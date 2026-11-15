@@ -1587,5 +1587,87 @@ JC="$T/bin/nonexistent-journalctl" savelog \
 grep -q 'no journalctl' "$LOGOUT" && ok "and it says which part is missing" || bad "the log does not record why it is empty"
 LOGOUT="/proc/nonexistent/install.log" savelog && ok "an unwritable path exits 0 too" || bad "an unwritable log failed the unit"
 
+# =================================================================================================
+# Factory reset mode (issue #40, .claude/plans/factory-reset.plan.md): the same UI, started by
+# retroforge-reset@<level>.service. It writes the request on the ESP only after the pad-sequence
+# consent; Cancel, an aborted consent or five wrong sequences write nothing.
+reset_ui() {  # <level> <tokens...>: the real UI as a process; $T/esp/retroforge/factory-reset is the request
+  local level="$1"; shift
+  rm -rf "$T/esp"; mkdir -p "$T/esp"
+  printf '%s\n' "$@" >"$T/ev-reset"
+  RETROFORGE_UI_MODE=reset RETROFORGE_RESET_LEVEL="$level" RETROFORGE_RESET_REQUEST="$T/esp/retroforge/factory-reset" \
+    RETROFORGE_UI_SOCK="$T/sock.reset.$RANDOM" RETROFORGE_UI_EVENTS="$T/ev-reset" "$UI" >"$T/ui-reset.log" 2>&1
+}
+CASE="factory reset: the consent writes the request"
+for level in soft hard; do
+  reset_ui "$level" S SHOWN; rc=$?
+  req="$T/esp/retroforge/factory-reset"
+  [ "$rc" = 0 ] && [ "$(sed -n 's/^level=//p' "$req" 2>/dev/null)" = "$level" ] \
+    && grep -qx 'tries=0' "$req" && grep -qE '^nonce=[0-9a-f]{16}$' "$req" && [ ! -e "$req.new" ] \
+    && grep -q "factory reset ($level) requested: restarting" "$T/ui-reset.log" \
+    && ok "$level: Continue, then the shown sequence: level=$level, a nonce, tries=0, exit 0 (the unit reboots)" \
+    || bad "$level: rc=$rc request: $(cat "$req" 2>&1) log: $(tail -3 "$T/ui-reset.log")"
+done
+CASE="factory reset: nothing written without consent"
+reset_ui soft BACK; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$T/esp/retroforge" ] && ok "Cancel on the reset screen: exit 0, nothing on the ESP" || bad "rc=$rc"
+reset_ui hard S BACK; rc=$?
+[ "$rc" = 0 ] && [ ! -e "$T/esp/retroforge" ] && ok "SELECT on the consent: back, nothing on the ESP" || bad "rc=$rc"
+reset_ui everything S SHOWN; rc=$?
+[ ! -e "$T/esp/retroforge" ] && ok "an unknown level: no reset screen, nothing on the ESP" || bad "rc=$rc"
+
+# Module level, with the sequence fixed, for what the scripted pad cannot know in advance.
+reset_flow() {  # <tokens, one per line> <request path> -> prints JSON
+  TOKENS="$1" REQ="$2" python3 - <<'PY'
+import importlib.util, json, os, tempfile
+from importlib.machinery import SourceFileLoader
+os.environ["RETROFORGE_RESET_REQUEST"] = os.environ["REQ"]
+loader = SourceFileLoader("rsui", os.path.join(os.environ["ROOT"], "installer/ui"))
+spec = importlib.util.spec_from_loader("rsui", loader)
+ui = importlib.util.module_from_spec(spec); loader.exec_module(ui)
+import uiflow
+uiflow.RESET_REQUEST = os.environ["REQ"]
+asked = []
+def fixed():
+    asked.append("NESW"); return "NESW"
+ui.random_sequence = fixed
+d = tempfile.mkdtemp()
+ev = os.path.join(d, "ev"); open(ev, "w").write(os.environ["TOKENS"])
+server = ui.ConfirmServer(os.path.join(d, "sock"))
+view = ui.NullView()
+base = uiflow.ResetScreen("hard")
+rc = ui.run(server, view, ui.ScriptedInput(ev), base, deadline=10)
+server.close()
+print(json.dumps({"rc": rc, "asked": len(asked), "last": view.last, "written": os.path.exists(os.environ["REQ"])}))
+PY
+} 2>/dev/null
+CASE="factory reset: wrong sequences"
+out=$(reset_flow $'S\nE\nN\nE\nS\nW' "$T/req-wrong")
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(not (d["asked"]==2 and d["written"] and d["rc"]==0))' "$out" \
+  && ok "a wrong first press re-randomises, the next right one writes the request" || bad "$out"
+# A trailing key the reset screen ignores: the frame of a press is drawn on the NEXT turn of the loop.
+out=$(reset_flow $'S\nE\nE\nE\nE\nE\nIGNORED' "$T/req-five")
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.exit(not (d["asked"]==5 and not d["written"] and d["last"]["screen"]=="reset"))' "$out" \
+  && ok "five wrong sequences: back on the reset screen, nothing written" || bad "$out"
+CASE="factory reset: a request that cannot be written"
+out=$(reset_flow $'S\nN\nE\nS\nW\nIGNORED' "/proc/nonexistent/retroforge/factory-reset")
+python3 -c 'import json,sys; d=json.loads(sys.argv[1]); b=dict(d["last"]["blocks"]); sys.exit(not (not d["written"] and d["last"]["screen"]=="reset" and "Could not start the reset" in b))' "$out" \
+  && ok "the reset screen says so, the device is not restarted into a reset" || bad "$out"
+CASE="factory reset: the screens say what goes"
+words=$(python3 - <<'PY'
+import json, os, sys
+sys.path.insert(0, os.path.join(os.environ["ROOT"], "installer"))
+import uiflow
+soft, hard = uiflow.ResetScreen("soft").describe(), uiflow.ResetScreen("hard").describe()
+print(json.dumps({"soft": dict(soft["blocks"]), "hard": dict(hard["blocks"]), "buttons": soft["buttons"]}))
+PY
+)
+python3 -c '
+import json,sys; d=json.loads(sys.argv[1]); s, h = d["soft"], d["hard"]
+ok = ("ROMs" in s["Kept"] and "saves" in s["Kept"] and "Wi-Fi" in s["Erased"] and "Kept" not in h
+      and "NOT recoverable" in h["Erased"] and "ROMs" in h["Erased"] and "other SD card" in s["Not changed"]
+      and [b["pos"] for b in d["buttons"]] == ["S", "SELECT"])
+sys.exit(not ok)' "$words" && ok "soft keeps ROMs/BIOS/saves/states and erases Wi-Fi; hard erases ROMs, NOT recoverable; Continue/Cancel" || bad "$words"
+
 printf '\ntest-ui.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

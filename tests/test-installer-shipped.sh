@@ -182,5 +182,41 @@ JS
     || bad "verdicts (start stop restart other-unit inactive non-wheel ssh enable): $verdicts"
 fi
 
+echo "--- the factory reset rule grants start of its two instances only ---"
+RULE="$ROOT/rootfs/overlay/usr/share/polkit-1/rules.d/50-retroforge-reset.rules"
+if [ ! -f "$RULE" ]; then
+  bad "missing: ${RULE#"$ROOT"/}"
+elif ! command -v node >/dev/null; then
+  printf '  skip no node to evaluate the rule\n'
+else
+  verdicts="$(node - "$RULE" <<'JS'
+const fs = require("fs");
+let rule;
+global.polkit = { Result: { YES: "yes", NO: "no" }, addRule: f => { rule = f; } };
+eval(fs.readFileSync(process.argv[2], "utf8"));
+const ask = (id, unit, verb, active = true, wheel = true, local = true) =>
+  rule({ id, lookup: k => ({ unit, verb })[k] }, { active, local, isInGroup: g => g === "wheel" && wheel }) || "pass";
+const M = "org.freedesktop.systemd1.manage-units", S = "retroforge-reset@soft.service", H = "retroforge-reset@hard.service";
+console.log([
+  ask(M, S, "start"), ask(M, H, "start"), ask(M, "retroforge-reset@all.service", "start"),
+  ask(M, "retroforge-reset@.service", "start"), ask(M, S, "stop"), ask(M, H, "restart"),
+  ask(M, S, "start", false), ask(M, H, "start", true, false), ask(M, S, "start", true, true, false),
+  ask("org.freedesktop.systemd1.manage-unit-files", S, "enable"),
+].join(" "));
+JS
+)"
+  [ "$verdicts" = "yes yes pass pass pass pass pass pass pass pass" ] \
+    && ok "start of retroforge-reset@soft/@hard, for the active local wheel session, and nothing else" \
+    || bad "verdicts (soft hard other-level template stop restart inactive non-wheel ssh enable): $verdicts"
+fi
+UNIT="$ROOT/rootfs/overlay/usr/lib/systemd/system/retroforge-reset@.service"
+GATE="$ROOT/rootfs/overlay/usr/lib/systemd/system/retroforge-installer.service"
+gate() { grep -E '^(Conflicts|ExecStartPre|ExecStart|StandardInput|Restart)=' "$1"; }
+[ "$(gate "$UNIT")" = "$(gate "$GATE")" ] && ! grep -q '^\[Install\]' "$UNIT" \
+  && grep -qx 'Environment=RETROFORGE_UI_MODE=reset RETROFORGE_RESET_LEVEL=%i' "$UNIT" \
+  && grep -qx 'ExecStopPost=-/usr/lib/retroforge/install/leave' "$UNIT" \
+  && ok "the reset unit has the installer's gate (conflicts, nologin, session end, restart=no), reset mode, reboots on stop" \
+  || bad "retroforge-reset@.service drifted from the installer's gate"
+
 printf '%s: %d passed, %d failed\n' "${0##*/}" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

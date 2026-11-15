@@ -694,3 +694,103 @@ class ProgressScreen:
             "buttons": buttons,
             "abort": "",
         }
+
+
+# =================================================================================================
+# Factory reset (issue #40, .claude/plans/factory-reset.plan.md)
+# =================================================================================================
+# The same UI, started by retroforge-reset@<level>.service instead of the installer's unit
+# (RETROFORGE_UI_MODE=reset, RETROFORGE_RESET_LEVEL=soft|hard): the session is already ended and
+# /run/nologin written, so the player at the device is the only one who can answer. It says what the
+# reset keeps and what it erases, takes the same pad-sequence consent as an install (plan D3), writes
+# the request on the ESP and leaves; the unit's `leave` reboots, and the initramfs carries the reset
+# out before /var is mounted (image/initramfs/factory-reset-hook.sh, /usr/lib/retroforge/factory-reset).
+# Nothing is erased by this UI: Cancel, or a consent never given, leaves the device as it was.
+
+RESET_REQUEST = os.environ.get("RETROFORGE_RESET_REQUEST", "/esp/retroforge/factory-reset")
+RESET_LEVELS = ("soft", "hard")
+
+
+def random_sequence():
+    """The four face buttons in a random order, each once -- retroforge-install's random_sequence."""
+    import random
+    return "".join(random.SystemRandom().sample(("N", "E", "S", "W"), 4))
+
+
+def write_reset_request(level, path=None):
+    """The request factory-reset reads, on the ESP: written to a temporary name, synced, renamed.
+    Raises OSError; the caller shows it."""
+    import secrets
+    if level not in RESET_LEVELS:
+        raise ValueError("unknown reset level %r" % level)
+    path = path or RESET_REQUEST
+    d = os.path.dirname(path)
+    os.makedirs(d, exist_ok=True)
+    tmp = path + ".new"
+    with open(tmp, "w") as f:
+        f.write("level=%s\nnonce=%s\ntries=0\n" % (level, secrets.token_hex(8)))
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, path)
+    try:
+        fd = os.open(d, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass        # a directory fsync vfat refuses; the sync below still flushes the rename
+    os.sync()
+
+
+class ResetScreen:
+    """What a factory reset at this level keeps and erases, before the consent. Continue (SOUTH) asks
+    for the pad sequence; Cancel (SELECT) leaves, and the unit restarts the device with nothing done."""
+
+    name = "reset"
+    interactive = True
+
+    def __init__(self, level):
+        self.level = level
+        self.error = ""
+        self.result = None      # ("reset-consent",) | ("quit",)
+
+    def handle(self, token):
+        if token == "S":
+            self.result = ("reset-consent",)
+        elif token in (TOKEN_BACK, TOKEN_QUIT):
+            self.result = ("quit",)
+
+    def describe(self):
+        if self.level == "soft":
+            title = "Reset settings, keep games"
+            blocks = [
+                ("Kept", "Your ROMs, BIOS files, saves and save states (the roms, bios, saves and "
+                         "states folders)."),
+                ("Erased", "Every setting, Wi-Fi networks, Bluetooth pairings, sign-ins (Steam, "
+                           "stores, RetroAchievements), downloaded emulators, ROM art, installed "
+                           "PC games and paired computers."),
+            ]
+        else:
+            title = "Erase everything"
+            blocks = [
+                ("Erased", "Everything you put on this device: ROMs, BIOS files, saves, save states, "
+                           "settings, Wi-Fi networks, Bluetooth pairings, sign-ins, downloaded "
+                           "emulators and installed PC games. It is NOT recoverable."),
+            ]
+        blocks.append(("Not changed", "The RetroForge version this device runs, and any other SD "
+                                      "card in it."))
+        blocks.append(("How", "The device restarts and resets itself before RetroForge starts, "
+                              "then starts as it did the first time."))
+        if self.error:
+            blocks.append(("Could not start the reset", self.error))
+        return {
+            "screen": "reset",
+            "title": title,
+            "blocks": blocks,
+            "diamonds": [],
+            "prompt": "",
+            "note": "",
+            "buttons": [{"pos": "S", "label": "Continue"}, {"pos": "SELECT", "label": "Cancel"}],
+            "abort": "",
+        }

@@ -12,9 +12,11 @@
 # All 8 partitions mirror the SteamOS layout exactly (esp, efi-A/B, rootfs-A/B, var-A/B, home).
 #
 #   p8 home  — the player user's home. Two build-time choices, neither a layout divergence:
-#              it is created with an empty player home (image/lib-homestage.sh), and a factory
-#              reset is a reflash of the card, and an internal UFS install is recovered by booting
-#              a separate SD-card image. And home must stay LAST on disk: retroforge-grow-home
+#              it is created with an empty player home (image/lib-homestage.sh), and Settings >
+#              General > Factory reset empties it again (soft: all but roms/bios/saves/states;
+#              hard: a new filesystem), along with both var slots, at the next boot
+#              (/usr/lib/retroforge/factory-reset); an internal UFS install that no longer boots is
+#              recovered by booting a separate SD-card image. And home must stay LAST on disk: retroforge-grow-home
 #              expands it to fill the card on first boot, so nothing may follow it.
 #
 # efi-a/efi-b are typed 0700 (Microsoft basic data), NOT ef00 — exactly as SteamOS types

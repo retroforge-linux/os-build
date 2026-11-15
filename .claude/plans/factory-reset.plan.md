@@ -2,7 +2,7 @@
 
 **Source**: https://github.com/retroforge-linux/os-build/issues/40
 **Complexity**: Large (initramfs + a root-level wipe + the installer's consent UI)
-**Status**: decisions agreed 2026-11-15 (D1-D4); not started
+**Status**: decisions agreed 2026-11-15 (D1-D4); Phases 1-3 and the docs done 2026-11-15 (offline-tested); HW (Phase 4) pending
 
 ## Summary
 

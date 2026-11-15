@@ -45,7 +45,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from uipad import (                                                            # noqa: E402
     CARDINALS, CARDINAL_NAME, NullView, PadInput, ScriptedInput, TOKEN_BACK, TOKEN_QUIT, log)
 from uiflow import (                                                           # noqa: E402
-    PreflightScreen, ProgressScreen, SpineRun, VerifyRun, gather_preflight, release_facts)
+    RESET_LEVELS, PreflightScreen, ProgressScreen, ResetScreen, SpineRun, VerifyRun, gather_preflight,
+    random_sequence, release_facts, write_reset_request)
+
+# Factory reset mode (uiflow's Factory reset section): set by retroforge-reset@<level>.service.
+UI_MODE = os.environ.get("RETROFORGE_UI_MODE", "install")
+RESET_LEVEL = os.environ.get("RETROFORGE_RESET_LEVEL", "")
+# Wrong sequences before the reset consent gives up and goes back: retroforge-install's CONFIRM_TRIES.
+RESET_CONFIRM_TRIES = 5
 
 SOCK_PATH = os.environ.get("RETROFORGE_UI_SOCK", "/run/retroforge/installer-ui.sock")
 # Read by `leave`, which the unit runs on stop.
@@ -127,6 +134,8 @@ class ConsentScreen:
             body = self._android_wipe(f)
         elif screen == "reinstall":
             body = self._reinstall(f)
+        elif screen == "factory-reset":
+            body = self._factory_reset(f)
         else:
             # The renderer must not invent a screen for facts it does not understand. Failing here
             # is an abort, which is the safe direction.
@@ -148,6 +157,20 @@ class ConsentScreen:
     # The two screens are written out separately and share no text, for the same reason
     # confirm-tty's are: §4d requires that an Android disk cannot produce the reinstall wording or
     # the reverse, and a single template with conditionals inside it is the shape that lets it.
+    def _factory_reset(self, f):
+        level = f.get("LEVEL", "?")
+        if level == "soft":
+            return {"title": "Reset settings, keep games", "blocks": [
+                ("This erases every setting and sign-in",
+                 "Wi-Fi, Bluetooth, Steam and store sign-ins, emulators, ROM art and installed PC games "
+                 "go. Your ROMs, BIOS files, saves and save states stay."),
+            ]}
+        return {"title": "Erase everything", "blocks": [
+            ("This erases everything you put on this device",
+             "ROMs, BIOS files, saves, save states, settings and sign-ins. It is NOT recoverable, by "
+             "you or by us."),
+        ]}
+
     def _android_wipe(self, f):
         blocks = [
             ("Target", "%s  (%s)" % (f.get("DISK", "?"), f.get("WWID", "?"))),
@@ -551,9 +574,43 @@ def run(server, view, source, base, deadline=0):
             result = getattr(screen, "result", None)
             if result is None:
                 continue
-            if screen.name == "consent":
+            if screen.name == "consent" and getattr(screen, "local", False):
+                # The factory reset's own consent: nothing on the socket asked, so this decides --
+                # the same policy as the spine's (right sequence: go; wrong: re-randomise; give up
+                # after RESET_CONFIRM_TRIES; SELECT: back).
+                reset = stack[-2]
+                if result[0] == "abort":
+                    stack.pop()
+                elif result[1] == screen.sequence:
+                    try:
+                        write_reset_request(reset.level)
+                    except (OSError, ValueError) as e:
+                        log("could not write the reset request: %s" % e)
+                        reset.error = str(e)
+                        stack.pop()
+                        break
+                    log("factory reset (%s) requested: restarting" % reset.level)
+                    return 0                         # the unit's `leave` reboots into the reset
+                elif screen.tries + 1 >= RESET_CONFIRM_TRIES:
+                    log("factory reset: %d wrong sequences, back to the reset screen" % RESET_CONFIRM_TRIES)
+                    stack.pop()
+                else:
+                    again = ConsentScreen(screen.facts, random_sequence())
+                    again.local, again.tries = True, screen.tries + 1
+                    stack[-1] = again
+            elif screen.name == "consent":
                 server.answer({"abort": True} if result[0] == "abort" else {"answer": result[1]})
                 stack.pop()                          # back to whatever asked -- usually progress
+            elif result[0] == "reset-consent":
+                # Consumed here: the reset screen stays under the consent and is shown again after
+                # an abort, five wrong sequences or a request that could not be written, and a result
+                # left on it would push a new consent at the next key, whatever was pressed.
+                top.result = None
+                consent = ConsentScreen({"SCREEN": "factory-reset", "LEVEL": top.level}, random_sequence())
+                consent.local, consent.tries = True, 0
+                consent.describe()
+                stack.append(consent)
+                log("factory reset (%s): consent asked, sequence %s" % (top.level, consent.sequence))
             elif result[0] == "recheck":
                 # The pre-flight screen could not say what it would install. Ask the update server
                 # again -- and ONLY that: the disk was already read, and rebuilding the screen from
@@ -622,10 +679,15 @@ def main(argv):
 
     server = ConfirmServer(SOCK_PATH)
     view, source = build_io()
-    # OGUI started this, so the network was up a moment ago: there is no network screen. If it has
-    # gone, the pre-flight screen says the download could not be resolved and offers Check again.
-    facts, why = gather_preflight()
-    base = PreflightScreen(facts) if facts else IdleScreen(why)
+    if UI_MODE == "reset":
+        # Nothing to gather: the reset screen says what it does, and only consent writes anything.
+        base = ResetScreen(RESET_LEVEL) if RESET_LEVEL in RESET_LEVELS \
+            else IdleScreen("no factory reset level (soft or hard) was given: %r" % RESET_LEVEL)
+    else:
+        # OGUI started this, so the network was up a moment ago: there is no network screen. If it
+        # has gone, the pre-flight screen says the download could not be resolved and offers Check again.
+        facts, why = gather_preflight()
+        base = PreflightScreen(facts) if facts else IdleScreen(why)
     try:
         return run(server, view, source, base,
                    deadline=float(os.environ.get("RETROFORGE_UI_DEADLINE", "0")))

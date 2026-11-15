@@ -1581,6 +1581,36 @@ class FakeDialog extends Node:
 		message = text
 		(func(): choice_selected.emit(answer)).call_deferred()
 
+# Factory reset (issue #40): two rows, last in General; each confirms, then starts its level's unit.
+func test_factory_reset(box: Node) -> void:
+	var soft: Node = box.get_node_or_null("RetroForgeResetSoft")
+	var hard: Node = box.get_node_or_null("RetroForgeResetHard")
+	check("both factory reset rows are there", [soft != null, hard != null], [true, true])
+	if soft == null or hard == null:
+		return
+	check("last in General: keep games, then erase everything",
+		[hard.get_index() == box.get_child_count() - 1, soft.get_index() == hard.get_index() - 1], [true, true])
+	check("labels", [soft.text, soft.button_text, hard.text, hard.button_text],
+		["Reset settings, keep games", "Reset", "Erase everything", "Erase"])
+	var calls := D.path_join("systemctl-calls")
+	var dialog := FakeDialog.new()
+	dialog.add_to_group("dialog")
+	root.add_child(dialog)
+	for pair in [[soft, "soft"], [hard, "hard"]]:
+		dialog.answer = false
+		pair[0].button_up.emit()
+		await wait(0.3)
+		check(pair[1] + ": the dialog says the consent comes next", dialog.message.contains("You confirm on the next screen"), true)
+		check(pair[1] + ": Cancel starts nothing", FileAccess.get_file_as_string(calls).contains("retroforge-reset@" + pair[1]), false)
+		dialog.answer = true
+		pair[0].button_up.emit()
+		await wait(0.3)
+		check(pair[1] + ": confirmed, its unit starts without blocking",
+			FileAccess.get_file_as_string(calls).contains("--no-block start retroforge-reset@%s.service" % pair[1]), true)
+	check("the soft dialog keeps the games, the hard one does not", dialog.message.contains("erased for good"), true)
+	dialog.queue_free()
+
+
 func test_internal_install(os, box: Node, channel: Node) -> void:
 	var row: Node = box.get_node_or_null("RetroForgeInternalInstall")
 	check("booted from a card, the row sits under the Updates rows", row != null and row.get_index() > channel.get_index(), true)
@@ -1644,6 +1674,7 @@ func run() -> void:
 	check("dropdown: Stable, Beta; Stable selected", [channel.option_button.item_count, channel.option_button.get_item_text(0), channel.option_button.get_item_text(1), channel.selected], [2, "Stable", "Beta", 0])
 	await test_pairing(box, channel)
 	await test_internal_install(os, box, channel)
+	await test_factory_reset(box)
 	button.button_up.emit()
 	await wait(0.5)
 	check("stable is up to date: still Check, says so", [button.button_text, button.description], ["Check for updates", "No update found on the Stable channel."])

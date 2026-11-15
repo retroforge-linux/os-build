@@ -1,0 +1,32 @@
+[Unit]
+Description=RetroForge factory reset, %i (gamescope + the consent screen)
+# Started by Settings > General > Factory reset (the RetroForge plugin's retroforge_os.gd), through
+# 50-retroforge-reset.rules, and by nothing else: no [Install]. %i is the level, soft or hard
+# (.claude/plans/factory-reset.plan.md); the UI refuses any other.
+#
+# THE INSTALLER'S GATE, unchanged (plan D3; retroforge-installer.service explains each line): the
+# session and `player`'s manager are ended and logins closed before the pad-sequence consent is
+# drawn, so a paired SSH session or a leftover process cannot press it. The UI only WRITES THE
+# REQUEST (ESP:/retroforge/factory-reset) after that consent, then leaves; every stop reboots, and the
+# initramfs carries the reset out before /var is mounted. Cancel reboots with nothing done.
+Conflicts=retroforge-session.service user@1000.service retroforge-powerbuttond.service getty@tty1.service
+Conflicts=systemd-user-sessions.service
+After=retroforge-session.service user@1000.service retroforge-powerbuttond.service getty@tty1.service
+After=systemd-user-sessions.service retroforge-allow-login.service
+After=systemd-udevd.service dbus.service inputplumber.service
+Wants=dbus.service inputplumber.service
+# The request goes on the shared ESP.
+RequiresMountsFor=/esp
+
+[Service]
+Type=simple
+Environment=RETROFORGE_UI_MODE=reset RETROFORGE_RESET_LEVEL=%i
+ExecStartPre=/usr/bin/touch /run/nologin
+ExecStartPre=-/usr/bin/loginctl terminate-user 1000
+ExecStartPre=-/usr/bin/systemctl restart inputplumber.service
+ExecStartPre=/usr/bin/mkdir -p /run/retroforge
+ExecStart=/usr/lib/retroforge/install/installer-session
+ExecStopPost=-/usr/lib/retroforge/install/leave
+StandardInput=null
+Restart=no
+TimeoutStopSec=30

@@ -1,0 +1,17 @@
+// Let the shell (player user) start a factory reset: Settings > General > Factory reset (the
+// RetroForge plugin's retroforge_os.gd) runs `systemctl --no-block start retroforge-reset@soft.service`
+// or `retroforge-reset@hard.service` (.claude/plans/factory-reset.plan.md).
+//
+// Exactly start, of those two instances, for the active LOCAL session and wheel -- the installer's
+// rule (50-retroforge-installer.rules), and for the same reason: what a process of `player` buys by
+// starting it is the session closing and the device rebooting. Nothing is erased without the
+// four-button consent on the panel, taken after `player` has been ended. tests/test-installer-shipped.sh
+// evaluates this rule.
+polkit.addRule(function(action, subject) {
+    var unit = action.lookup("unit");
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        (unit == "retroforge-reset@soft.service" || unit == "retroforge-reset@hard.service") &&
+        action.lookup("verb") == "start" &&
+        subject.active && subject.local && subject.isInGroup("wheel"))
+        return polkit.Result.YES;
+});

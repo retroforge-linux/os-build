@@ -161,6 +161,25 @@ session is stopped.
 
 ---
 
+## Factory reset
+
+An installed device no longer needs a card to start over. **Settings > General > Factory reset** has
+two rows:
+
+- **Reset settings, keep games** keeps `roms`, `bios`, `saves` and `states` (the four shared folders)
+  and erases everything else: settings, Wi-Fi networks, Bluetooth pairings, sign-ins, downloaded
+  emulators, ROM art, installed PC games, paired computers.
+- **Erase everything** recreates `/home` empty.
+
+Neither changes the RetroForge version or touches another SD card. Both use the installer's gate: the
+session ends and the reset screen asks for the four-button sequence before anything is written. The
+device then restarts, and the initramfs carries the reset out before `/var` is mounted (both `var`
+slots reseeded, `/home` emptied or recreated), so the next start is a first boot. A reset that is
+interrupted runs again at the next boot; one that fails three times is given up and the device starts
+as it is. Design and decisions: `.claude/plans/factory-reset.plan.md`.
+
+---
+
 ## What it deliberately does not do
 
 - **No repair that keeps `/home`.** A disk that already carries RetroForge gets a full replacement.
