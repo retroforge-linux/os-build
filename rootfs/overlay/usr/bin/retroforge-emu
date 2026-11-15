@@ -78,6 +78,16 @@
 # offered, and install on an existing install downloads nothing. No rollback either: an unpacked
 # folder keeps no previous version.
 #
+# ONE FILE OUT OF A TARBALL (catalog "extract": "<regex>", optional, never with "unpack"): the asset is
+# a tar archive (gzip, xz or bzip2) and the build is ONE plain file in it, whose member path fully
+# matches the regex -- DSperate ships its dynamic aarch64 binary as dsperate-<v>-linux-aarch64/dsperate
+# beside its README and LICENSE. Downloaded and verified exactly like an AppImage (the sha256 and size
+# are the tarball's), then that member is written to <tag>.AppImage and `current` flips to it, so
+# update, rollback and remove work as for an AppImage (the definition's format is "binary"). Refused
+# (exit 4, nothing written): no member or more than one matching, or a match that is not a regular
+# file (a symlink, a hard link, a device). Executable bits are not taken from the archive: the file
+# is always 0755, as an AppImage is.
+#
 # CORES (catalog "cores", RetroArch): libretro cores installed with the AppImage, after it (progress
 # 0-80 for the AppImage, 80-99 for the cores), updated by every install, one core rolled back with
 # `rollback <emulator> --core=<core>`; `list` and `check` report them under "cores". Sources, layout
@@ -108,6 +118,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import time
 import zlib
 import zipfile
@@ -453,6 +464,33 @@ def unpack(emu, archive, dest, version, tag):
             log(f"warning: could not clean {stage}: {err}")
 
 
+def extract(archive, pattern, dest):
+    """Write the tar archive's one member matching `pattern` to `dest`, 0755 (see ONE FILE OUT OF A
+    TARBALL above). A partial file never reaches `dest`."""
+    rx = re.compile(pattern)
+    part = os.path.join(os.path.dirname(dest), f".{os.path.basename(dest)}.extract")
+    try:
+        with tarfile.open(archive, "r:*") as t:
+            found = [m for m in t.getmembers() if rx.fullmatch(m.name)]
+            if len(found) != 1:
+                raise Fail(EXIT_VERIFY, f"{len(found)} archive members match {pattern!r}, want exactly 1")
+            m = found[0]
+            if not m.isreg():
+                raise Fail(EXIT_VERIFY, f"archive member is not a plain file: {m.name!r}")
+            if shutil.disk_usage(os.path.dirname(dest)).free < m.size + SPACE_MARGIN:
+                raise Fail(EXIT_LOCAL, f"not enough free space to extract {m.size} bytes")
+            src = t.extractfile(m)
+            with src, open(part, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+        os.chmod(part, 0o755)
+        os.replace(part, dest)
+    except (tarfile.TarError, zlib.error, EOFError) as err:
+        raise Fail(EXIT_VERIFY, f"cannot read the archive: {err}")
+    finally:
+        if os.path.lexists(part):
+            os.unlink(part)
+
+
 def discard(path):
     """Remove a leftover staging entry, whatever it is (a folder, a file, a symlink)."""
     if os.path.isdir(path) and not os.path.islink(path):
@@ -522,6 +560,14 @@ def checked_entry(emu, e):
         raise Fail(EXIT_VERIFY, f"unsafe tag in the catalog: {e.get('tag')!r}")
     if tag_pattern(e) is None and "sha256" not in e:
         raise Fail(EXIT_VERIFY, f"{emu}: a pinned catalog entry needs a sha256")
+    if "extract" in e:
+        pattern = e["extract"]
+        try:
+            ok = isinstance(pattern, str) and pattern != "" and re.compile(pattern) is not None
+        except re.error:
+            ok = False
+        if not ok or "unpack" in e:
+            raise Fail(EXIT_VERIFY, f"{emu}: bad extract entry {pattern!r} (a regex, never with unpack)")
     return e
 
 
@@ -590,6 +636,9 @@ def install_build(emu, e, tested):
         verify(part, build)
         if spec is not None:
             unpack(emu, part, spec[0], spec[1], tag)
+        elif "extract" in e:
+            extract(part, e["extract"], os.path.join(d, f"{tag}.AppImage"))
+            activate(d, tag)
         else:
             os.chmod(part, 0o755)
             os.replace(part, os.path.join(d, f"{tag}.AppImage"))

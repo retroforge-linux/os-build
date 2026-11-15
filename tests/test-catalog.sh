@@ -77,7 +77,7 @@ for line in open(launch_conf):
 
 ROLLING = {"latest", "preview", "nightly", "continuous", "dev", "master", "main"}
 REQUIRED = {"name", "author", "systems", "github", "tag", "asset", "sha256", "size", "homepage", "licence"}
-OPTIONAL = {"data", "unpack", "self_update", "tag_pattern", "cores"}
+OPTIONAL = {"data", "unpack", "self_update", "tag_pattern", "cores", "extract"}
 
 def check_github(case, e, rx):
     url = f"https://api.github.com/repos/{e['github']}/releases/tags/{e['tag']}"
@@ -213,6 +213,24 @@ for emu, e in emus.items():
             ok(case, f"unpacks into ~/{unpack['to']} (version in {unpack['version']})")
         else:
             bad(case, f"bad unpack {unpack!r}: needs exactly 'to' and 'version', relative paths")
+    # One file out of a tarball (DSperate): a regex retroforge-emu matches against the archive's member
+    # paths; the asset must be a tarball, the definition the binary format, and never with unpack.
+    if "extract" in e:
+        try:
+            rx_ok = isinstance(e["extract"], str) and e["extract"] and re.compile(e["extract"]) is not None
+        except re.error:
+            rx_ok = False
+        fmt = None
+        try:
+            with open(os.path.join(emu_conf_dir, emu, "emulator.json")) as f:
+                fmt = json.load(f).get("format")
+        except (OSError, ValueError):
+            pass
+        if (rx_ok and unpack is None and fmt == "binary"
+                and re.search(r"\\\.tar\\\.(gz|xz|bz2)\$$", e["asset"])):
+            ok(case, f"keeps the one tarball member matching {e['extract']} (binary format)")
+        else:
+            bad(case, f"bad extract {e['extract']!r}: a regex, a tarball asset, the binary format, no unpack")
     if "self_update" in e:
         if e["self_update"] is True and unpack is not None and not nightly:
             ok(case, "updates itself after the first install (no update offered)")

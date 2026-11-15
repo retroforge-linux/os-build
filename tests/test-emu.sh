@@ -472,6 +472,56 @@ run remove tool
 [ -f "$T/players-own" ] && ok "a folder without retroforge-emu's marker is left alone" || bad "deleted a folder retroforge-emu did not install"
 
 # =================================================================================================
+CASE="one file out of a tarball (extract)"
+# DSperate ships a tarball holding its binary: the download is verified as the tarball, then the one
+# member the catalog's "extract" regex matches becomes <tag>.AppImage (format "binary").
+mktar() {  # mktar <tag> [extra python lines run with t open]
+  python3 - "$W/srv/$1.AppImage" "$1" "${2:-}" <<'PY'
+import io, sys, tarfile
+path, tag, extra = sys.argv[1:4]
+def add(t, name, data, mode=0o755):
+    i = tarfile.TarInfo(name); i.size = len(data); i.mode = mode
+    t.addfile(i, io.BytesIO(data))
+with tarfile.open(path, "w:gz") as t:
+    add(t, f"tool-{tag}-linux/README.md", b"readme", 0o644)
+    add(t, f"tool-{tag}-linux/tool", f"tool binary {tag}".encode(), 0o644)
+    add(t, f"tool-{tag}-linux/tool-headless", b"headless")
+    exec(extra)
+PY
+}
+extract_catalog() {  # extract_catalog <tag> [regex]
+  catalog "$1"; api "$1"
+  python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c["emulators"]["dummy"]["extract"]=sys.argv[2]; json.dump(c, open(sys.argv[1], "w"))' \
+    "$W/catalog.json" "${2:-^tool-v[0-9.]+-linux/tool\$}"
+}
+reset; mktar v7.1; extract_catalog v7.1; run install dummy
+[ "$RC" = 0 ] && [ "$(readlink "$D/dummy/current")" = v7.1.AppImage ] && [ "$(cat "$D/dummy/v7.1.AppImage")" = "tool binary v7.1" ] \
+  && ok "the matching member becomes v7.1.AppImage and current points at it" || bad "rc=$RC $ERR; got: $(ls -a "$D/dummy" | tr '\n' ' ')"
+[ "$(stat -c %a "$D/dummy/v7.1.AppImage" 2>/dev/null)" = 755 ] && ok "it is 0755 whatever the archive said (0644 there)" || bad "mode $(stat -c %a "$D/dummy/v7.1.AppImage" 2>/dev/null)"
+[ -z "$(find "$D" -name '.*' -type f)" ] && ok "no .part or .extract file left" || bad "left: $(find "$D" -name '.*' -type f)"
+mktar v7.2; extract_catalog v7.2; run install dummy
+[ "$RC" = 0 ] && [ "$(readlink "$D/dummy/current")" = v7.2.AppImage ] && [ -f "$D/dummy/v7.1.AppImage" ] \
+  && ok "an update keeps the previous build" || bad "rc=$RC $ERR"
+run rollback dummy
+[ "$RC" = 0 ] && [ "$(readlink "$D/dummy/current")" = v7.1.AppImage ] && ok "rollback goes back to the previous build" || bad "rc=$RC $ERR"
+xrefused() {  # xrefused <what> <tag> <extra python> [regex]
+  reset; mktar "$2" "$3"; extract_catalog "$2" "${4:-}"; run install dummy
+  [ "$RC" = 4 ] && [ ! -e "$D/dummy/current" ] && [ -z "$(find "$D" -name '*.AppImage*')" ] \
+    && ok "$1: refused (exit 4), nothing installed" || bad "$1: rc=$RC $ERR; left: $(ls -a "$D/dummy" 2>&1 | tr '\n' ' ')"
+}
+xrefused "no member matches" v7.3 "" '^nothing$'
+xrefused "two members match" v7.4 "" '^tool-v[0-9.]+-linux/tool.*$'
+xrefused "the member is a symlink" v7.5 '
+i = tarfile.TarInfo("tool-v7.5-linux/tool-link"); i.type = tarfile.SYMTYPE; i.linkname = "/etc/passwd"; t.addfile(i)' '^tool-v[0-9.]+-linux/tool-link$'
+reset; printf 'not a tarball' > "$W/srv/v7.6.AppImage"; extract_catalog v7.6; run install dummy
+[ "$RC" = 4 ] && [ ! -e "$D/dummy/current" ] && ok "bytes that are not a tar archive: refused (exit 4)" || bad "rc=$RC $ERR"
+reset; mktar v7.7; extract_catalog v7.7 '^tool-[('; run install dummy
+[ "$RC" = 4 ] && [ ! -e "$W/curl.log" ] && ok "a bad regex is refused before any download" || bad "rc=$RC"
+reset; mktar v7.8; extract_catalog v7.8
+python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); c["emulators"]["dummy"]["unpack"]={"to":"x","version":"v"}; json.dump(c, open(sys.argv[1], "w"))' "$W/catalog.json"
+run install dummy
+[ "$RC" = 4 ] && [ ! -e "$W/curl.log" ] && ok "extract with unpack is refused before any download" || bad "rc=$RC"
+
 CASE="latest"
 # An entry with "tag_pattern" installs upstream's newest qualifying release, not the pin (plan
 # emulator-latest D1-D4); the pin stays as the tested build.
