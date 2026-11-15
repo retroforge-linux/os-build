@@ -1,0 +1,30 @@
+From: Philippe Simons <simons.philippe@gmail.com>
+Subject: [PATCH] msm-firmware-loader: keep the Bluetooth sensing hub off its
+ default UART
+
+The ADSP firmware of the SM8550 boards carries a Bluetooth sensing hub (QSH BLE, sensor ble_hci) that starts with the sensors process. Running on its default UART it stops the ADSP from sleeping about three seconds after hexagonrpcd attaches, for good: awake and in suspend, with no sensor client. The SoC then never reaches CX collapse or DDR low power in suspend. Nothing in the image uses Bluetooth sensing. Unless the board's own registry configures the hub, add a qsh_ble_config with a UART instance that does not exist to the per-boot copy of the registry that hexagonrpcd serves. Persist is not written.
+
+Pocket ACE, 7.3.4: ADSP asleep 0 % without the entry and 99 % with it (audio stopped, 26 sensors up); with it 3 of 3 suspends collapse and the gyro streams.
+---
+ msm-firmware-loader.sh | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+--- a/msm-firmware-loader.sh
++++ b/msm-firmware-loader.sh
+@@ -201,6 +201,16 @@
+ 		then
+ 			mkdir -p "$BASEDIR/hexagonrpc/sensors"
+ 			cp -a "$sensors" "$BASEDIR/hexagonrpc/sensors/persist"
++			# The ADSP firmware's Bluetooth sensing hub (qsh_ble) starts with the
++			# sensors process. On its default UART it keeps the ADSP awake for
++			# good, which keeps the SoC out of its low-power state in suspend.
++			# Nothing here uses it: unless the board's registry configures it,
++			# give it a UART that does not exist. In the copy only.
++			registry="$BASEDIR/hexagonrpc/sensors/persist/registry/registry"
++			if [ -d "$registry" ] && ! [ -e "$registry/qsh_ble_config" ]
++			then
++				printf '%s' '{"qsh_ble_config":{"owner":"qsh_ble","uart_instance":{"type":"int","ver":"0","data":"99"}}}' > "$registry/qsh_ble_config"
++			fi
+ 			if id fastrpc > /dev/null 2>&1
+ 			then
+ 				chown -R fastrpc:fastrpc "$BASEDIR/hexagonrpc/sensors/persist"

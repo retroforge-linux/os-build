@@ -22,7 +22,10 @@
 # 0012 serves qca/ (Bluetooth) from the bluetooth partition; 0013 lets files under
 # /usr/lib/msm-firmware-loader/override (laid out as /lib/firmware) win for their paths; 0014
 # links sns_reg_version and copies persist's sensors directory into the tree as sensors/persist,
-# which hexagonrpcd serves writable (persist itself stays read-only; the copy is per boot).
+# which hexagonrpcd serves writable (persist itself stays read-only; the copy is per boot); 0015
+# adds a qsh_ble_config to that copy's registry, unless persist has one, giving the ADSP firmware's
+# Bluetooth sensing hub a UART that does not exist: on its default one it kept the ADSP awake for
+# good once the sensors process had started, and the SoC out of low power in suspend (issue #46).
 #
 # It runs on every board, serving whatever its partitions hold under qcom/ (GPU microcode), the
 # SoC's qcom/<soc>/ (zap shaders, SM8250 DSPs), the devicetree's device folders (e.g. adsp/cdsp
