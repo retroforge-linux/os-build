@@ -267,9 +267,6 @@ fi
 # gptk-interpose runs on EVERY build.
 . "$ROOT/rootfs/lib-assemble-gptk-interpose.sh"
 
-# hidemenu-shim runs on EVERY build.
-. "$ROOT/rootfs/lib-assemble-hidemenu.sh"
-
 # x86-mesa runs on EVERY build, unless RETROFORGE_X86_MESA=0.
 . "$ROOT/rootfs/lib-assemble-x86-mesa.sh"
 

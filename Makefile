@@ -311,10 +311,6 @@ SDCARD       := $(OUT)/images/sdcard.img
 # pad grab under sdl2-compat). aarch64, built in the container like the splash.
 GPTK_LIB     := apps/retroforge-gptk-interpose/build/libretroforge-gptk-interpose.so
 GPTK_SRC     := apps/retroforge-gptk-interpose/Makefile apps/retroforge-gptk-interpose/src/retroforge-gptk-interpose.c
-# The LD_PRELOAD shim that hides the menu bar of every QMainWindow after the first
-# (apps/retroforge-hidemenu; melonDS's second window on dual-screen boards). aarch64, in the container.
-HIDEMENU_LIB := apps/retroforge-hidemenu/build/libretroforge-hidemenu.so
-HIDEMENU_SRC := apps/retroforge-hidemenu/Makefile apps/retroforge-hidemenu/src/retroforge-hidemenu.c
 # Our Mesa built for x86_64 + i686 (packages/mesa-x86), which steam-x86-guest lays over the x86 guest
 # Valve's FEX tool runs x86 games in. Built in an x86_64 Arch container: native on an x86_64 host,
 # emulated (and slow) on an arm64 one. build.sh caches on its inputs, so an unchanged tree is a no-op.
@@ -399,7 +395,7 @@ RETROFORGE_CCACHE ?= $(if $(CI),0,1)
 # ==============================================================================
 .PHONY: help all image toolchain kernel fw-linux fw-qcom base overlay verify-lock check-hw-paths \
         rootfs relock \
-        initramfs splash plugin gptk-interpose hidemenu mesa-x86 grub sdcard verify-card test test-disk bundle sign-bundle publish-bundle renew-nightly-cert \
+        initramfs splash plugin gptk-interpose mesa-x86 grub sdcard verify-card test test-disk bundle sign-bundle publish-bundle renew-nightly-cert \
         clean clean-base clean-overlay clean-ccache distclean
 
 # An always-out-of-date prerequisite, for rules that must re-evaluate their own inputs every run
@@ -429,7 +425,6 @@ rootfs:    $(ROOTFS)       ## Assemble the read-only root + var images (in conta
 initramfs: $(INITRAMFS)    ## Build the initramfs that mounts ro-root + /etc overlay (in container)
 splash:    $(SPLASH_BIN) $(SPLASH_ASSET) ## Build the boot-splash drawer + flattened logo (in container)
 plugin:    $(PLUGIN_ZIP) ## Build the RetroForge OpenGamepadUI plugin zip (host, python3)
-hidemenu:  $(HIDEMENU_LIB) ## Build the melonDS second-window menu shim, libretroforge-hidemenu.so (in container)
 mesa-x86:  $(MESA_X86_STAMP) ## Build our x86_64 + i686 Mesa for the FEX guest's overlay (x86_64 container)
 gptk-interpose: $(GPTK_LIB) ## Build PortMaster gptokeyb2's pad interposer (in container)
 grub:      $(GRUB)         ## Build the ESP GRUB + per-slot grub.cfg (in container)
@@ -486,7 +481,6 @@ test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-installer-shipped.sh
 	bash $(TESTS_DIR)/test-session.sh
 	bash $(TESTS_DIR)/test-launch.sh
-	bash $(TESTS_DIR)/test-hidemenu.sh
 	bash $(TESTS_DIR)/test-catalog.sh
 	bash $(TESTS_DIR)/test-plugin.sh
 	bash $(TESTS_DIR)/test-plugin-install.sh
@@ -773,7 +767,7 @@ $(SSHKEY_STAMP):
 # /usr/lib/retroforge/boot mirror the RAUC hook refreshes the ESP and the slot's efi partition FROM.
 # That is what makes "this root and the software that boots it came from one build" true by
 # construction. No cycle: the initramfs is built from work/base, never from the assembled root.
-$(ROOTFS): $(KERNEL) $(INITRAMFS) $(GRUB) boot/esp-dtbs.sh $(BASE_STAMP) $(FW_LINUX) $(FW_QCOM) $(PLUGIN_ZIP) $(GPTK_LIB) $(HIDEMENU_LIB) $(MESA_X86_DEP) $(ASSEMBLE_SRC) $(MODE_STAMP) $(VERSION_STAMP) $(SCRAPER_STAMP) $(SSHKEY_STAMP) $(DEV_CA) | $(BUILD_STAMP)
+$(ROOTFS): $(KERNEL) $(INITRAMFS) $(GRUB) boot/esp-dtbs.sh $(BASE_STAMP) $(FW_LINUX) $(FW_QCOM) $(PLUGIN_ZIP) $(GPTK_LIB) $(MESA_X86_DEP) $(ASSEMBLE_SRC) $(MODE_STAMP) $(VERSION_STAMP) $(SCRAPER_STAMP) $(SSHKEY_STAMP) $(DEV_CA) | $(BUILD_STAMP)
 	$(DOCKER) $(DEV_ENV) $(SCRAPER_ENV) $(ID_ENV) -e RETROFORGE_DEBUG -e RETROFORGE_X86_MESA $(BUILD_IMG) \
 	  $(ROOTFS_DIR)/assemble-rootfs.sh /src/work/base
 
@@ -796,9 +790,6 @@ $(SPLASH_BIN): $(SPLASH_SRC) | $(BUILD_STAMP)
 
 $(GPTK_LIB): $(GPTK_SRC) | $(BUILD_STAMP)
 	$(INBUILD) -c 'make -C apps/retroforge-gptk-interpose'
-
-$(HIDEMENU_LIB): $(HIDEMENU_SRC) | $(BUILD_STAMP)
-	$(INBUILD) -c 'make -C apps/retroforge-hidemenu'
 
 # On the host (build.sh runs its own x86_64 container); a no-op when its inputs are unchanged.
 $(MESA_X86_STAMP): $(MESA_X86_SRC)

@@ -45,7 +45,6 @@ pkg/
 # (An excluded directory's children cannot be re-included, so the dir itself is negated.)
 !/apps/retroforge-splash/src/
 !/apps/retroforge-gptk-interpose/src/
-!/apps/retroforge-hidemenu/src/
 
 # The splash drawer's compiled output. Unlike build/ at the repo root, THIS build/ is an
 # artifact directory: `make splash` writes an aarch64 binary and the test suite writes a host
@@ -53,8 +52,6 @@ pkg/
 /apps/retroforge-splash/build/
 # The PortMaster gptokeyb2 interposer's compiled output (apps/retroforge-gptk-interpose).
 /apps/retroforge-gptk-interpose/build/
-# The melonDS second-window menu shim's compiled output (apps/retroforge-hidemenu).
-/apps/retroforge-hidemenu/build/
 
 # Device-proprietary firmware, fetched on demand from the pinned retroforge-linux/qcom-firmwares
 # repo + verified against its sha256sums.txt (never committed here — only in that repo).
