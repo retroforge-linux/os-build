@@ -309,7 +309,8 @@ func _on_install_pressed() -> void:
 		_notify("Could not start the installer")
 
 
-## Factory reset, last in Settings > General: one row per level. Each confirms in OGUI's dialog and starts
+## Factory reset, the last of our sections, just above OGUI's Appearance (appended, it would land
+## between OGUI's Theme title and its theme buttons, which sit in the next container): one row per level. Each confirms in OGUI's dialog and starts
 ## retroforge-reset@<level>.service, which ends this session and takes the consent on the panel before
 ## anything is written (polkit 50-retroforge-reset.rules); --no-block because the session asking is the
 ## one being stopped. On a card and on an internal install alike.
@@ -322,9 +323,13 @@ func _add_factory_reset(box: Node) -> void:
 		row.name = RESET_ROWS[level]["name"]
 		row.text = RESET_ROWS[level]["text"]
 		rows.append(row)
+	var appearance := box.get_node_or_null("Appearance")
+	var at: int = appearance.get_index() if appearance else box.get_child_count()
 	# In the tree first, for the reason _add_updater gives.
 	for node in [label, HSeparator.new()] + rows:
 		box.add_child(node)
+		box.move_child(node, at)
+		at += 1
 		_nodes.append(node)
 	for i in rows.size():
 		var level: String = ["soft", "hard"][i]

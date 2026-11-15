@@ -1581,15 +1581,19 @@ class FakeDialog extends Node:
 		message = text
 		(func(): choice_selected.emit(answer)).call_deferred()
 
-# Factory reset (issue #40): two rows, last in General; each confirms, then starts its level's unit.
+# Factory reset (issue #40): two rows, just above Appearance; each confirms, then starts its level's unit.
 func test_factory_reset(box: Node) -> void:
 	var soft: Node = box.get_node_or_null("RetroForgeResetSoft")
 	var hard: Node = box.get_node_or_null("RetroForgeResetHard")
 	check("both factory reset rows are there", [soft != null, hard != null], [true, true])
 	if soft == null or hard == null:
 		return
-	check("last in General: keep games, then erase everything",
-		[hard.get_index() == box.get_child_count() - 1, soft.get_index() == hard.get_index() - 1], [true, true])
+	# Appended, the section landed between OGUI's Theme title and its buttons (HW, Pocket S2, 2026-11-15).
+	var appearance: Node = box.get_node_or_null("Appearance")
+	check("just above Appearance: keep games, then erase everything",
+		[appearance != null and hard.get_index() == appearance.get_index() - 1, soft.get_index() == hard.get_index() - 1],
+		[true, true])
+	check("below Remote access", soft.get_index() > box.get_node("RetroForgePairing").get_index(), true)
 	check("labels", [soft.text, soft.button_text, hard.text, hard.button_text],
 		["Reset settings, keep games", "Reset", "Erase everything", "Erase"])
 	var calls := D.path_join("systemctl-calls")
