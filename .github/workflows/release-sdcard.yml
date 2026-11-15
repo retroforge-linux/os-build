@@ -16,7 +16,8 @@
 # 2026-10-13 the card is a GitHub Release asset rather than an R2 object. A release card measured
 # 524 MiB under gz -6 that day (b6abe83, 5.5 GB nominal / 1.9 GB real), a quarter of GitHub's 2 GiB
 # per-asset cap; the 5.08 GiB that put it in R2 (2026-08-04) was a root still carrying an x86 stack.
-# The only credential left is the job-scoped GITHUB_TOKEN.
+# The only credential left is the job-scoped GITHUB_TOKEN, plus the ScreenScraper developer login
+# the build bakes into the image (see the sdcard job).
 #
 # THE REPO IS PUBLIC (since 2026-11), so a card Release asset downloads with no login. From
 # 2026-10-13 until then it needed a GitHub login with access to os-build.
@@ -112,9 +113,16 @@ jobs:
           echo "publish=$p" >> "$GITHUB_OUTPUT"
           echo "version=$v publish=$p" >> "$GITHUB_STEP_SUMMARY"
 
-  # NO SECRETS AND NO ENVIRONMENT. Nothing in a card build is signed and nothing in it is uploaded,
-  # so this job — the long one, six hours of bootstrapping a rootfs and compiling the overlay from
-  # third-party sources as uid 0 — has no credential in scope at all. It ends at a workflow artifact.
+  # NO ENVIRONMENT AND NO SIGNING OR UPLOAD CREDENTIAL. Nothing in a card build is signed and nothing
+  # in it is uploaded, so this job — the long one, six hours of bootstrapping a rootfs and compiling
+  # the overlay from third-party sources as uid 0 — holds no key that matters. It ends at a workflow
+  # artifact.
+  #
+  # ONE EXCEPTION, by name: RetroForge's ScreenScraper developer login, which the build writes into
+  # the image (rootfs/lib-assemble-scraper.sh) as a world-readable file, so the build code seeing it
+  # exposes nothing a card holder cannot already read. Without it the card cannot scrape ROM art
+  # (card/v0.0.8 shipped that way). Both are REPOSITORY secrets, so they resolve here with no
+  # environment.
   #
   # Do not hand it `secrets: inherit` or an environment to "simplify" publishing. A job that calls a
   # reusable workflow cannot declare an environment, so an environment-scoped secret mapped here
@@ -126,6 +134,9 @@ jobs:
     with:
       artifact: sdcard
       version: ${{ needs.prep.outputs.version }}
+    secrets:
+      RETROFORGE_SS_DEVID: ${{ secrets.RETROFORGE_SS_DEVID }}
+      RETROFORGE_SS_DEVPASSWORD: ${{ secrets.RETROFORGE_SS_DEVPASSWORD }}
 
   # The publish half: the card and its checksums, as one GitHub Release. Split from
   # the build so the reviewer's approval lands on a finished image rather than before a six-hour

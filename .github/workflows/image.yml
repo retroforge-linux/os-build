@@ -96,6 +96,13 @@ on:
         required: false
       RAUC_KEY_PEM:
         required: false
+      # RetroForge's ScreenScraper developer login (rootfs/lib-assemble-scraper.sh). Declared so a
+      # caller without `secrets: inherit` (release-sdcard.yml) can pass exactly these two; absent,
+      # the image builds but cannot scrape ROM art.
+      RETROFORGE_SS_DEVID:
+        required: false
+      RETROFORGE_SS_DEVPASSWORD:
+        required: false
 
 permissions:
   contents: read
