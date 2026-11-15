@@ -250,7 +250,7 @@ seed_var() {  # <dev> <slot> <mnt> <source>
     # who is running them, which is the exact drift this file exists to prevent.
     tar -p --numeric-owner --xattrs --acls -xf "$src" -C "$mnt" \
       || die "cannot unpack the /var seed $src onto $dev"
-    log "seeded /var from $src"
+    log "seeded /var on $dev from $src"
   fi
 
   # The overlay dirs must exist before the target boots -- the initramfs mounts /etc from them, so a

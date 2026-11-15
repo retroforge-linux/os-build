@@ -171,7 +171,8 @@ two rows:
   emulators, ROM art, installed PC games, paired computers.
 - **Erase everything** recreates `/home` empty.
 
-Neither changes the RetroForge version or touches another SD card. Both use the installer's gate: the
+Neither changes the RetroForge version or touches Android or the storage the device did not start
+from (the SD card, or the internal storage). Both use the installer's gate: the
 session ends and the reset screen asks for the four-button sequence before anything is written. The
 device then restarts, and the initramfs carries the reset out before `/var` is mounted (both `var`
 slots reseeded, `/home` emptied or recreated), so the next start is a first boot. A reset that is

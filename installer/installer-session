@@ -100,6 +100,13 @@ fi
 # passing the panel's first declared rate paced a 120 Hz preferred mode at 60. Same rule as
 # /usr/bin/retroforge-session; the connector's preferred mode is the right one here.
 set -- --backend drm -W "$GS_W" -H "$GS_H"
+# The board's game display size (device-env RETROFORGE_GAMESCOPE_NESTED_W/H, as retroforge-session
+# passes it), for the same reason: the UI fills a smaller Xwayland and the panel plane scales it.
+# On a Pocket S2 a UI at the full 2560x1440 output could not be scanned out rotated at all (EINVAL
+# on every flip, black panel; HW 2026-11-15). Both or neither.
+if [ -n "${RETROFORGE_GAMESCOPE_NESTED_W:-}" ] && [ -n "${RETROFORGE_GAMESCOPE_NESTED_H:-}" ]; then
+    set -- "$@" -w "$RETROFORGE_GAMESCOPE_NESTED_W" -h "$RETROFORGE_GAMESCOPE_NESTED_H"
+fi
 if [ -n "${RETROFORGE_PRIMARY_CONNECTOR:-}" ]; then
     set -- "$@" --prefer-output "$RETROFORGE_PRIMARY_CONNECTOR"
 fi

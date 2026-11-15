@@ -778,8 +778,9 @@ class ResetScreen:
                            "settings, Wi-Fi networks, Bluetooth pairings, sign-ins, downloaded "
                            "emulators and installed PC games. It is NOT recoverable."),
             ]
-        blocks.append(("Not changed", "The RetroForge version this device runs, and any other SD "
-                                      "card in it."))
+        blocks.append(("Not changed", "The RetroForge version this device runs, Android, and the "
+                                      "storage it did not start from (the SD card, or the "
+                                      "internal storage)."))
         blocks.append(("How", "The device restarts and resets itself before RetroForge starts, "
                               "then starts as it did the first time."))
         if self.error:

@@ -32,7 +32,13 @@ class PygameView:
         import pygame                                            # lazy: see this file's header
 
         self.pygame = pygame
-        pygame.init()
+        # Only what the UI uses, never pygame.init(): that opens the AUDIO device too, and with no
+        # PipeWire in this session (root, no logind session) SDL's ALSA->PipeWire path can block
+        # forever. HW, Pocket S2, 2026-11-15: the reset screen stayed black, the main thread
+        # waiting on the alsa-pipewire thread before a single frame. uipad opens the controllers.
+        pygame.display.init()
+        pygame.font.init()
+        pygame.joystick.init()
         pygame.display.set_caption("RetroForge installer")
         self.surface = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
         self.w, self.h = self.surface.get_size()

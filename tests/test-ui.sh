@@ -1305,6 +1305,34 @@ printf '%s' "$cmd" | grep -q -- '--use-rotation-shader' \
   && bad "it passes --use-rotation-shader, which our patched gamescope no longer has" \
   || ok "no --use-rotation-shader -- rotation is auto-engaged from the connector"
 
+printf '%s' "$cmd" | grep -qE -- '(^| )-[wh] ' \
+  && bad "a board with no game display size got -w/-h: $cmd" \
+  || ok "no -w/-h when the board declares no game display size"
+
+CASE="session: the board's game display size sizes the UI"
+# HW, Pocket S2, 2026-11-15: a UI filling the 2560x1440 output could not be scanned out rotated
+# (EINVAL on every flip, black panel); at 1920x1080 it flipped.
+printf '#!/bin/sh\necho RETROFORGE_PRIMARY_CONNECTOR=DSI-1\necho RETROFORGE_PANEL_NATIVE_WIDTH=1440\necho RETROFORGE_PANEL_NATIVE_HEIGHT=2560\necho RETROFORGE_GAMESCOPE_NESTED_W=1920\necho RETROFORGE_GAMESCOPE_NESTED_H=1080\n' >"$T/bin/device-env-nested"
+chmod +x "$T/bin/device-env-nested"
+cmd="$(DEVENV="$T/bin/device-env-nested" session)"
+printf '%s' "$cmd" | grep -q -- '-W 2560 -H 1440 -w 1920 -h 1080' \
+  && ok "the output stays the panel's, the UI gets the board's 1920x1080" \
+  || bad "no -w 1920 -h 1080 after the output size: $cmd"
+grep -q '^RETROFORGE_GAMESCOPE_NESTED_W=1920$' "$ROOT/rootfs/overlay/usr/lib/retroforge/devices/ayaneo-pocket-s2.conf" \
+  && grep -q '^RETROFORGE_GAMESCOPE_NESTED_H=1080$' "$ROOT/rootfs/overlay/usr/lib/retroforge/devices/ayaneo-pocket-s2.conf" \
+  && ok "the Pocket S2 declares 1920x1080" \
+  || bad "the Pocket S2 conf declares no 1920x1080 game display"
+
+CASE="the UI opens no audio device"
+# HW, Pocket S2, 2026-11-15: pygame.init() opens audio as well, and with no PipeWire in the
+# installer's session SDL's ALSA->PipeWire path blocked before the first frame: a black panel.
+grep -qE '^[^#]*pygame\.init\(\)' "$ROOT/installer/uiview.py" \
+  && bad "uiview.py calls pygame.init(), which opens the audio device too" \
+  || ok "uiview.py initialises display, font and joystick only"
+grep -q 'pygame\.mixer' "$ROOT/installer/uiview.py" "$ROOT/installer/ui" "$ROOT/installer/uipad.py" \
+  && bad "the UI uses pygame.mixer" \
+  || ok "and nothing in the UI uses the mixer"
+
 CASE="session: an unknown board still gets a screen"
 printf '#!/bin/sh\nexit 0\n' >"$T/bin/device-env-empty"; chmod +x "$T/bin/device-env-empty"
 cmd="$(DEVENV="$T/bin/device-env-empty" session)"
@@ -1665,7 +1693,7 @@ PY
 python3 -c '
 import json,sys; d=json.loads(sys.argv[1]); s, h = d["soft"], d["hard"]
 ok = ("ROMs" in s["Kept"] and "saves" in s["Kept"] and "Wi-Fi" in s["Erased"] and "Kept" not in h
-      and "NOT recoverable" in h["Erased"] and "ROMs" in h["Erased"] and "other SD card" in s["Not changed"]
+      and "NOT recoverable" in h["Erased"] and "ROMs" in h["Erased"] and "Android" in s["Not changed"] and "SD card" not in s["Not changed"].split("(")[0]
       and [b["pos"] for b in d["buttons"]] == ["S", "SELECT"])
 sys.exit(not ok)' "$words" && ok "soft keeps ROMs/BIOS/saves/states and erases Wi-Fi; hard erases ROMs, NOT recoverable; Continue/Cancel" || bad "$words"
 
