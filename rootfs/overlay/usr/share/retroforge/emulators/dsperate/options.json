@@ -1,0 +1,298 @@
+{
+  "files": {
+    "main": {
+      "path": ".config/dsperate/dsperate.ini",
+      "format": "ini",
+      "separator": " = "
+    }
+  },
+  "options": [
+    {
+      "id": "renderer",
+      "label": "3D renderer",
+      "description": "How DSperate draws the DS's 3D. Software is pixel-exact with the DS and runs on three CPU threads; GPU draws it with Vulkan at the DS's resolution, which frees the CPU but can place a texture pixel early or late.",
+      "choices": [
+        {
+          "value": "software",
+          "label": "Software",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "gpu3d",
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "value": "vulkan",
+          "label": "GPU (Vulkan)",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "gpu3d",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "layout",
+      "label": "Screen layout",
+      "description": "How the two DS screens share the panel. Guide+Y cycles them in game. Has no effect on a dual-screen device, where each screen has its own panel.",
+      "choices": [
+        {
+          "value": "dominant_h",
+          "label": "Side by side, top screen large",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "layout",
+              "value": "dominant_h"
+            }
+          ]
+        },
+        {
+          "value": "horizontal",
+          "label": "Side by side",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "layout",
+              "value": "horizontal"
+            }
+          ]
+        },
+        {
+          "value": "vertical",
+          "label": "Stacked",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "layout",
+              "value": "vertical"
+            }
+          ]
+        },
+        {
+          "value": "dominant_v",
+          "label": "Stacked, top screen large",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "layout",
+              "value": "dominant_v"
+            }
+          ]
+        },
+        {
+          "value": "pip",
+          "label": "Picture in picture",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "layout",
+              "value": "pip"
+            }
+          ]
+        },
+        {
+          "value": "single",
+          "label": "One screen",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "layout",
+              "value": "single"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "integer_scale",
+      "label": "Integer scaling",
+      "description": "Scales the DS screens by whole numbers only, for an even, sharp picture with borders around it.",
+      "choices": [
+        {
+          "value": "on",
+          "label": "On",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "integer_scale",
+              "value": "under"
+            }
+          ]
+        },
+        {
+          "value": "off",
+          "label": "Off",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "integer_scale",
+              "value": "off"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "smoothing",
+      "label": "Screen filter",
+      "description": "Sharp keeps the DS's pixels square; Smooth blends them (bilinear).",
+      "choices": [
+        {
+          "value": "sharp",
+          "label": "Sharp",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "linear",
+              "value": "false"
+            }
+          ]
+        },
+        {
+          "value": "smooth",
+          "label": "Smooth",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "linear",
+              "value": "true"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "colour",
+      "label": "Colour correction",
+      "description": "Gives the picture the colours of a real DS screen. Off shows the game's own colours.",
+      "choices": [
+        {
+          "value": "off",
+          "label": "Off",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "colour",
+              "value": "off"
+            }
+          ]
+        },
+        {
+          "value": "nds",
+          "label": "DS",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "colour",
+              "value": "nds"
+            }
+          ]
+        },
+        {
+          "value": "nds_lite",
+          "label": "DS Lite",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "colour",
+              "value": "nds_lite"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "vsync",
+      "label": "VSync",
+      "description": "Waits for the screen's refresh before showing a frame: no tearing.",
+      "choices": [
+        {
+          "value": "on",
+          "label": "On",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "vsync",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "value": "off",
+          "label": "Off",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "vsync",
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "show_fps",
+      "label": "Show FPS",
+      "description": "A frames-per-second counter in a corner of the top screen.",
+      "choices": [
+        {
+          "value": "on",
+          "label": "On",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "fps",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "value": "off",
+          "label": "Off",
+          "set": [
+            {
+              "file": "main",
+              "section": "video",
+              "key": "fps",
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "notes": [
+    "Verified against beebono/DSperate tag v3.4.1, src/frontend/sdl. Config is ~/.config/dsperate/dsperate.ini (config.h global_path), read as [section] then key = value lines into 'section.key' (config.cpp Config::load); a value is cut at the first # or ;. DSperate's pause menu changes ONE line in place (Config::store), never rewrites the file. Per-game files ~/.config/dsperate/games/<rom>.ini and games/<GAMECODE>.ini override it; a layout picked with the hotkey is remembered there, and wins over the layout option for that game.",
+    "renderer: [video] gpu3d bool, default false (main.cpp DS_GPU3D / video.gpu3d; --gpu3d): the 3D layer on Vulkan, else OpenGL ES 3.1, at 1x; the CPU raster is the exact reference and the fallback. DSperate has no internal-resolution upscale (video.internal_res is retired).",
+    "layout: [video] layout vertical|horizontal|single|pip|dominant_v|dominant_h (main.cpp parse_video, default vertical); the seed sets dominant_h. Ignored in dual-window mode (the launcher's --dual-window on a dual-screen board), the fallback's layout there.",
+    "integer_scale: [video] integer_scale off|under|over (Disp::parse_int_scale); On is under (letterbox), over crops and is left to the player's file.",
+    "smoothing: [video] linear bool, default false: bilinear instead of nearest.",
+    "colour: [video] colour off|nds|nds_lite, default off (--colour).",
+    "vsync: [video] vsync bool, default true. show_fps: [video] fps bool, default false (the fps hotkey toggles it, unbound).",
+    "Left out: aspect (the DS is 4:3 and DSperate always keeps it), resolution (none), anti-aliasing (video.aa, in DSperate's own menu)."
+  ]
+}

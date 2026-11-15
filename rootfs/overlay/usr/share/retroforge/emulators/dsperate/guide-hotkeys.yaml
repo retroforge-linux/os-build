@@ -1,0 +1,127 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/device_profile_v1.json
+#
+# Guide-modifier hotkeys for DSperate. Same design as azahar/guide-hotkeys.yaml (its header explains
+# the Guide row, the deferred ui_guide tap, the explicit target_devices and why each trigger appears
+# twice); only the layer's keyboard outputs differ.
+#
+# Hold Guide: L1 loads the state (F1), R1 saves it (F2), R2 fast-forwards while held (F3), Start
+# quits (F4, DSperate's quit: battery save written, exit 0); L2 swaps the screens (F6), Y cycles the
+# layouts (F5), Select opens DSperate's pause menu (P: states, cheats, options, achievements), R3 is
+# the microphone, held (M). The seeded dsperate.ini [hotkeys] binds those keys. F-keys and letters
+# because the handhelds have no physical keyboard to collide with. DSperate's own pad hotkeys hang
+# off Guide, which never reaches it, so the seed turns them all off.
+version: 1
+kind: DeviceProfile
+name: RetroForge Guide hotkeys (DSperate)
+description: Hold Guide for emulator hotkeys; plain pad otherwise
+target_devices:
+  - xbox-elite
+  - keyboard
+  - mouse
+
+mapping:
+  - name: Guide holds the hotkey layer (and goes to the shell's menu over DBus)
+    source_event:
+      gamepad:
+        button: Guide
+    target_events:
+      - layer:
+          name: guide
+          on_deactivation:
+            only_when_unused: true
+            emit_events:
+              - dbus: ui_guide
+
+layers:
+  - name: guide
+    mapping:
+      - name: Guide+L1 -> F1 (load state)
+        source_event:
+          gamepad:
+            button: LeftBumper
+        target_events:
+          - keyboard: KeyF1
+
+      - name: Guide+R1 -> F2 (save state)
+        source_event:
+          gamepad:
+            button: RightBumper
+        target_events:
+          - keyboard: KeyF2
+
+      - name: Guide+R2 (analog) -> F3 (fast-forward while held)
+        source_event:
+          gamepad:
+            trigger:
+              name: RightTrigger
+              deadzone: 0.2
+        target_events:
+          - keyboard: KeyF3
+
+      - name: Guide+R2 (button) -> F3 (fast-forward while held)
+        source_event:
+          gamepad:
+            button: RightTrigger
+        target_events:
+          - keyboard: KeyF3
+
+      - name: Guide+Start -> F4 (quit, battery save written)
+        source_event:
+          gamepad:
+            button: Start
+        target_events:
+          - keyboard: KeyF4
+
+      - name: Guide+L2 (analog) -> F6 (swap screens)
+        source_event:
+          gamepad:
+            trigger:
+              name: LeftTrigger
+              deadzone: 0.2
+        target_events:
+          - keyboard: KeyF6
+
+      - name: Guide+L2 (button) -> F6 (swap screens)
+        source_event:
+          gamepad:
+            button: LeftTrigger
+        target_events:
+          - keyboard: KeyF6
+
+      - name: Guide+Y -> F5 (next layout)
+        source_event:
+          gamepad:
+            button: West
+        target_events:
+          - keyboard: KeyF5
+
+      - name: Guide+Select -> P (DSperate's pause menu)
+        source_event:
+          gamepad:
+            button: Select
+        target_events:
+          - keyboard: KeyP
+
+      - name: Guide+R3 -> M (microphone, held)
+        source_event:
+          gamepad:
+            button: RightStick
+        target_events:
+          - keyboard: KeyM
+
+      # OpenGamepadUI's own Guide combos, which its intercept used to catch: every gamepad_profile
+      # carries them in the layer Guide holds (tests/test-launch.sh checks). Using them counts as
+      # using the layer: no ui_guide tap on release.
+      - name: Guide+A -> ui_quick (OpenGamepadUI quick bar)
+        source_event:
+          gamepad:
+            button: South
+        target_events:
+          - dbus: ui_quick
+
+      - name: Guide+X -> ui_osk (OpenGamepadUI on-screen keyboard)
+        source_event:
+          gamepad:
+            button: North
+        target_events:
+          - dbus: ui_osk

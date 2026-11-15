@@ -152,22 +152,23 @@
         }
       }
     },
-    "melonds": {
-      "name": "melonDS",
-      "author": "Arisotura and the melonDS team; AppImage by pkgforge-dev",
+    "dsperate": {
+      "name": "DSperate",
+      "author": "beebono and the DSperate contributors",
       "systems": [
         "nds"
       ],
-      "github": "pkgforge-dev/melonDS-AppImage",
-      "tag": "1.1-2@2026-10-01_1790875607",
-      "tag_pattern": "^[0-9][0-9.]*(-[0-9]+)?@[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]+$",
-      "asset": "^melonDS-[0-9][0-9.]*(-[0-9]+)?-anylinux-aarch64\\.AppImage$",
-      "sha256": "0f7aa6340c76ac3e3616d91b3cfa6ce10331f2320614199cabad005d9c6ea0a4",
-      "size": 62285203,
-      "homepage": "https://melonds.kuribo64.net/",
+      "github": "beebono/DSperate",
+      "tag": "v3.4.1",
+      "tag_pattern": "^v[0-9]+(\\.[0-9]+)+$",
+      "asset": "^dsperate-v[0-9][0-9.]*-linux-aarch64\\.tar\\.gz$",
+      "extract": "^dsperate-v[0-9][0-9.]*-linux-aarch64/dsperate$",
+      "sha256": "f63248956914bfaba2a35612707d10962e3a667b3603aedc1f1e42733b1341ac",
+      "size": 6306479,
+      "homepage": "https://github.com/beebono/DSperate",
       "licence": {
         "name": "GPL-3.0",
-        "url": "https://github.com/melonDS-emu/melonDS/blob/master/LICENSE"
+        "url": "https://github.com/beebono/DSperate/blob/main/LICENSE"
       }
     },
     "ppsspp": {

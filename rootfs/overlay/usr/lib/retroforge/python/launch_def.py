@@ -31,6 +31,10 @@
 #                                                  file, declared to OpenGamepadUI for the run:
 #                                                  it loads it while the game has focus (below)
 #    "core_dumps": false,                          no core file when it crashes (default true; below)
+#    "secondary_window_title": "^X \\(Bottom\\)$",   the title of its second screen's window: the
+#                                                  second panel of a dual-screen board (below)
+#    "dual_screen_args": ["--dual-window"],        before the others on a dual-screen board whose X
+#                                                  server shows both panels (below)
 #    "seed": [{"file": "x.ini", "to": ".config/x/x.ini"}],   first-run settings (below)
 #    "sync": [{"file": "x.txt", "to": "roms/x/x.txt"}],      RetroForge's own files, kept current (below)
 #    "install": [{"from": "bios/fw.bin",            a one-time step with the emulator's own binary
@@ -76,6 +80,21 @@
 # emulator (a core it cannot load, or a BIOS it does not have, is a black screen). Never for --gui.
 # Paths are relative to $HOME, no '..', no whitespace (the status line is split on spaces).
 #
+# The second screen's window (secondary_window_title): an emulator that shows the DS/3DS bottom screen
+# in a window of its own (DSperate's "DSperate (Bottom)", Azahar's "... | Secondary Window") names it
+# with a regex (ECMAScript, searched in the title; the subset Python's re also takes). On a dual-screen
+# board the launcher sets it as the game Xwayland's root GAMESCOPE_SECONDARY_WINDOW_TITLE before the
+# emulator starts and removes it when the emulator exits, and gamescope (patch 0041) sends a window
+# whose title matches to the second panel. gamescope itself knows no emulator. A root that cannot be
+# set is a warning: the game starts, its second window on the main panel. Ignored on one panel.
+#
+# One window per panel (dual_screen_args): an emulator that must be TOLD to open its second window and
+# cannot start without a second display to put it on (DSperate's --dual-window exits when SDL counts one)
+# gets these arguments, before all others, game or Open, only on a dual-screen board whose X server
+# ($DISPLAY, the game's Xwayland) reports two or more RandR monitors (gamescope patch 0045). Otherwise
+# a warning, and the emulator opens its one window on the main panel: the game always starts. No
+# "{rom}" or "{system}" in them.
+#
 # Kept current (sync): files that are RetroForge's, not the player's, placed into the download's world --
 # PortMaster's mod_RetroForge.txt and libgl_RetroForge.txt, which every port sources from PortMaster's
 # folder. Copied from the image at every launch when missing or different (an image update must
@@ -98,8 +117,10 @@ SYSTEM_ID = re.compile(r"[a-z0-9_]+")
 DEFINITION_KEYS = {"format", "root", "binary", "args", "gui_args", "system_args", "system_requires",
                    "system_settings", "env",
                    "seed", "sync", "install", "stub", "core_dumps", "exit_resend",
-                   "gamepad_profile", "achievements", "notes"}
+                   "gamepad_profile", "achievements", "secondary_window_title", "dual_screen_args",
+                   "notes"}
 EXIT_RESEND_MAX = 30  # s: an exit_resend longer than this is a typo, not a plan
+TITLE_MAX = 256  # characters of a secondary_window_title regex
 ROM = "{rom}"
 FILE = "{file}"
 SYSTEM = "{system}"
@@ -255,6 +276,13 @@ def load_definition(emulator):
                   f'{", ".join(achievements.FORMATS)}>, ...}} as the achievements module\'s header '
                   'says: "set" lists for files of settings, "value" for a secret, one-line values '
                   f'whose only {{...}} are {", ".join(achievements.PLACEHOLDERS)}')
+    title = d.get("secondary_window_title")
+    if title is not None and not (clean_str(title) and title and "\n" not in title
+                                  and len(title) <= TITLE_MAX and regex_ok(title)):
+        raise bad(f"secondary_window_title must be a one-line regex of at most {TITLE_MAX} characters")
+    dual_screen_args = d.get("dual_screen_args", [])
+    if not str_list(dual_screen_args) or ROM in dual_screen_args or any(SYSTEM in a for a in dual_screen_args):
+        raise bad(f'dual_screen_args must be a list of strings without "{ROM}" or "{SYSTEM}"')
     exit_resend = d.get("exit_resend")
     if exit_resend is not None and not (isinstance(exit_resend, (int, float)) and not isinstance(exit_resend, bool)
                                         and 0 < exit_resend <= EXIT_RESEND_MAX):
@@ -262,7 +290,16 @@ def load_definition(emulator):
     return {"format": d["format"], "root": d.get("root"), "binary": d["binary"], "args": args, "gui_args": gui_args,
             "system_args": system_args, "system_requires": system_requires, "system_settings": system_settings, "env": env, "seed": seed,
             "sync": sync, "install": install, "stub": stub, "core_dumps": core_dumps,
-            "exit_resend": exit_resend, "gamepad_profile": gamepad_profile, "achievements": cheevos}
+            "exit_resend": exit_resend, "gamepad_profile": gamepad_profile, "achievements": cheevos,
+            "secondary_window_title": title, "dual_screen_args": dual_screen_args}
+
+
+def regex_ok(pattern):
+    try:
+        re.compile(pattern)
+        return True
+    except re.error:
+        return False
 
 
 REQUIRE_STATUSES = {"missing-file", "not-installed"}  # what the plugin turns into a message

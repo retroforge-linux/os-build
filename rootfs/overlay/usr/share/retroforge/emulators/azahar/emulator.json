@@ -5,7 +5,7 @@
     "Azahar never quits when a game stops: Select + Start is its own 'Exit Azahar' shortcut (qt-config.ini), which quits cleanly with confirmClose off, so OpenGamepadUI gets the panel back. SIGTERM ends it at once, no dialog.",
     "Only decrypted .3ds/.cci/.cxi/.3dsx (and Azahar's compressed z* forms) are listed: a .cia must be installed first (Azahar asks in a dialog).",
     "gui_args: Azahar's own window and game list (touch screen; no pad-driven UI). Select + Start quits it too.",
-    "Dual-screen boards (device-env RETROFORGE_SECONDARY_CONNECTOR set): qt-config-dual-screen.ini is seeded instead, with layout_option=4 (separate windows): the 'Secondary Window' goes to the second panel by its title (gamescope patch 0041).",
+    "Dual-screen boards (device-env RETROFORGE_SECONDARY_CONNECTOR set): qt-config-dual-screen.ini is seeded instead, with layout_option=4 (separate windows): the 'Secondary Window' goes to the second panel by its title (secondary_window_title, which the launcher hands to gamescope patch 0041).",
     "SDL_NO_SIGNAL_HANDLERS=1: Azahar's SDL (pads, audio) otherwise catches SIGTERM and turns it into an SDL quit event Azahar never reads (its loop is Qt's), so OpenGamepadUI's Exit did nothing and a second Exit SIGKILLed the whole tree, launcher and mount included (HW 2026-10-12, Thor Lite: SigCgt had SIGTERM). With the hint SIGTERM keeps its default action and ends Azahar at once, as RPCS3's same fix.",
     "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 Quick Load, R1 Quick Save (the quicksave slot), R2 Toggle Turbo Mode (a toggle: Azahar has no hold-to-fast-forward), Start Exit Azahar — as keyboard F1-F4, bound in both seeded qt-config files (keyboard KeySeq rows; Azahar's own F2-F4 defaults emptied). Guide+Start is the same clean quit as Select + Start."
   ],
@@ -20,6 +20,7 @@
     "SDL_NO_SIGNAL_HANDLERS": "1"
   },
   "gamepad_profile": "guide-hotkeys.yaml",
+  "secondary_window_title": "\\| Secondary Window$",
   "seed": [
     {
       "file": "qt-config.ini",

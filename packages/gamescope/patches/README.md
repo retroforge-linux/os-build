@@ -496,8 +496,10 @@ it between two greys every vblank and logs the flip rate. No flag, no change.
 
 `0041` — **second-screen windows go to the secondary output** (ours, 2026-10-12; plan step 3).
 A window whose `GAMESCOPE_OUTPUT` property is 1, or (without the property) whose title matches
-`--secondary-window-title` (default `^\[w2\] |\| Secondary Window$`: melonDS's and Azahar's
-second window), is never a focus candidate for the main output, so it also drops out of
+the regex in its Xwayland root's `GAMESCOPE_SECONDARY_WINDOW_TITLE` string property (set by
+retroforge-launch from the emulator's `secondary_window_title`, before the emulator starts; no
+property, no title rule: gamescope itself names no emulator), is never a focus candidate for the
+main output, so it also drops out of
 `GAMESCOPE_FOCUSABLE_WINDOWS` and of a `GAMESCOPECTRL_BASELAYER_WINDOW` match (OpenGamepadUI names
 the newest window of a game, which was melonDS's `[w2]`). A separate secondary focus shows the
 newest such window, sized to the panel with its orientation applied; client resizes of it are

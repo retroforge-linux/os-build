@@ -49,7 +49,7 @@ os.umask(UMASK)
 PASS = FAIL = 0
 CASE = ""
 USER, TOKEN = "Player1", "AbCdEf0123456789"
-EMUS = ("retroarch", "duckstation", "armsx2", "ppsspp", "dolphin", "flycast")
+EMUS = ("retroarch", "duckstation", "armsx2", "ppsspp", "dolphin", "flycast", "dsperate")
 
 
 def check(what, got, want):
@@ -133,6 +133,8 @@ DS, AX, AXS = ".local/share/duckstation/settings.ini", ".config/ARMSX2/inis/PCSX
 PP, PPD = ".config/ppsspp/PSP/SYSTEM/ppsspp.ini", ".config/ppsspp/PSP/SYSTEM/ppsspp_retroachievements.dat"
 DL, FC = ".config/dolphin-emu/RetroAchievements.ini", ".config/flycast/emu.cfg"
 RA = ".config/retroarch/retroarch.cfg"
+DSP, DSPT = ".config/dsperate/dsperate.ini", ".config/dsperate/retroforge-cheevos.token"
+DSPT_ABS = "/home/player/" + DSPT  # token_file is absolute: DSperate reads it from the real home
 MID = os.path.join(T, "machine-id")
 
 # =================================================================================================
@@ -174,6 +176,9 @@ check("Flycast: yes/no words", [ini(H, FC, "achievements", k) for k in ("Enabled
 check("RetroArch: quoted, off, no name, no token, no password",
       [ini(H, RA, "", k) for k in ("cheevos_enable", "cheevos_hardcore_mode_enable", "cheevos_username", "cheevos_token", "cheevos_password")],
       ['"false"', '"false"', '""', '""', '""'])
+check("DSperate: off, no name, no token file; its own and other front ends' sign-ins not used",
+      [ini(H, DSP, "cheevos", k) for k in ("enabled", "username", "token_file", "use_system_login")]
+      + [os.path.exists(os.path.join(H, DSPT))], ["false", "", DSPT_ABS, "false", False])
 check("no warnings", warnings, [])
 
 # =================================================================================================
@@ -208,12 +213,16 @@ check("Flycast: name and Token", [ini(H, FC, "achievements", k) for k in ("Enabl
 check("RetroArch: quoted name and token, password empty",
       [ini(H, RA, "", k) for k in ("cheevos_enable", "cheevos_hardcore_mode_enable", "cheevos_username", "cheevos_token", "cheevos_password")],
       ['"true"', '"true"', f'"{USER}"', f'"{TOKEN}"', '""'])
+check("DSperate: on, the name, token_file naming the token alone (no Hardcore: it has none)",
+      [ini(H, DSP, "cheevos", k) for k in ("enabled", "username", "token_file", "use_system_login", "hardcore")]
+      + [read(os.path.join(H, DSPT))], ["true", USER, DSPT_ABS, "false", None, TOKEN])
+check("DSperate: the token is not in dsperate.ini", TOKEN in read(os.path.join(H, DSP)), False)
 check("the sign-in file itself is 0600", mode(os.path.join(H, STORE)), 0o600)
 check("every file holding a token is 0600 (an existing 0644 one tightened)",
-      {p: mode(os.path.join(H, p)) for p in (DS, AXS, PPD, DL, FC, RA)}, {p: 0o600 for p in (DS, AXS, PPD, DL, FC, RA)})
+      {p: mode(os.path.join(H, p)) for p in (DS, AXS, PPD, DL, FC, RA, DSPT)}, {p: 0o600 for p in (DS, AXS, PPD, DL, FC, RA, DSPT)})
 check("no temporary file left", [p for p in glob.glob(os.path.join(H, "**/*.retroforge-*"), recursive=True)], [])
 check("no warnings", warnings, [])
-again = {p: read(os.path.join(H, p)) for p in (DS, AX, AXS, PP, PPD, DL, FC, RA)}
+again = {p: read(os.path.join(H, p)) for p in (DS, AX, AXS, PP, PPD, DL, FC, RA, DSP, DSPT)}
 for emu in EMUS:
     run(emu, H)
 check("a second launch changes nothing", {p: read(os.path.join(H, p)) for p in again}, again)
@@ -237,6 +246,9 @@ check("every name and token gone, achievements off",
        ini(H, DL, "Achievements", "ApiToken"), ini(H, FC, "achievements", "Token"), ini(H, PP, "Achievements", "AchievementsEnable")],
       ["", "", "", "", "", "False"])
 check("PPSSPP's token file removed", os.path.exists(os.path.join(H, PPD)), False)
+check("DSperate: off, no name, its token file removed",
+      [ini(H, DSP, "cheevos", "enabled"), ini(H, DSP, "cheevos", "username"), os.path.exists(os.path.join(H, DSPT))],
+      ["false", "", False])
 check("no warnings", warnings, [])
 
 # =================================================================================================

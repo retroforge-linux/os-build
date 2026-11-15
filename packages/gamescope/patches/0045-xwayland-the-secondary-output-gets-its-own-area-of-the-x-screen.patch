@@ -23,13 +23,13 @@ windows are composited regardless of their X origin.
 (retroforge: dual-screen boards, 2026-10-12.)
 ---
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index fa29d46..9bb25c8 100644
+index c7fe07c..ffbb5c5 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -1102,6 +1102,25 @@ static std::optional<std::regex> g_SecondaryWindowTitle;
- static global_focus_t g_SecondaryFocus;
- // melonDS prefixes "[w2] " to its second window's title, Azahar ends its with "| Secondary Window".
- static constexpr const char *k_pszDefaultSecondaryWindowTitle = R"(^\[w2\] |\| Secondary Window$)";
+@@ -1103,6 +1103,25 @@ static global_focus_t g_SecondaryFocus;
+ // GAMESCOPE_SECONDARY_WINDOW_TITLE, which whoever starts a dual-screen program sets before its
+ // windows map (an emulator names its second screen's window its own way). No property: no title rule.
+ static std::unordered_map<xwayland_ctx_t *, std::regex> g_SecondaryWindowTitles;
 +
 +// With a secondary output, the game's X screen spans [main][secondary] (wlserver gives that
 +// Xwayland a second wl_output to the right). root_width/height keep meaning the main output's area,
@@ -52,7 +52,7 @@ index fa29d46..9bb25c8 100644
  global_focus_t *GetCurrentFocus()
  {
  	uint64_t ulKey = GetBackend()->GetCurrentConnector() ? GetBackend()->GetCurrentConnector()->GetVirtualConnectorKey() : 0;
-@@ -5854,10 +5873,13 @@ static void determine_and_apply_secondary_focus()
+@@ -5856,10 +5875,13 @@ static void determine_and_apply_secondary_focus()
  	g_SecondaryFocus.focusWindow = pFocusWindow;
  
  	if ( pFocusWindow && ( (uint32_t)pFocusWindow->GetGeometry().nWidth != g_uSecondaryOutputWidth ||
@@ -68,7 +68,7 @@ index fa29d46..9bb25c8 100644
  	}
  
  	g_SecondaryFocus.ulCurrentFocusSerial = GetFocusSerial();
-@@ -6480,6 +6502,7 @@ configure_win(xwayland_ctx_t *ctx, XConfigureEvent *ce)
+@@ -6511,6 +6533,7 @@ configure_win(xwayland_ctx_t *ctx, XConfigureEvent *ce)
  		{
  			ctx->root_width = ce->width;
  			ctx->root_height = ce->height;
@@ -76,7 +76,7 @@ index fa29d46..9bb25c8 100644
  			MakeFocusDirty();
  
  			// Screen-sized is relative to the screen, re-arm every placement.
-@@ -6548,10 +6571,10 @@ static void configure_request(xwayland_ctx_t *ctx, XConfigureRequestEvent *confi
+@@ -6579,10 +6602,10 @@ static void configure_request(xwayland_ctx_t *ctx, XConfigureRequestEvent *confi
  	// Take a client's own drag out of the pointer position so it does not chase itself.
  	steamcompmgr_win_t *w = find_win( ctx, configureRequest->window, false );
  
@@ -89,7 +89,7 @@ index fa29d46..9bb25c8 100644
  		changes.y = 0;
  		changes.width = g_uSecondaryOutputWidth;
  		changes.height = g_uSecondaryOutputHeight;
-@@ -9694,6 +9717,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
+@@ -9730,6 +9753,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
  
  	ctx->root_width = DisplayWidth(ctx->dpy, ctx->scr);
  	ctx->root_height = DisplayHeight(ctx->dpy, ctx->scr);

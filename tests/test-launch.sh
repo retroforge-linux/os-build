@@ -423,21 +423,23 @@ sys.exit(not keys >= {("savefile_directory", "\"/home/player/saves/{system}\""),
                       ("sort_savefiles_enable", "\"false\""), ("sort_savestates_enable", "\"false\"")})' "$RA_DEF" \
   && ok "retroarch: save and state folders follow the card's system, unsorted, before every game" \
   || bad "retroarch: per-system save/state folders are not written by system_settings"
-python3 -c 'import json,sys; e=json.load(open(sys.argv[1]))["env"]
-sys.exit(not (e.get("LD_PRELOAD") == "/usr/lib/retroforge/libretroforge-hidemenu.so" and e.get("SHARUN_ALLOW_LD_PRELOAD") == "1"))' \
-  "$SEED_DIR/melonds/emulator.json" && ok "melonds: the hidemenu shim is preloaded, through sharun" || bad "melonds: hidemenu shim not preloaded (LD_PRELOAD + SHARUN_ALLOW_LD_PRELOAD)"
-# Dual-screen boards: melonDS's second window and Azahar's separate windows go to the second panel
-# (gamescope 0041), and both need one more SIGTERM to exit with that window open.
-has melonds/melonDS-dual-screen.toml '[Instance0.Window1]' "dual-screen seed: the second window section"
-has melonds/melonDS-dual-screen.toml 'Enabled = true' "dual-screen seed: the second window enabled"
-has melonds/melonDS-dual-screen.toml 'ScreenSizing = 5' "dual-screen seed: bottom screen alone in the second window"
-has melonds/melonDS-dual-screen.toml 'ScreenSizing = 4' "dual-screen seed: top screen alone in the first window"
+# Dual-screen boards: DSperate's bottom-screen window and Azahar's separate windows go to the second
+# panel (gamescope 0041, by the title in their emulator.json secondary_window_title). DSperate's one
+# window per panel is the launcher's --dual-window (dual_screen_args), never seeded: seeded, DSperate
+# exits at start when SDL counts one display.
+lacks dsperate/dsperate.ini '^dual_window' "a seeded dual_window (DSperate would exit with one display)"
+has dsperate/dsperate.ini 'screen = top' "the DS top screen on the upper panel (dual-window)"
+has dsperate/dsperate.ini 'layout = dominant_h' "one window: top screen large, the touch screen beside it"
 has azahar/qt-config-dual-screen.ini 'layout_option=4' "dual-screen seed: separate windows"
-for emu in melonds azahar; do
-  python3 -c 'import json,sys; d=json.load(open(sys.argv[1]));
-sys.exit(not (d["env"].get("SDL_NO_SIGNAL_HANDLERS") == "1" and all("dual_screen_file" in s for s in d["seed"])))' "$SEED_DIR/$emu/emulator.json" \
-    && ok "$emu: dual-screen seed, SIGTERM not caught by SDL" || bad "$emu: no dual-screen seed or SDL_NO_SIGNAL_HANDLERS"
-done
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1]));
+sys.exit(not (d["env"].get("SDL_NO_SIGNAL_HANDLERS") == "1" and all("dual_screen_file" in s for s in d["seed"])))' "$SEED_DIR/azahar/emulator.json" \
+  && ok "azahar: dual-screen seed, SIGTERM not caught by SDL" || bad "azahar: no dual-screen seed or SDL_NO_SIGNAL_HANDLERS"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1]));
+sys.exit(not (d["seed"] == [{"file": "dsperate.ini", "to": ".config/dsperate/dsperate.ini"}]
+              and d["dual_screen_args"] == ["--dual-window"] and d["format"] == "binary" and d["binary"] == "current"
+              and d["args"] == ["--fullscreen", "{rom}"] and "env" not in d))' "$SEED_DIR/dsperate/emulator.json" \
+  && ok "dsperate: one seed, --dual-window from the launcher, the extracted binary fullscreen, SIGTERM left to its sigwait thread" \
+  || bad "dsperate: definition lost its single seed, dual_screen_args, binary format, --fullscreen, or gained an env"
 # PPSSPP: SDL gamepad -> keycodes (A 189, B 190, X 191, Y 188, Guide 4); device 10.
 has ppsspp/controls.ini 'Cross = 10-189' "Cross on south"; has ppsspp/controls.ini 'Circle = 10-190' "Circle on east"
 has ppsspp/controls.ini 'Square = 10-191' "Square on west"; has ppsspp/controls.ini 'Triangle = 10-188' "Triangle on north"
@@ -453,11 +455,17 @@ has flycast/pad.cfg 'triggers = 2,5' "LT/RT rest at the axis minimum"
 lacks flycast/pad.cfg '^bind[0-9]+ = 8:' "binding on Guide (b8)"
 grep -q '"to": ".config/flycast/mappings/SDL_Xbox One Elite 2 Controller.cfg"' "$SEED_DIR/flycast/emulator.json" \
   && ok "flycast: the mapping file is named after the pad's SDL name" || bad "flycast: mapping file name does not match the pad"
-# melonDS: raw indices; DS A east, B south, X north, Y west.
-has melonds/melonDS.toml 'A = 1' "DS A on east"; has melonds/melonDS.toml 'B = 0' "DS B on south"
-has melonds/melonDS.toml 'X = 3' "DS X on north"; has melonds/melonDS.toml 'Y = 2' "DS Y on west"
-has melonds/melonDS.toml 'Up = 17891585' "Up = hat 0 up OR left stick up"
-lacks melonds/melonDS.toml '^[A-Za-z_]+ = 8$' "binding on Guide (b8)"
+# DSperate: SDL GameController buttons by position (its [pad] defaults: DS A east, B south, X north,
+# Y west); nothing to seed. Its pad hotkeys hang off Guide, which never reaches it: all off, and its
+# mic default (L3 alone) with them.
+for f in dsperate.ini; do
+  lacks dsperate/$f '^\[pad\]' "a [pad] remap (DSperate's positional defaults are right)"
+  for k in quit pause fast_forward save_state load_state slot_next slot_prev layout_next layout_prev screen_swap mic; do
+    python3 -c 'import re,sys; t=open(sys.argv[1]).read(); m=re.search(r"^\[padhotkeys\]\n((?:(?!\[).*\n)*)", t, re.M)
+sys.exit(not (m and re.search(r"^"+sys.argv[2]+r" = none$", m.group(1), re.M)))' "$SEED_DIR/dsperate/$f" "$k" \
+      || bad "dsperate/$f: [padhotkeys] $k is not none"
+  done
+done
 # Azahar: SDL gamepad numbers, any pad (maptype:all, no GUID); 3DS A east, B south, X north, Y west.
 has azahar/qt-config.ini 'profiles\1\button_a="engine:sdl,api:controller,maptype:all,button:1"' "3DS A on east"
 has azahar/qt-config.ini 'profiles\1\button_b="engine:sdl,api:controller,maptype:all,button:0"' "3DS B on south"
@@ -546,16 +554,21 @@ for row in '<ToggleFastForward>342 -1</ToggleFastForward>:Guide+R2 toggles fast-
   grep -qE "^[[:space:]]*${row%%:*}\$" "$SEED_DIR/cemu/settings.xml" && ok "cemu/settings.xml: ${row#*:}" \
     || bad "cemu/settings.xml lacks ${row%%:*} (${row#*:})"
 done
-for f in melonDS.toml melonDS-dual-screen.toml; do
-  has melonds/$f '[Instance0.Keyboard]' "keyboard hotkeys section (Guide layer)"
-  has melonds/$f 'HK_FastForward = 16777273' "F10 (Qt::Key_F10) fast-forwards: Guide+R2"
-  has melonds/$f 'HK_SwapScreens = 16777274' "F11 (Qt::Key_F11) swaps the screens: Guide+L2"
-  has melonds/$f 'HK_Mic = 16777233' "End (Qt::Key_End) is the mic, held: Guide+R3"
-  lacks melonds/$f '^HK_(Mic|SwapScreens) = (9|10)$' "mic or swap on L3/R3 alone (too easy to click)"
+for f in dsperate.ini; do
+  has dsperate/$f 'load_state = F1' "Guide+L1 loads the state"
+  has dsperate/$f 'save_state = F2' "Guide+R1 saves the state"
+  has dsperate/$f 'fast_forward = F3' "Guide+R2 fast-forwards while held"
+  has dsperate/$f 'quit = F4' "Guide+Start quits"
+  has dsperate/$f 'screen_swap = F6' "Guide+L2 swaps the screens"
+  has dsperate/$f 'pause = p' "Guide+Select opens the pause menu"
+  has dsperate/$f 'mic = m' "Guide+R3 is the mic, held"
+  has dsperate/$f 'slot_next = none' "DSperate's F3 slot default cleared (F3 is fast-forward)"
+  has dsperate/$f 'slot_prev = none' "DSperate's F2 slot default cleared (F2 is save state)"
 done
-has melonds/melonDS.toml 'HK_SwapScreenEmphasis = 16777232' "Home (Qt::Key_Home) swaps the emphasis: Guide+Y"
-has melonds/melonDS.toml 'ScreenSizing = 1' "top screen emphasized: the emphasis swap has nothing to swap at equal sizes"
-lacks melonds/melonDS-dual-screen.toml '^HK_SwapScreenEmphasis' "dual screen: an emphasis hotkey (one screen per panel)"
+has dsperate/dsperate.ini 'layout_next = F5' "Guide+Y cycles the layouts (DSperate's F4 default moved off quit)"
+for row in 'KeyF1:Guide+L1' 'KeyF2:Guide+R1' 'KeyF3:Guide+R2' 'KeyF4:Guide+Start' 'KeyF5:Guide+Y' 'KeyF6:Guide+L2' 'KeyP:Guide+Select' 'KeyM:Guide+R3'; do
+  has dsperate/guide-hotkeys.yaml "          - keyboard: ${row%%:*}" "${row#*:} sends ${row%%:*}"
+done
 has flycast/kbd.cfg 'version = 4' "current mapping format (bind lines)"
 has flycast/kbd.cfg 'bind0 = 58:btn_jump_state' "F1 loads the state: Guide+L1"
 has flycast/kbd.cfg 'bind1 = 59:btn_quick_save' "F2 saves the state: Guide+R1"
@@ -992,6 +1005,105 @@ for board in dual single; do
   want="$DS_SEED"; [ "$board" = dual ] && want="$DUAL/duckstation/settings-dual.ini"
   seeded_from "$want" "$seeded" && ok "a $board-screen board is seeded with $(basename "$want")" \
     || bad "a $board-screen board did not get $(basename "$want")"
+done
+
+# =================================================================================================
+CASE="the second screen's window (secondary_window_title)"
+# On a dual-screen board the definition's title regex becomes the game Xwayland's root
+# GAMESCOPE_SECONDARY_WINDOW_TITLE (gamescope patch 0041) BEFORE the emulator starts, and goes when it
+# exits. A stand-in libX11 (RETROFORGE_LIBX11) logs what the launcher's x11_root does.
+cat > "$T/fakex11.c" <<'C'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+static const char *names[32]; static int n;
+static void out(const char *what, unsigned long p, unsigned long t, const unsigned char *d, int len) {
+  FILE *f = fopen(getenv("FAKE_X11_LOG"), "a"); if (!f) return;
+  if (d) fprintf(f, "%s %s %s %.*s\n", what, names[p - 1], names[t - 1], len, (const char *)d);
+  else fprintf(f, "%s %s\n", what, names[p - 1]);
+  fclose(f);
+}
+void *XOpenDisplay(const char *d) { return d && *d ? (void *)1 : NULL; }
+unsigned long XDefaultRootWindow(void *d) { (void)d; return 1; }
+unsigned long XInternAtom(void *d, const char *name, int o) {
+  (void)d; (void)o; for (int i = 0; i < n; i++) if (!strcmp(names[i], name)) return i + 1;
+  names[n] = strdup(name); return ++n;
+}
+int XChangeProperty(void *d, unsigned long w, unsigned long p, unsigned long t, int fmt, int mode, const unsigned char *data, int len) {
+  (void)d; (void)w; (void)fmt; (void)mode; out("set", p, t, data, len); return 1;
+}
+int XDeleteProperty(void *d, unsigned long w, unsigned long p) { (void)d; (void)w; out("delete", p, 0, NULL, 0); return 1; }
+int XSync(void *d, int x) { (void)d; (void)x; return 1; }
+int XCloseDisplay(void *d) { (void)d; return 0; }
+void *XSetErrorHandler(void *h) { (void)h; return NULL; }
+void *XRRGetMonitors(void *d, unsigned long w, int active, int *n) {
+  (void)d; (void)w; (void)active; const char *m = getenv("FAKE_MONITORS"); *n = m ? atoi(m) : 2;
+  FILE *f = fopen(getenv("FAKE_X11_LOG"), "a"); if (f) { fprintf(f, "monitors %d\n", *n); fclose(f); }
+  return *n > 0 ? malloc(1) : NULL;
+}
+void XRRFreeMonitors(void *p) { free(p); }
+C
+if cc -shared -fPIC -o "$T/libfakex11.so" "$T/fakex11.c" 2>"$T/cc.err"; then
+  TITLE_DATA="$T/data-title"; mkdir -p "$TITLE_DATA/duckstation"; cp "$DUAL/duckstation/"* "$TITLE_DATA/duckstation/"
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["secondary_window_title"] = "^X \\(Bottom\\)$"; json.dump(d, open(sys.argv[1], "w"))' \
+    "$TITLE_DATA/duckstation/emulator.json"
+  TITLE_DEF="$(cat "$TITLE_DATA/duckstation/emulator.json")"
+  title_run() {  # title_run dual|single [DISPLAY]: one game; sets $xlog_at_start
+    [ "$1" = dual ] && fake_device_env "'DSI-2'" || fake_device_env "''"
+    rm -f "$T/x11.log"; reset_logs
+    DISPLAY="${2-:9}" RETROFORGE_LIBX11="$T/libfakex11.so" RETROFORGE_LIBXRANDR="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" \
+      RETROFORGE_EMU_DATA_DIR="$TITLE_DATA" RETROFORGE_DEVICE_ENV="$T/device-env" start_launcher
+    wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
+    xlog_at_start="$(cat "$T/x11.log" 2>/dev/null)"
+    touch "$T/stop-emu"; reap_launcher "$lpid"
+  }
+  title_run dual
+  [ "$(grep -v '^monitors ' <<<"$xlog_at_start")" = 'set GAMESCOPE_SECONDARY_WINDOW_TITLE UTF8_STRING ^X \(Bottom\)$' ] \
+    && ok "dual-screen board: the root title is set (UTF8_STRING) before the emulator is up" || bad "at start: '$xlog_at_start'"
+  [ "$(tail -1 "$T/x11.log" 2>/dev/null)" = 'delete GAMESCOPE_SECONDARY_WINDOW_TITLE' ] \
+    && ok "dual-screen board: it is removed when the emulator exits" || bad "after exit: $(tr '\n' '|' < "$T/x11.log" 2>/dev/null)"
+  title_run single
+  [ ! -e "$T/x11.log" ] && ok "single-screen board: X is never touched" || bad "single-screen board wrote: $(cat "$T/x11.log")"
+  title_run dual ""
+  [ ! -e "$T/x11.log" ] && grep -q "second screen stays on the main panel" "$T/launch.err" && emu_up \
+    && ok "no DISPLAY: a warning, and the game still starts" || bad "no DISPLAY: $(cat "$T/launch.err")"
+  cp "$DUAL/duckstation/emulator.json" "$TITLE_DATA/duckstation/emulator.json"
+  title_run dual
+  [ ! -e "$T/x11.log" ] && ok "a definition without secondary_window_title leaves the root alone" || bad "no title, yet: $(cat "$T/x11.log")"
+
+  # dual_screen_args (DSperate's --dual-window): first on the command line, only on a dual-screen board
+  # whose X server shows two monitors; otherwise one window on the main panel, never a game that
+  # cannot start.
+  python3 -c 'import json,sys; d=json.loads(sys.argv[1]); d["dual_screen_args"] = ["--two", "--windows"]; json.dump(d, open(sys.argv[2], "w"))' \
+    "$TITLE_DEF" "$TITLE_DATA/duckstation/emulator.json"
+  first_args() { sed -n 's/^arg=//p' "$T/emu.log" | head -2 | tr '\n' ' '; }
+  FAKE_MONITORS=2 title_run dual
+  [ "$(first_args)" = "--two --windows " ] && grep -qx 'monitors 2' "$T/x11.log" \
+    && ok "dual-screen board, two X monitors: dual_screen_args come first" || bad "two monitors: args '$(first_args)', x11: $(tr '\n' '|' < "$T/x11.log")"
+  FAKE_MONITORS=1 title_run dual
+  ! grep -qx 'arg=--two' "$T/emu.log" && emu_up && grep -q "shows 1 monitor(s), not both panels" "$T/launch.err" \
+    && ok "dual-screen board, one X monitor: no dual_screen_args, a warning, the game starts" || bad "one monitor: $(cat "$T/launch.err")"
+  title_run single
+  ! grep -qx 'arg=--two' "$T/emu.log" && [ ! -e "$T/x11.log" ] \
+    && ok "single-screen board: no dual_screen_args, X never asked" || bad "single board: $(cat "$T/x11.log" 2>/dev/null)"
+  title_run dual ""
+  ! grep -qx 'arg=--two' "$T/emu.log" && emu_up && grep -q "cannot count the X monitors (no DISPLAY)" "$T/launch.err" \
+    && ok "no DISPLAY: no dual_screen_args, the game starts" || bad "no DISPLAY: $(cat "$T/launch.err")"
+else
+  bad "the stand-in libX11 does not build: $(cat "$T/cc.err")"
+fi
+for e in '"x(" (not a regex)' '"a\nb" (two lines)' '"" (empty)' '42 (not a string)'; do
+  bad_def "secondary_window_title ${e#* }" "d[\"secondary_window_title\"] = ${e%% *}"
+done
+bad_def "secondary_window_title over 256 characters" 'd["secondary_window_title"] = "x" * 257'
+bad_def "dual_screen_args holding {rom}" 'd["dual_screen_args"] = ["{rom}"]'
+bad_def "dual_screen_args holding {system}" 'd["dual_screen_args"] = ["--x={system}"]'
+bad_def "dual_screen_args that is not a list" 'd["dual_screen_args"] = "--dual-window"'
+for emu_title in 'dsperate:DSperate (Bottom):DSperate' 'azahar:Azahar 2126.1.2 | Mario Kart 7 | Secondary Window:Azahar 2126.1.2 | Mario Kart 7'; do
+  IFS=: read -r emu second first <<<"$emu_title"
+  python3 -c 'import json,re,sys; r=re.compile(json.load(open(sys.argv[1]))["secondary_window_title"])
+sys.exit(not (r.search(sys.argv[2]) and not r.search(sys.argv[3])))' "$SEED_DIR/$emu/emulator.json" "$second" "$first" \
+    && ok "$emu: its title rule picks '$second' and not '$first'" || bad "$emu: secondary_window_title does not pick its second window only"
 done
 
 # =================================================================================================

@@ -1,0 +1,64 @@
+{
+  "notes": [
+    "DSperate (Nintendo DS): beebono/DSperate's dynamic linux-aarch64 build, a DraStic-style ARM64 recompiler with a melonDS-exact core, RetroAchievements (Casual only) and a pad-driven pause menu. Faster than melonDS on Cortex-A53/A55 class SoCs (SM6115). The release is a tarball; retroforge-emu keeps its one dsperate binary as <tag>.AppImage (catalog \"extract\"), so it runs in place as the binary format. It links the image's SDL2 (sdl2-compat) and loads libcurl at run time for achievements.",
+    "--fullscreen: DSperate opens a window otherwise. The ROM is its first argument; no other flag needed. gui_args (Open): no ROM boots the DS firmware with DSperate's loader card, whose list is ~/roms/nds; it needs real bios9/bios7/firmware dumps in ~/bios (FreeBIOS cannot boot the DS menu).",
+    "Exit: DSperate blocks SIGTERM in every thread and one thread sigwaits for it, then ends the frame loop as its menu's quit does: battery save written, exit 0 (src/frontend/sdl/main.cpp take_quit_signals). SDL's own SIGTERM handler never runs, so no SDL_NO_SIGNAL_HANDLERS. Guide+Start (gamepad_profile) is the same quit through its F4 hotkey.",
+    "Dual-screen boards (device-env RETROFORGE_SECONDARY_CONNECTOR set): the same seed, and the launcher adds --dual-window (dual_screen_args) when the game's Xwayland shows both panels as RandR monitors (gamescope patch 0045): one window per DS screen, the top screen on the upper panel ([video] screen = top), the bottom one titled 'DSperate (Bottom)', which goes to the second panel by its title (secondary_window_title, which the launcher hands to gamescope patch 0041); Guide+L2 swaps the panels. Dual-window is never in the seed: with fewer than two SDL displays DSperate exits at start ('--dual-window needs two video displays', main.cpp), and it has no flag to turn a seeded dual_window off. Without the flag it opens one window on the main panel, in the seed's layout, and the game starts.",
+    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state, R2 fast-forward (held), Start quit, L2 swap screens, Y next layout, Select pause menu, R3 microphone (held). They are keyboard keys bound in the seed's [hotkeys]; DSperate's own Guide pad hotkeys are all off there (Guide never reaches it).",
+    "achievements: the player's one RetroAchievements sign-in, written at every launch (plan standalone-cheevos): dsperate.ini [cheevos] enabled and username, and the token alone in ~/.config/dsperate/retroforge-cheevos.token (removed when signed out), named by token_file, which wins over a sign-in made in DSperate's own menu. use_system_login false: DSperate otherwise imports other front ends' sign-ins. DSperate has NO Hardcore mode: with RetroForge's Hardcore on it still plays Casual (save states allowed); nothing is written for it."
+  ],
+  "format": "binary",
+  "binary": "current",
+  "args": [
+    "--fullscreen",
+    "{rom}"
+  ],
+  "gui_args": [
+    "--fullscreen"
+  ],
+  "gamepad_profile": "guide-hotkeys.yaml",
+  "secondary_window_title": "^DSperate \\(Bottom\\)$",
+  "dual_screen_args": [
+    "--dual-window"
+  ],
+  "seed": [
+    {
+      "file": "dsperate.ini",
+      "to": ".config/dsperate/dsperate.ini"
+    }
+  ],
+  "achievements": [
+    {
+      "file": ".config/dsperate/dsperate.ini",
+      "format": "ini",
+      "separator": " = ",
+      "set": [
+        {
+          "section": "cheevos",
+          "key": "enabled",
+          "value": "{enabled}"
+        },
+        {
+          "section": "cheevos",
+          "key": "username",
+          "value": "{user}"
+        },
+        {
+          "section": "cheevos",
+          "key": "token_file",
+          "value": "/home/player/.config/dsperate/retroforge-cheevos.token"
+        },
+        {
+          "section": "cheevos",
+          "key": "use_system_login",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "file": ".config/dsperate/retroforge-cheevos.token",
+      "format": "secret",
+      "value": "{token}"
+    }
+  ]
+}

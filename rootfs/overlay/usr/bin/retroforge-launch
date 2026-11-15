@@ -135,10 +135,13 @@ import emuopts  # noqa: E402
 from launch_common import (CONFIG_HOME, EMU_DATA_DIR, EMU_DIR, ENV, HOME, VRAM_REPORT_LIMIT_VARS,  # noqa: E402
                            Exit, device_field, emulator_child, log)
 from launch_def import (FILE, ROM, SYSTEM, SYSTEM_ID, TEXT, apply_system_settings,  # noqa: E402
-                        emulator_for, load_definition, missing_requirement, seed_first_run, sync_files,
-                        systems_of)
+                        dual_screen, emulator_for, load_definition, missing_requirement, seed_first_run,
+                        sync_files, systems_of)
 from launch_formats import FORMATS  # noqa: E402
 from psn_inbox import PSN_SYSTEM, psn_install, try_psn_lock  # noqa: E402
+import x11_root  # noqa: E402
+
+SECONDARY_TITLE_PROP = "GAMESCOPE_SECONDARY_WINDOW_TITLE"  # gamescope patch 0041 reads it
 
 CPU_ROOT = ENV.get("RETROFORGE_CPU_ROOT", "/sys/devices/system/cpu")
 PLAYER_CONF_DIR = ENV.get("RETROFORGE_PLAYER_CONF_DIR", os.path.join(CONFIG_HOME, "retroforge", "emulators"))
@@ -481,6 +484,7 @@ def run(argv):
         signal.signal(sig, lambda signum, _: interrupted.append(signum))
     package = FORMATS[definition["format"]](emulator, image)
     profile_declared = False
+    title_set = False
     try:
         # Before the mount: the restore in `finally` must cover every way out from here on.
         opt_args, opt_env = apply_options(emulator, options, confs, system)
@@ -497,6 +501,8 @@ def run(argv):
         # Last before the start: nothing below but the start itself can fail, so no declaration
         # outlives a launch that said no.
         profile_declared = declare_gamepad_profile(emulator, definition["gamepad_profile"])
+        title_set = set_secondary_window_title(emulator, definition["secondary_window_title"])
+        args = one_window_per_panel(emulator, definition["dual_screen_args"]) + args
         program = SCRIPT_SHELL if package.runs_rom and rom is not None else binary
         log(f"{system or 'gui'} -> {emulator}: {program} {' '.join(args)}")
         try:
@@ -511,9 +517,39 @@ def run(argv):
         rc = wait_emulator(emu, definition["exit_resend"], interrupted)
         return 128 - rc if rc < 0 else rc
     finally:
+        if title_set:
+            x11_root.remove(ENV.get("DISPLAY", ""), SECONDARY_TITLE_PROP,
+                            lambda why: log(f"warning: could not remove {SECONDARY_TITLE_PROP}: {why}"))
         withdraw_gamepad_profile(profile_declared)
         package.release()
         emuopts.restore(HOME, STATE_DIR, emulator, options_warning(emulator))
+
+
+def set_secondary_window_title(emulator, title):
+    """On a dual-screen board, tell gamescope which of the emulator's windows is its second screen
+    (launch_def: secondary_window_title). True when the root property was set (to remove at exit)."""
+    if not title or not dual_screen():
+        return False
+    ok = x11_root.set_string(ENV.get("DISPLAY", ""), SECONDARY_TITLE_PROP, title,
+                             lambda why: log(f"warning: {emulator}'s second screen stays on the main panel: "
+                                             f"cannot set {SECONDARY_TITLE_PROP} ({why})"))
+    if ok:
+        log(f"{emulator}: windows titled /{title}/ go to the second panel")
+    return ok
+
+
+def one_window_per_panel(emulator, dual_args):
+    """The definition's dual_screen_args when the board has a second panel AND the game's X server
+    shows it as a second monitor (launch_def: dual_screen_args); else [] (one window, main panel)."""
+    if not dual_args or not dual_screen():
+        return []
+    warn = lambda why: log(f"warning: {emulator}: cannot count the X monitors ({why})")  # noqa: E731
+    count = x11_root.monitors(ENV.get("DISPLAY", ""), warn)
+    if count >= 2:
+        return list(dual_args)
+    log(f"warning: {emulator}: the X server shows {count} monitor(s), not both panels: "
+        f"one window on the main panel (no {' '.join(dual_args)})")
+    return []
 
 
 def wait_emulator(emu, resend_after, interrupted):

@@ -3,9 +3,9 @@
   "azahar": {"repo": "azahar-emu/azahar", "tag": "([^@]+)@.*", "ref": "{0}"},
   "cemu": {"repo": "cemu-project/Cemu", "tag": "nightly-([0-9a-f]+)", "ref": "{0}"},
   "dolphin": {"repo": "dolphin-emu/dolphin", "tag": "([^@]+)@.*", "ref": "{0}"},
+  "dsperate": {"repo": "beebono/DSperate", "tag": "(v[0-9][0-9.]*)", "ref": "{0}"},
   "duckstation": {"repo": "stenzek/duckstation", "tag": "(v0\\.1-[0-9]+)", "ref": "{0}"},
   "flycast": {"repo": "flyinghead/flycast", "tag": "([^@-]+)(?:-[0-9]+)?@.*", "ref": "v{0}"},
-  "melonds": {"repo": "melonDS-emu/melonDS", "tag": "([^@-]+)(?:-[0-9]+)?@.*", "ref": "{0}"},
   "ppsspp": {"repo": "hrydgard/ppsspp", "tag": "(v[0-9.]+)", "ref": "{0}"},
   "retroarch": {"repo": "libretro/RetroArch", "tag": "([^@-]+)(?:-[0-9]+)?@.*", "ref": "v{0}"},
   "rpcs3": {"repo": "RPCS3/rpcs3", "tag": "build-([0-9a-f]{40})", "ref": "{0}"}

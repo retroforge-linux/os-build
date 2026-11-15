@@ -20,59 +20,59 @@ touchscreens keep the existing path untouched.
 (retroforge: dual-screen boards, step 5 of the dual-output plan, 2026-10-12.)
 ---
 diff --git a/src/main.cpp b/src/main.cpp
-index cc42704..38b17ca 100644
+index f4c4251..cd309e1 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
-@@ -93,6 +93,7 @@ const struct option *gamescope_options = (struct option[]){
+@@ -92,6 +92,7 @@ const struct option *gamescope_options = (struct option[]){
+ 	{ "debug-layers", no_argument, nullptr, 0 },
  	{ "prefer-output", required_argument, nullptr, 'O' },
  	{ "secondary-output", required_argument, nullptr, 0 },
- 	{ "secondary-window-title", required_argument, nullptr, 0 },
 +	{ "secondary-touch-device", required_argument, nullptr, 0 },
  	{ "default-touch-mode", required_argument, nullptr, 0 },
  	{ "generate-drm-mode", required_argument, nullptr, 0 },
  	{ "immediate-flips", no_argument, nullptr, 0 },
-@@ -245,6 +246,7 @@ const char usage[] =
+@@ -242,6 +243,7 @@ const char usage[] =
+ 	"Embedded mode options:\n"
+ 	"  -O, --prefer-output            list of connectors in order of preference (ex: DP-1,DP-2,DP-3,HDMI-A-1)\n"
  	"  --secondary-output             drive this connector as a second output next to the main one (ex: DSI-2)\n"
- 	"  --secondary-window-title       windows whose title matches this regex go to the secondary output\n"
- 	"                                 (default: melonDS '[w2] ' and Azahar '| Secondary Window' windows)\n"
 +	"  --secondary-touch-device       the touchscreen of the secondary output, by input device name (ex: bottom_touchscreen)\n"
  	"  --default-touch-mode           0: hover, 1: left, 2: right, 3: middle, 4: passthrough\n"
  	"  --generate-drm-mode            DRM mode generation algorithm (cvt, fixed)\n"
  	"  --immediate-flips              Enable immediate flips, may result in tearing\n"
-@@ -722,6 +724,7 @@ bool g_bExposeWayland = false;
+@@ -718,6 +720,7 @@ int g_nPreferredOutputHeight = 0;
+ bool g_bExposeWayland = false;
  const char *g_sOutputName = nullptr;
  const char *g_sSecondaryOutputName = nullptr;
- const char *g_sSecondaryWindowTitle = nullptr;
 +const char *g_sSecondaryTouchDevice = nullptr;
  bool g_bDebugLayers = false;
  bool g_bForceDisableColorMgmt = false;
  bool g_bRt = false;
-@@ -842,6 +845,8 @@ int main(int argc, char **argv)
+@@ -836,6 +839,8 @@ int main(int argc, char **argv)
+ 					g_bCompositeGraphics = true;
+ 				} else if (strcmp(opt_name, "secondary-output") == 0) {
  					g_sSecondaryOutputName = optarg;
- 				} else if (strcmp(opt_name, "secondary-window-title") == 0) {
- 					g_sSecondaryWindowTitle = optarg;
 +				} else if (strcmp(opt_name, "secondary-touch-device") == 0) {
 +					g_sSecondaryTouchDevice = optarg;
  				} else if (strcmp(opt_name, "composite-blit") == 0) {
  					g_bCompositeBlit = true;
  				} else if (strcmp(opt_name, "force-orientation") == 0) {
 diff --git a/src/main.hpp b/src/main.hpp
-index c4837af..8d1beeb 100644
+index 2de1d36..dd186f7 100644
 --- a/src/main.hpp
 +++ b/src/main.hpp
-@@ -42,6 +42,7 @@ extern float g_mouseSensitivity;
+@@ -41,6 +41,7 @@ extern bool g_bGrabbed;
+ extern float g_mouseSensitivity;
  extern const char *g_sOutputName;
  extern const char *g_sSecondaryOutputName;
- extern const char *g_sSecondaryWindowTitle;
 +extern const char *g_sSecondaryTouchDevice;
  
  enum class GamescopeUpscaleFilter : uint32_t
  {
 diff --git a/src/steamcompmgr.cpp b/src/steamcompmgr.cpp
-index 33ba610..9382654 100644
+index 6b337e6..db81598 100644
 --- a/src/steamcompmgr.cpp
 +++ b/src/steamcompmgr.cpp
-@@ -11170,6 +11170,24 @@ steamcompmgr_main(int argc, char **argv)
+@@ -11196,6 +11196,24 @@ steamcompmgr_main(int argc, char **argv)
  		if ( g_bSecondaryOutput && g_SecondaryFocus.IsDirty() )
  			determine_and_apply_secondary_focus();
  
