@@ -38,6 +38,18 @@ m="AYN Thor Lite"
   || bad "RETROFORGE_SECONDARY_TOUCHSCREEN is '$(value "$m" RETROFORGE_SECONDARY_TOUCHSCREEN)'"
 
 # =================================================================================================
+# The SM8550 Thor has its panels the other way round: top on mdss_dsi1 (DSI-2), bottom on mdss_dsi0.
+CASE="AYN Thor"
+m="AYN Thor"
+[ "$(value "$m" RETROFORGE_PRIMARY_CONNECTOR)" = DSI-2 ] && ok "primary stays DSI-2 (the 1080x1920 panel)" \
+  || bad "primary is '$(value "$m" RETROFORGE_PRIMARY_CONNECTOR)', not DSI-2"
+[ "$(value "$m" RETROFORGE_SECONDARY_CONNECTOR)" = DSI-1 ] && ok "second panel is DSI-1" \
+  || bad "RETROFORGE_SECONDARY_CONNECTOR is '$(value "$m" RETROFORGE_SECONDARY_CONNECTOR)', not DSI-1"
+[ "$(value "$m" RETROFORGE_SECONDARY_TOUCHSCREEN)" = bottom_touchscreen ] \
+  && ok "bottom digitizer is the input device bottom_touchscreen" \
+  || bad "RETROFORGE_SECONDARY_TOUCHSCREEN is '$(value "$m" RETROFORGE_SECONDARY_TOUCHSCREEN)'"
+
+# =================================================================================================
 CASE="single-panel boards"
 for m in "AYANEO Pocket ACE" "KONKR Pocket FIT" "some board nobody knows"; do
   out="$(report "$m")"
