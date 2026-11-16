@@ -174,6 +174,7 @@ taken for issue #122 — see the `0780`–`0796` rows.
 | `0730` | retroforge | Port of the SynapticsHostSW `synaptics_dsx` vendor driver. | never |
 | `0735` | retroforge | Kconfig for `0730`. | with `0730` |
 | `0738` | community | Chipone vendor driver via kevinkreiser/chipone_tddi → ROCKNIX. ROCKNIX SM8750 has a ~380-line clean-room replacement (`0061-input-touchscreen-add-chipone-tddi`). | never |
+| `0740` | retroforge | Written 2026-11-16 (Nova-Deck `0739`). The TDDI controller runs off the panel rails, but `0738` only stops and restarts it across system suspend (its display-notifier paths are vendor APIs mainline lacks), so our sleep, a KMS blank with no s2idle, power-cycled it unnoticed: ~290 IRQ/s of phantom touches stealing gamepad focus on the Pocket FIT after wake, 0 after a driver rebind. Registers as a DRM panel follower (sleep in `panel_unpreparing`, the driver's own reset-and-reinit work in `panel_prepared`), legacy PM steps aside like i2c-hid's. Needs the touch node's `panel` phandle (Pocket FIT, Pocket FIT Elite). Goes with `0738`. | with `0738` |
 | `0745` | retroforge | Driver by Teguh Sobirin; ROCKNIX SM8550 `0031`. Never posted. | never |
 | `0750` | community | ROCKNIX SM8250 `0008` (Molly Sophia, BigfootACA, Teguh Sobirin). Never posted. | never |
 | `0755` | community | ROCKNIX SM8250 `0060` (sunshineinabox) at its 2026-10 state: Pocket Max + Air Y Pro variants of the MCU joypad. Makefile hunk re-rolled around `0750`. | never |
