@@ -6,11 +6,14 @@
 # sm8250-pocket_max_mcu.yaml for the argument); ROCKNIX's map for this pad restates the sticks,
 # bumpers, hat D-pad and stick clicks, which the default already produces, and those rows are gone.
 #
-#   KEY_BACK / BTN_MODE   The `...` button -> Guide and the home button -> QuickAccess, the same
-#                         pairing as the Pocket Max, for the same MCU family and the same two
-#                         GPIO keys (the driver's mcu_gpio_btns table). Not yet pressed on this
-#                         board; if the Air Y Pro's labels argue otherwise, swap them here, not in
-#                         the driver.
+#   Home button           The board has ONE system button, the home key on the MCU's gpio15
+#                         (BTN_MODE). The default translation already makes BTN_MODE the Guide
+#                         button -- OGUI's left panel and the emulator Guide hotkey layer -- so it
+#                         has no row here. There is no QuickAccess button on this board. (An
+#                         earlier revision copied the Pocket Max pairing, `...` KEY_BACK -> Guide
+#                         and home BTN_MODE -> QuickAccess; on the Air Y Pro that sent its only
+#                         button to the right panel and left emulators without Guide. The driver
+#                         still declares KEY_BACK for the MCU's gpio4, which has no button here.)
 #   Face buttons          The driver's Air Y Pro keymap reports Nintendo labels (the south
 #                         button is BTN_EAST, east is BTN_SOUTH, north is BTN_WEST, west is
 #                         BTN_NORTH); the four rows put each code back on its position, exactly
@@ -24,24 +27,6 @@ name: MANGMI Air Y Pro MCU joypad
 id: sm8250_air_y_pro_mcu
 
 mapping:
-    - name: Guide
-      source_events:
-          - evdev:
-                event_type: KEY
-                event_code: KEY_BACK
-                value_type: button
-      target_event:
-          gamepad:
-              button: Guide
-    - name: QuickAccess
-      source_events:
-          - evdev:
-                event_type: KEY
-                event_code: BTN_MODE
-                value_type: button
-      target_event:
-          gamepad:
-              button: QuickAccess
     - name: South Button
       source_events:
           - evdev:
