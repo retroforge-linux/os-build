@@ -1331,15 +1331,19 @@
  * (pwms = <0x661 0x3 0xc350>). Without this the pwm-fan driver defers forever
  * ("Could not get PWM"). Matches the SM8650 Konkr G3.
  *
- * Power LED: channels 1-3 drive the RGB LED through the TRILED sink, as in the
- * stock fdt (qcom,leds@ef00: red, green, blue on pwms 0, 1, 2 of pwms@e800).
- * Channel 4 stays the fan. Declared as on the SM8650 Konkr and the Odin 3. */
+ * Charging LED: channels 1-3 drive the RGB LED through the TRILED sink, as in
+ * the stock fdt (qcom,leds@ef00: red, green, blue on pwms 0, 1, 2 of pwms@e800).
+ * Channel 4 stays the fan. Registers as "rgb:charging" and follows the battery
+ * (orange charging, green full, else off; the trigger writes the channels in
+ * node order, so keep red, green, blue). The UI colour setting drives the stick
+ * rings instead (konkr:rgb:joysticks, patch 0765). */
 &pm8550_pwm {
 	status = "okay";
 
-	power_led {
+	multi-led {
 		color = <LED_COLOR_ID_RGB>;
-		label = "power-led";
+		function = LED_FUNCTION_CHARGING;
+		linux,default-trigger = "qcom-battmgr-bat-charging-orange-full-green";
 
 		#address-cells = <1>;
 		#size-cells = <0>;

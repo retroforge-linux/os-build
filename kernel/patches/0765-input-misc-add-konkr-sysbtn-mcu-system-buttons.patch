@@ -1,20 +1,34 @@
 input: misc: add the KONKR Pocket FIT Elite MCU system-button driver
 
 serdev client for the MCU UART (geni SE5 @894000): sends the enable frame
-the MCU requires before it streams and decodes the byte-x8 button events
+the MCU requires before it streams, decodes the byte-x8 button events
 into a real input device "KONKR System Buttons" (BTN_TRIGGER_HAPPY1..5) -
 the KONKR/Home/Shoulder-2-pair/front-top-right buttons do not exist on the
-SPI gamepad. sysfs key_{lc,rc}_{shoulder,back}: GET/SET_KEY_CFG remap of
-the grip and shoulder-2 buttons over the same UART ("<funcbyte> <target>",
+SPI gamepad - and exposes the analog-stick ring RGB as a multicolor LED
+("konkr:rgb:joysticks", static-colour frames F7 01 R G B). sysfs
+key_{lc,rc}_{shoulder,back}: GET/SET_KEY_CFG remap of the grip and
+shoulder-2 buttons over the same UART ("<funcbyte> <target>",
 MCU-persisted).
 
-From ROCKNIX SM8750 0069, STRIPPED of its RGB-LED half (the
-konkr:rgb:joysticks multicolor LED, the "effect" sysfs mode selector and
-the PM notifier that blanked/replayed the rings around system sleep):
-retroforge has no surface that controls stick-ring LEDs and no kernel sleep,
-so all of it would be dead code here. The tx_inhibited plumbing went with
-the notifier; tx_lock stays, it orders the enable frame against the
-key-config exchanges.
+From ROCKNIX SM8750 0069, without its "effect" sysfs mode selector (the
+MCU's own breath and rainbow modes) and without the PM notifier that
+blanked and replayed the rings around system sleep and resent the enable
+frame. The ring LED was stripped with them until 2026-11-17 and is back
+(the registration, konkr_rgb_set, konkr_tx_light), because
+retroforge-powerd's LED setting can now drive it (hw-map group
+ring=konkr:rgb:joysticks).
+
+Changed from 0069's LED half: the LED registers last, after the port is
+open and the enable frame sent, so it exists only while the port is open,
+and unbinding blanks the rings before the port closes. The setter drops
+the frame (-EBUSY) unless led_tx_ok is set. The driver's prepare/complete
+PM callbacks clear it across the whole device-suspend window, after
+waiting out and draining a frame in flight, and transmit nothing: a frame
+written in that window never drains and wedges the geni SE TX engine until
+reboot (0069's finding). Nothing here blanks the rings for sleep or
+restores them after it; powerd turns its LEDs off before suspend and on
+after resume. tx_lock still orders the enable frame against the key-config
+exchanges.
 
 diff -Naur a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
 
@@ -22,17 +36,19 @@ diff --git a/drivers/input/misc/Kconfig b/drivers/input/misc/Kconfig
 index 169768e3d..111cb6eff 100644
 --- a/drivers/input/misc/Kconfig
 +++ b/drivers/input/misc/Kconfig
-@@ -1023,4 +1023,15 @@ config INPUT_STPMIC1_ONKEY
+@@ -1023,4 +1023,17 @@ config INPUT_STPMIC1_ONKEY
  	  To compile this driver as a module, choose M here: the
  	  module will be called stpmic1_onkey.
  
 +config INPUT_KONKR_SYSBTN
 +	tristate "KONKR Pocket FIT Elite MCU system buttons"
 +	depends on SERIAL_DEV_BUS
++	depends on LEDS_CLASS_MULTICOLOR
 +	help
 +	  Driver for the MCU-attached "system" buttons (KONKR, Home,
 +	  Shoulder-2 pair, front-top-right) on the KONKR Pocket FIT Elite
-+	  handheld, delivered over a UART.
++	  handheld, delivered over a UART, and for the analog-stick RGB
++	  lighting on the same link (exposed as a multicolor LED).
 +
 +	  To compile this driver as a module, choose M here: the
 +	  module will be called konkr_sysbtn.
@@ -52,14 +68,14 @@ index 1339619f0..8960460c8 100644
  obj-$(CONFIG_INPUT_MAX7360_ROTARY)	+= max7360-rotary.o
 diff --git a/drivers/input/misc/konkr_sysbtn.c b/drivers/input/misc/konkr_sysbtn.c
 new file mode 100644
-index 000000000..8f1e7e6dc
+index 000000000..8162f50a6
 --- /dev/null
 +++ b/drivers/input/misc/konkr_sysbtn.c
-@@ -0,0 +1,355 @@
+@@ -0,0 +1,481 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * konkr_sysbtn - KONKR Pocket FIT Elite MCU UART client: the five "system"
-+ * buttons as an input device.
++ * buttons as an input device, plus the analog-stick RGB as a multicolor LED.
 + *
 + * The handheld's MCU ("KR02") talks 115200 8N1 on the geni UART at 894000.
 + * Protocol (reverse-engineered from the vendor app, confirmed on hardware):
@@ -70,24 +86,35 @@ index 000000000..8f1e7e6dc
 + *    trailer). High nibble = button id 1..5, low nibble = 1 press, 0 release.
 + *    These are the KONKR/Home/Shoulder-2-pair/front-top-right buttons, which
 + *    are not part of the SPI gamepad.
++ *  - Stick lighting (one zone, both sticks): F7 <mode> <7 payload bytes>
++ *    CK ED, CK = sum of bytes 1..8 (mod 256). Mode 01 is a static colour,
++ *    payload R G B 00 00 00 00, and the only one driven here (the MCU's
++ *    own breath and rainbow modes are not exposed). The vendor app writes
++ *    each frame 4 times, 40 ms apart; a single write occasionally gets
++ *    dropped.
 + *
-+ * The same UART carries the version frame (F7/E7 55 AA xx ED), the
-+ * analog-stick RGB frames (not driven here: retroforge has no surface that
-+ * controls stick-ring LEDs) and the controller-config protocols; none of
-+ * those bytes form a valid 8-run, so the decoder ignores them.
++ * The same UART carries the version frame (F7/E7 55 AA xx ED) and the
++ * controller-config protocols; none of those bytes form a valid 8-run, so
++ * the decoder ignores them.
 + */
 +#include <linux/delay.h>
 +#include <linux/completion.h>
 +#include <linux/input.h>
++#include <linux/led-class-multicolor.h>
 +#include <linux/module.h>
 +#include <linux/mutex.h>
 +#include <linux/of.h>
++#include <linux/pm.h>
 +#include <linux/serdev.h>
 +#include <linux/spinlock.h>
 +
 +#define KONKR_BAUD		115200
 +#define KONKR_NBTN		5
 +#define KONKR_RXBUF_SZ		32
++#define KONKR_LIGHT_STATIC	0x01	/* frame byte 1: static colour */
++#define KONKR_LIGHT_REPEAT	4
++#define KONKR_LIGHT_GAP_MS	40
++#define KONKR_LIGHT_PAYLOAD	7	/* frame bytes 2..8 */
 +
 +/*
 + * Remappable-button ("key config") protocol, same UART: raw 64-byte packets,
@@ -114,7 +141,18 @@ index 000000000..8f1e7e6dc
 +struct konkr_sysbtn {
 +	struct serdev_device *serdev;
 +	struct input_dev *input;
-+	struct mutex tx_lock;	/* serializes all TX */
++	struct led_classdev_mc mc;
++	struct mc_subled subled[3];
++	struct mutex tx_lock;	/* serializes all TX; guards led_tx_ok */
++	/*
++	 * Ring frames go out only while the port is open and no system sleep
++	 * is under way: a frame written during the device-suspend window never
++	 * drains ("Unable to drain transmitter") and wedges the geni SE TX
++	 * engine until reboot. The LED core can call the setter from a trigger
++	 * or its work at any time; the enable frame (probe) and the key-config
++	 * exchanges (sysfs, so userspace) cannot land there.
++	 */
++	bool led_tx_ok;
 +	u8 rx[KONKR_RXBUF_SZ];
 +	int rxlen;
 +
@@ -206,6 +244,61 @@ index 000000000..8f1e7e6dc
 +	.receive_buf = konkr_receive_buf,
 +	.write_wakeup = serdev_device_write_wakeup,
 +};
++
++/* build and write one lighting frame; caller holds tx_lock */
++static void konkr_tx_light(struct konkr_sysbtn *kb, u8 mode, const u8 *payload)
++{
++	u8 frame[11] = { 0xf7, mode };
++	unsigned int sum = 0;
++	int i;
++
++	memcpy(frame + 2, payload, KONKR_LIGHT_PAYLOAD);
++	frame[10] = 0xed;
++	for (i = 1; i <= 8; i++)
++		sum += frame[i];
++	frame[9] = sum & 0xff;
++
++	for (i = 0; i < KONKR_LIGHT_REPEAT; i++) {
++		serdev_device_write_buf(kb->serdev, frame, sizeof(frame));
++		if (i < KONKR_LIGHT_REPEAT - 1)
++			msleep(KONKR_LIGHT_GAP_MS);
++	}
++}
++
++static int konkr_rgb_set(struct led_classdev *cdev,
++			 enum led_brightness brightness)
++{
++	struct led_classdev_mc *mc = lcdev_to_mccdev(cdev);
++	struct konkr_sysbtn *kb = container_of(mc, struct konkr_sysbtn, mc);
++	u8 payload[KONKR_LIGHT_PAYLOAD] = {};
++	int i, ret = -EBUSY;
++
++	led_mc_calc_color_components(mc, brightness);
++	for (i = 0; i < 3; i++)
++		payload[i] = mc->subled_info[i].brightness;
++
++	mutex_lock(&kb->tx_lock);
++	if (kb->led_tx_ok) {
++		konkr_tx_light(kb, KONKR_LIGHT_STATIC, payload);
++		ret = 0;
++	}
++	mutex_unlock(&kb->tx_lock);
++
++	return ret;
++}
++
++static void konkr_led_tx_allow(struct konkr_sysbtn *kb, bool ok)
++{
++	mutex_lock(&kb->tx_lock);
++	kb->led_tx_ok = ok;
++	mutex_unlock(&kb->tx_lock);
++}
++
++/* devm: runs before the port closes */
++static void konkr_led_tx_stop(void *data)
++{
++	konkr_led_tx_allow(data, false);
++}
 +
 +/*
 + * One key-config exchange: build + send the 64-byte packet, wait for the
@@ -340,10 +433,36 @@ index 000000000..8f1e7e6dc
 +};
 +ATTRIBUTE_GROUPS(konkr);
 +
++/*
++ * prepare/complete bracket the whole device-suspend window (see led_tx_ok)
++ * and run with every device still awake. Neither transmits: prepare waits
++ * out a frame in flight on tx_lock, then lets the port drain.
++ */
++static int konkr_sysbtn_prepare(struct device *dev)
++{
++	struct konkr_sysbtn *kb = dev_get_drvdata(dev);
++
++	konkr_led_tx_allow(kb, false);
++	serdev_device_wait_until_sent(kb->serdev, msecs_to_jiffies(100));
++
++	return 0;
++}
++
++static void konkr_sysbtn_complete(struct device *dev)
++{
++	konkr_led_tx_allow(dev_get_drvdata(dev), true);
++}
++
++static const struct dev_pm_ops konkr_sysbtn_pm_ops = {
++	.prepare = konkr_sysbtn_prepare,
++	.complete = konkr_sysbtn_complete,
++};
++
 +static int konkr_sysbtn_probe(struct serdev_device *serdev)
 +{
 +	struct device *dev = &serdev->dev;
 +	struct konkr_sysbtn *kb;
++	struct led_classdev *cdev;
 +	int error;
 +	int i;
 +
@@ -389,7 +508,29 @@ index 000000000..8f1e7e6dc
 +
 +	konkr_send_enable(kb);
 +
-+	return 0;
++	error = devm_add_action_or_reset(dev, konkr_led_tx_stop, kb);
++	if (error)
++		return error;
++	konkr_led_tx_allow(kb, true);
++
++	/*
++	 * Registered last, so the LED exists only while the port is open and
++	 * the MCU enabled; unbinding turns the rings off before the port
++	 * closes.
++	 */
++	kb->subled[0].color_index = LED_COLOR_ID_RED;
++	kb->subled[1].color_index = LED_COLOR_ID_GREEN;
++	kb->subled[2].color_index = LED_COLOR_ID_BLUE;
++	for (i = 0; i < 3; i++)
++		kb->subled[i].intensity = 255;
++	kb->mc.subled_info = kb->subled;
++	kb->mc.num_colors = 3;
++	cdev = &kb->mc.led_cdev;
++	cdev->name = "konkr:rgb:joysticks";
++	cdev->max_brightness = 255;
++	cdev->brightness_set_blocking = konkr_rgb_set;
++
++	return devm_led_classdev_multicolor_register(dev, &kb->mc);
 +}
 +
 +
@@ -405,9 +546,10 @@ index 000000000..8f1e7e6dc
 +		.name = "konkr_sysbtn",
 +		.of_match_table = konkr_sysbtn_of_match,
 +		.dev_groups = konkr_groups,
++		.pm = pm_sleep_ptr(&konkr_sysbtn_pm_ops),
 +	},
 +};
 +module_serdev_device_driver(konkr_sysbtn_driver);
 +
-+MODULE_DESCRIPTION("KONKR Pocket FIT Elite MCU system buttons");
++MODULE_DESCRIPTION("KONKR Pocket FIT Elite MCU system buttons and stick RGB");
 +MODULE_LICENSE("GPL");

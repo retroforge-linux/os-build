@@ -106,6 +106,7 @@ LED_CHIPS = {"heroic,htr3212", "awinic,aw20036", "awinic,aw20054", "awinic,aw200
 # LEDs a driver registers under names of its own, with no child node per LED.
 DRIVER_LEDS = {
     "singleadc-joypad": [f"rgb:{s}{i}" for s in "lr" for i in range(1, 9)],   # 0763 stick rings
+    "konkr,pf-elite-mcu": ["konkr:rgb:joysticks"],                            # 0765 stick rings
 }
 LED_COLORS = ["white", "red", "green", "blue", "amber", "violet", "yellow", "ir", "multicolor",
               "rgb", "purple", "orange", "pink", "cyan", "lime"]   # drivers/leds/led-core.c
