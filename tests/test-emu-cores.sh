@@ -7,9 +7,9 @@
 # WHY THIS EXISTS. A core is native code RetroArch dlopens for every ROM card of its system. Two
 # kinds reach the player, each with its own way of proving the bytes are the right ones:
 #
-#   - a GitHub core (armGBA): a release zip, checked like an AppImage (the pin's digest and size on
+#   - a GitHub core (armGBA, armN64): a release zip, checked like an AppImage (the pin's digest and size on
 #     GitHub, then the bytes' sha256), latest by default, --tested installs the pin;
-#   - a buildbot core (Snes9x, Genesis Plus GX, Mupen64Plus-Next): libretro's rolling nightly, no
+#   - a buildbot core (Snes9x, Genesis Plus GX): libretro's rolling nightly, no
 #     pin possible (latest/ keeps no history); the build is named nightly-<date>-<crc> from
 #     latest/.index-extended, and the unpacked .so must have that CRC32.
 #

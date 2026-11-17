@@ -1,9 +1,9 @@
 {
   "notes": [
     "RetroArch (Game Boy, Game Boy Color, Game Boy Advance, Super Nintendo, Mega Drive, Mega CD, Nintendo 64), for RetroAchievements (plan retroarch): pkgforge-dev's sharun AppImage of RetroArch 1.22.2 (glibc 2.43, its own Mesa for GL; Vulkan forced onto the image's Turnip by the appimage-sharun format). Replaces armGBA, Snes9x and ClownMDEmu, and RMG for N64 (Phase 6). HW 2026-11-09, Air X (A610): Vulkan on Turnip, PipeWire, every core loads from an OGUI card.",
-    "Cores (catalog \"cores\", retroforge-emu installs them with the AppImage): armgba (armGBA's own libretro core, GitHub release, gb/gbc/gba), snes9x, genesis_plus_gx and mupen64plus_next (libretro buildbot nightly). system_args loads the system's core with -L; system_requires stops a game whose core is missing (not-installed: download RetroArch again, which reinstalls missing cores) and a Mega CD game without a BIOS of any region (missing-file). RetroArch's Online Updater, core updater and Load Core are hidden, and the buildbot URL is empty: players do not install cores for other systems (user decision 2026-11-09).",
-    "N64 (Mupen64Plus-Next): the aarch64 buildbot core is desktop GL only, so RetroArch switches from Vulkan to its GL driver for it (driver_switch_enable, seeded on: HW 2026-11-09, Air X, Super Mario 64 at full speed). Mupen64Plus-Next.opt seeds the core's own options file (global_core_options off = config/<core>/<core>.opt): GLideN64 (paraLLEl-RDP needs GPU features the A610 lacks), HLE RSP, the dynarec, as RMG ran. It writes Mupen64plus/ and shaders/ into ~/bios (accepted). RMG's saves are not migrated (user 2026-11-09): the core starts fresh <rom>.srm files in ~/saves/n64.",
-    "Seed retroarch.cfg (RetroArch rewrites the whole file on exit, so no comments; it keeps our keys, writing paths back as ~/...): Vulkan, PipeWire, the SDL2 joypad driver with our one autoconfig (retroforge-pad.cfg: InputPlumber's virtual Xbox Elite 2 pad, 045e:0b00 = 1118/2816, matched by ids; the AppImage ships no autoconfig, no assets, no core info); RGUI menu (needs no assets); system_directory = the flat ~/bios (Mupen64Plus-Next will write its Mupen64plus/ folder there: accepted); pause_nonactive off (gamescope focus).",
+    "Cores (catalog \"cores\", retroforge-emu installs them with the AppImage): armgba and armn64 (Magnominus's own libretro cores, GitHub releases: gb/gbc/gba, n64), snes9x and genesis_plus_gx (libretro buildbot nightly). system_args loads the system's core with -L; system_requires stops a game whose core is missing (not-installed: download RetroArch again, which reinstalls missing cores) and a Mega CD game without a BIOS of any region (missing-file). RetroArch's Online Updater, core updater and Load Core are hidden, and the buildbot URL is empty: players do not install cores for other systems (user decision 2026-11-09).",
+    "N64 (armN64 1.3, user decision 2026-11-09, retested 2026-11-17): its core options keep their defaults (Fast/HLE accuracy, GL renderer, Native resolution). armN64 shares the frontend's context only when RetroArch draws with GL (GET_PREFERRED_HW_RENDER): beside Vulkan it falls back to its own GL context and reads every frame back at native size (slow, and Resolution never reaches the screen: the 2026-11-09 SM6115 result). armN64.cfg seeds a per-core override (config/armN64/armN64.cfg, auto_overrides_enable on by default) with video_driver glcore, so only N64 runs on RetroArch's GL driver: HW 2026-11-17, Air X (A610), Super Mario 64 at 2x 60 fps, no crackle. It writes armN64/cache (shader cache) into ~/bios (accepted) and armN64/ControllerPak into ~/saves/n64. RMG's saves are not migrated (user 2026-11-09): the core starts fresh <rom>.srm files in ~/saves/n64.",
+    "Seed retroarch.cfg (RetroArch rewrites the whole file on exit, so no comments; it keeps our keys, writing paths back as ~/...): Vulkan, PipeWire, the SDL2 joypad driver with our one autoconfig (retroforge-pad.cfg: InputPlumber's virtual Xbox Elite 2 pad, 045e:0b00 = 1118/2816, matched by ids; the AppImage ships no autoconfig, no assets, no core info); RGUI menu (needs no assets); system_directory = the flat ~/bios (armN64 writes its armN64/ folder there: accepted); pause_nonactive off (gamescope focus).",
     "system_settings: savefile_directory / savestate_directory = ~/saves/<system>, ~/states/<system> before every game, and sort_savefiles_enable / sort_savestates_enable off: on by default they put saves in a per-core subfolder (HW 2026-11-09). RetroArch writes its in-memory values back on exit, hence before every game, not only in the seed. Saves are <rom>.srm, as armGBA standalone named them.",
     "Exit: one SIGTERM (OGUI's Exit) is RetroArch's normal quit in under a second, SRAM and config written (HW 2026-11-09); quit_press_twice only applies to the key. RetroArch's menu: Select + Start (input_menu_toggle_gamepad_combo 4); keyboard F5.",
     "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state, R2 fast-forward (held), Start quit (pressed twice) -- keyboard F1-F4 bound in the seed. RetroAchievements: hardcore off by default (D3; hardcore blocks loading states).",
@@ -49,7 +49,7 @@
     ],
     "n64": [
       "-L",
-      "/home/player/emulators/retroarch/cores/mupen64plus_next_libretro.so"
+      "/home/player/emulators/retroarch/cores/armn64_libretro.so"
     ]
   },
   "system_requires": {
@@ -111,7 +111,7 @@
     "n64": [
       {
         "any": [
-          "emulators/retroarch/cores/mupen64plus_next_libretro.so"
+          "emulators/retroarch/cores/armn64_libretro.so"
         ],
         "status": "not-installed"
       }
@@ -158,8 +158,8 @@
       "to": ".config/retroarch/autoconfig/sdl2/retroforge-pad.cfg"
     },
     {
-      "file": "Mupen64Plus-Next.opt",
-      "to": ".config/retroarch/config/Mupen64Plus-Next/Mupen64Plus-Next.opt"
+      "file": "armN64.cfg",
+      "to": ".config/retroarch/config/armN64/armN64.cfg"
     }
   ],
   "achievements": [

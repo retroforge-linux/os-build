@@ -147,8 +147,13 @@
         "genesis_plus_gx": {
           "buildbot": "genesis_plus_gx_libretro.so.zip"
         },
-        "mupen64plus_next": {
-          "buildbot": "mupen64plus_next_libretro.so.zip"
+        "armn64": {
+          "github": "MagnominusGit/armN64",
+          "tag": "v1.3",
+          "tag_pattern": "^v[0-9]+(\\.[0-9]+)+$",
+          "asset": "^armn64_libretro-[0-9][0-9.]*-aarch64\\.zip$",
+          "sha256": "d6baa00ca13ac89e9949a2211d262f937fa185c411d5ad31d56debbcb3237002",
+          "size": 721693
         }
       }
     },
