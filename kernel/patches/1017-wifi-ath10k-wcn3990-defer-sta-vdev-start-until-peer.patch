@@ -7,9 +7,34 @@ before starting the vdev. mac80211 assigns the channel context (vdev
 start) before adding the AP station (peer create), so on WCN3990 defer
 the station vdev start until the peer has been created.
 
+[retroforge 2026-11-17: two fixes to the ROCKNIX patch.
+
+The start was deferred on every channel context assignment and issued
+only when a new station was added. When mac80211 assigns the context
+again with the AP station already there, no station follows, and the vdev
+stayed stopped through the association. mac80211 does that at association
+when the connection limits changed since authentication (a WEP or TKIP
+pairwise cipher on an HT AP, or disable_ht/disable_vht/disable_he):
+ieee80211_prep_connection() then calls ieee80211_prep_channel() again,
+which releases and re-assigns the context. The start is now deferred only
+while the vdev has no peer for the BSSID. Mainline ath11k, which delays
+the start the same way for QCA6390, got this fix in aa44b2f3ecd4
+("ath11k: start vdev if a bss peer is already created"), and it is the
+test qcacld makes before its own vdev start
+(wma_add_bss_lfr2_vdev_start()). After a firmware restart the peer list
+is empty, so the start is deferred again until mac80211 re-adds the
+station.
+
+A deferred start that failed left the vdev marked as started with nothing
+pending, so the unassign that followed sent a vdev stop for a vdev that
+never started, and when the firmware answered it the count of started
+vdevs came out one too low (or warned at zero). The start now stays
+pending until it has succeeded.]
+
+diff --git a/drivers/net/wireless/ath/ath10k/core.h b/drivers/net/wireless/ath/ath10k/core.h
 --- a/drivers/net/wireless/ath/ath10k/core.h
 +++ b/drivers/net/wireless/ath/ath10k/core.h
-@@ -592,6 +592,8 @@
+@@ -592,6 +592,8 @@ struct ath10k_vif {
  
  	bool is_started;
  	bool is_up;
@@ -18,16 +43,20 @@ the station vdev start until the peer has been created.
  	bool spectral_enabled;
  	bool ps;
  	u32 aid;
+diff --git a/drivers/net/wireless/ath/ath10k/mac.c b/drivers/net/wireless/ath/ath10k/mac.c
 --- a/drivers/net/wireless/ath/ath10k/mac.c
 +++ b/drivers/net/wireless/ath/ath10k/mac.c
-@@ -7684,6 +7684,19 @@
+@@ -7603,6 +7603,22 @@ static int ath10k_sta_state(struct ieee80211_hw *hw,
+ 						ATH10K_MAX_NUM_PEER_IDS);
  
  		spin_unlock_bh(&ar->data_lock);
- 
++
 +		if (arvif->start_pending && !sta->tdls) {
-+			arvif->start_pending = false;
 +			ret = ath10k_vdev_start(arvif, &arvif->pending_chandef);
 +			if (ret) {
++				/* The start stays pending: the vdev is not
++				 * started, so unassign must not stop it.
++				 */
 +				ath10k_warn(ar, "failed to start vdev %i after peer create: %d\n",
 +					    arvif->vdev_id, ret);
 +				ath10k_peer_delete(ar, arvif->vdev_id, sta->addr);
@@ -35,12 +64,35 @@ the station vdev start until the peer has been created.
 +				kfree(arsta->tx_stats);
 +				goto exit;
 +			}
++			arvif->start_pending = false;
 +		}
-+
+ 
  		if (!sta->tdls)
  			goto exit;
+@@ -8988,6 +9004,22 @@ unlock:
+ 	mutex_unlock(&ar->conf_mutex);
+ }
  
-@@ -9089,12 +9102,22 @@
++static bool ath10k_mac_vif_has_bss_peer(struct ath10k_vif *arvif,
++					const u8 *bssid)
++{
++	struct ath10k *ar = arvif->ar;
++	bool found;
++
++	if (!bssid)
++		return false;
++
++	spin_lock_bh(&ar->data_lock);
++	found = ath10k_peer_find(ar, arvif->vdev_id, bssid) != NULL;
++	spin_unlock_bh(&ar->data_lock);
++
++	return found;
++}
++
+ static int
+ ath10k_mac_op_assign_vif_chanctx(struct ieee80211_hw *hw,
+ 				 struct ieee80211_vif *vif,
+@@ -9009,12 +9041,26 @@ ath10k_mac_op_assign_vif_chanctx(struct ieee80211_hw *hw,
  		return -EBUSY;
  	}
  
@@ -50,9 +102,13 @@ the station vdev start until the peer has been created.
 -			    arvif->vdev_id, vif->addr,
 -			    ctx->def.chan->center_freq, ret);
 -		goto err;
-+	if (QCA_REV_WCN3990(ar) && arvif->vdev_type == WMI_VDEV_TYPE_STA) {
++	if (QCA_REV_WCN3990(ar) && arvif->vdev_type == WMI_VDEV_TYPE_STA &&
++	    !ath10k_mac_vif_has_bss_peer(arvif, link_conf->bssid)) {
 +		/* WCN39xx firmware expects the BSS peer to exist before the
 +		 * vdev is started. Defer the start until the peer is created.
++		 * When mac80211 assigns a channel context again with the AP
++		 * station already added, the peer exists and no other will
++		 * follow, so the vdev is started here.
 +		 */
 +		arvif->pending_chandef = ctx->def;
 +		arvif->start_pending = true;
@@ -69,7 +125,7 @@ the station vdev start until the peer has been created.
  	}
  
  	arvif->is_started = true;
-@@ -9139,7 +9162,10 @@
+@@ -9059,7 +9105,10 @@ ath10k_mac_op_assign_vif_chanctx(struct ieee80211_hw *hw,
  	return 0;
  
  err_stop:
@@ -81,7 +137,7 @@ the station vdev start until the peer has been created.
  	arvif->is_started = false;
  	ath10k_mac_vif_setup_ps(arvif);
  
-@@ -9177,10 +9203,14 @@
+@@ -9097,10 +9146,14 @@ ath10k_mac_op_unassign_vif_chanctx(struct ieee80211_hw *hw,
  		arvif->is_up = false;
  	}
  
