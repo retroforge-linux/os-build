@@ -90,7 +90,7 @@ jobs:
           On a device that installed it, these settings silently do nothing.
 
           - newest build: \`$tag\`
-          - source checked: https://github.com/$repo/tree/$sha
+          - source checked: \`$repo\` \`$ref\` = https://github.com/$repo/tree/$sha
 
           | key | written by |
           |---|---|
