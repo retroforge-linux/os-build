@@ -587,6 +587,23 @@ nvu.write_staged(stamp)
 if nvu.staged_identity(Installer("rootfs.1", "rootfs.0")) != "9.9.9":
     fails.append("did not report a genuinely pending update before the reboot")
 
+# 2b. HW-CAUGHT 2026-11-17 (0.0.8 -> 0.0.9, Air Y Pro): rebooted into the new slot, but its trial
+# is still running (B_TRY>0 until retroforge-bootctl marks it good, ~25 s after the shell starts).
+# rauc's grub GetPrimary skips a slot with tries counted, so it answers the OLD slot, and the
+# shell's session-start `staged` read that as restart-pending: Restart now for the whole session,
+# every boot. Running the stamped version is what says the reboot happened.
+release = os.path.join(os.path.dirname(nvu.STAGED_FILE), "release")
+with open(release, "w") as handle:
+    handle.write("RETROFORGE_VERSION=9.9.9\nRETROFORGE_BUILD=20260101T000000Z\n")
+nvu.RELEASE_FILE = release
+nvu.write_staged(stamp)
+if nvu.staged_identity(Installer("rootfs.0", "rootfs.1")) is not None:
+    fails.append("reported restart-pending while running the stamped version in its boot trial")
+if os.path.exists(nvu.STAGED_FILE):
+    fails.append("the stamp outlived the boot into the version it names")
+os.unlink(release)
+nvu.RELEASE_FILE = "/nonexistent"
+
 # 3. `staged` (the shell's Restart now at session start) answers from staged_identity() alone.
 import contextlib, io
 for value, want_rc, want_out in (("9.9.9", 0, "9.9.9\n"), (None, 7, "")):

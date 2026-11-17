@@ -347,6 +347,15 @@ def staged_identity(installer=None):
     stamp = read_staged()
     if not stamp:
         return None
+    # RUNNING THE STAMPED VERSION IS THE REBOOT, asked before rauc because rauc gets it wrong for
+    # the first ~half minute of that boot. The new slot boots on trial (B_TRY>0) until
+    # retroforge-bootctl marks it good, and rauc's grub GetPrimary skips any slot with tries
+    # counted, so it names the OLD slot -- primary != booted, restart-pending. The shell asks at
+    # session start, inside that window, and kept Restart now for the session; every boot alike.
+    # HW-caught 2026-11-17 on 0.0.8 -> 0.0.9.
+    if identity_of(stamp) == identity_of(device_identity()):
+        spend_staged()
+        return None
     try:
         installer = installer or rauc()
         primary = installer.call_sync("GetPrimary", None, 0, 5000, None).unpack()[0]
@@ -365,11 +374,15 @@ def staged_identity(installer=None):
     if primary and booted and primary != booted:
         return identity_of(stamp)
     # The reboot happened (or the slot was demoted under us). The stamp is spent.
+    spend_staged()
+    return None
+
+
+def spend_staged():
     try:
         os.unlink(STAGED_FILE)
     except OSError:
         pass
-    return None
 
 
 # --- rauc ---------------------------------------------------------------------------------------
