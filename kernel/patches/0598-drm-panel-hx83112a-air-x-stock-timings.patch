@@ -1,0 +1,64 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] drm/panel: hx83112a: drive the Air X at its stock timings
+
+The Air X mode was 1124 x 1957, porches 28/8/8 and 27/5/5, in burst
+mode. Those are the Fairphone 4 panel's numbers in mainline's
+panel-himax-hx83112a (1080 + 28 + 8 + 8 by 2340 + 27 + 5 + 5, burst),
+which this driver started from; only the height was changed. The init
+sequence is MANGMI's and equals the stock node byte for byte.
+
+The stock Air X panel node, in every Panda overlay of the dump, has
+h-front-porch 48, h-pulse-width 12, h-back-porch 16, v-front-porch 44,
+v-pulse-width 5, v-back-porch 5 and qcom,mdss-dsi-traffic-mode =
+"non_burst_sync_event": the same DSI properties as the bm5460bb1 node
+beside it, whose driver already follows them. The init's B2 carries
+0x2a where the Fairphone 4's carries 0x19 against its 27-line front
+porch, so the panel is set up for the stock porch, not for the one it
+was being sent.
+
+Use the stock timings and drop the burst flag. The Duo Lite desc is
+untouched.
+
+---
+diff --git a/drivers/gpu/drm/panel/panel-hx83112a.c b/drivers/gpu/drm/panel/panel-hx83112a.c
+--- a/drivers/gpu/drm/panel/panel-hx83112a.c
++++ b/drivers/gpu/drm/panel/panel-hx83112a.c
+@@ -472,16 +472,21 @@
+ 	return 0;
+ }
+ 
++/*
++ * The stock Air X node's timings: 48/12/16 and 44/5/5, non-burst sync event.
++ * 28/8/8, 27/5/5 in burst mode were the Fairphone 4 panel's, from mainline's
++ * panel-himax-hx83112a.
++ */
+ static const struct drm_display_mode mangmi_airx_mode = {
+-	.clock = 1124 * 1957 * 60 / 1000,
++	.clock = 1156 * 1974 * 60 / 1000,
+ 	.hdisplay = 1080,
+-	.hsync_start = 1080 + 28,
+-	.hsync_end = 1080 + 28 + 8,
+-	.htotal = 1124,
++	.hsync_start = 1080 + 48,
++	.hsync_end = 1080 + 48 + 12,
++	.htotal = 1156,
+ 	.vdisplay = 1920,
+-	.vsync_start = 1920 + 27,
+-	.vsync_end = 1920 + 27 + 5,
+-	.vtotal = 1957,
++	.vsync_start = 1920 + 44,
++	.vsync_end = 1920 + 44 + 5,
++	.vtotal = 1974,
+ 	.width_mm = 68,
+ 	.height_mm = 122,
+ 	.type = DRM_MODE_TYPE_DRIVER,
+@@ -502,8 +507,7 @@
+ 
+ static const struct hx83112a_desc mangmi_airx_desc = {
+ 	.mode = &mangmi_airx_mode,
+-	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_BURST |
+-		      MIPI_DSI_CLOCK_NON_CONTINUOUS,
++	.mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_CLOCK_NON_CONTINUOUS,
+ 	.supplies = mangmi_airx_supplies,
+ 	.num_supplies = ARRAY_SIZE(mangmi_airx_supplies),
+ 	.staged_power = true,
