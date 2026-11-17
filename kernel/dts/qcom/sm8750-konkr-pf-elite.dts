@@ -1780,3 +1780,43 @@
 &remoteproc_soccp {
 	firmware-name = "qcom/sm8750/konkr/pfe/soccp.mbn";
 };
+
+/*
+ * CPU throttle points, raised from sm8750.dtsi's 90 and 95 C (1178). The firmware holds the
+ * hottest core sensor at 103 to 106 C by lowering the allowed frequency (scaling_max_freq falls
+ * with every kernel cooling device idle; measured 2026-11-17), and stock's kernel first acts at
+ * 118 C (pause the core), so 90 and 95 C throttled well below the firmware's own point. The first
+ * point now sits at that plateau. Hot 120 and critical 125 C stay.
+ */
+&cpu_0_0_0_alert0 { temperature = <105000>; };
+&cpu_0_0_0_alert1 { temperature = <110000>; };
+&cpu_0_0_1_alert0 { temperature = <105000>; };
+&cpu_0_0_1_alert1 { temperature = <110000>; };
+&cpu_0_1_0_alert0 { temperature = <105000>; };
+&cpu_0_1_0_alert1 { temperature = <110000>; };
+&cpu_0_1_1_alert0 { temperature = <105000>; };
+&cpu_0_1_1_alert1 { temperature = <110000>; };
+&cpu_0_2_0_alert0 { temperature = <105000>; };
+&cpu_0_2_0_alert1 { temperature = <110000>; };
+&cpu_0_2_1_alert0 { temperature = <105000>; };
+&cpu_0_2_1_alert1 { temperature = <110000>; };
+&cpu_0_3_0_alert0 { temperature = <105000>; };
+&cpu_0_3_0_alert1 { temperature = <110000>; };
+&cpu_0_3_1_alert0 { temperature = <105000>; };
+&cpu_0_3_1_alert1 { temperature = <110000>; };
+&cpu_0_4_0_alert0 { temperature = <105000>; };
+&cpu_0_4_0_alert1 { temperature = <110000>; };
+&cpu_0_4_1_alert0 { temperature = <105000>; };
+&cpu_0_4_1_alert1 { temperature = <110000>; };
+&cpu_0_5_0_alert0 { temperature = <105000>; };
+&cpu_0_5_0_alert1 { temperature = <110000>; };
+&cpu_0_5_1_alert0 { temperature = <105000>; };
+&cpu_0_5_1_alert1 { temperature = <110000>; };
+&cpu_1_0_0_alert0 { temperature = <105000>; };
+&cpu_1_0_0_alert1 { temperature = <110000>; };
+&cpu_1_0_1_alert0 { temperature = <105000>; };
+&cpu_1_0_1_alert1 { temperature = <110000>; };
+&cpu_1_1_0_alert0 { temperature = <105000>; };
+&cpu_1_1_0_alert1 { temperature = <110000>; };
+&cpu_1_1_1_alert0 { temperature = <105000>; };
+&cpu_1_1_1_alert1 { temperature = <110000>; };
