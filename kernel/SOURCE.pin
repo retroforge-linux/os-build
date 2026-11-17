@@ -1,13 +1,13 @@
 # Kernel source pin. kernel/build.sh reads the five fields below; CI's upstream-watch reads
 # `version:`. Everything else here is notes for the next bump and the next HW gate.
 #
-# Current: 7.3.4, pinned 2026-11-13 (issue #42). Builds; not booted yet. The per-board HW gate
+# Current: 7.3.5, pinned 2026-11-17 (issue #49). Builds; not booted yet. The per-board HW gate
 # for the 7.3 series is not finished (see "7.3.x on hardware" below).
-version:    7.3.4
-url:        https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.4.tar.xz
-sha256:     b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f
-git_tag:    v7.3.4
-git_commit: 7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
+version:    7.3.5
+url:        https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.5.tar.xz
+sha256:     8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990
+git_tag:    v7.3.5
+git_commit: 988117cc1bb17338c586a4e21ade88b5397eac33
 
 # ============================== The fields ==============================
 #
@@ -17,10 +17,10 @@ git_commit: 7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
 # it by WKD or from keyserver.ubuntu.com; keys.openpgp.org serves it without user IDs and gpg then
 # reports "no public key"). That key has no trust path here, so the check that counts is
 # continuity: the same signed file still lists the pins we shipped before with the hashes we
-# recorded. Re-checked 2026-11-13:
+# recorded. Re-checked 2026-11-17:
+#   7.3.4   b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f
 #   7.3.3   79c66dde66cd96877fcde8f7d36aec946b1f423d2b97b5a7b1751b75c764f3d1
 #   7.3.1   fa595aad93734f829c963c2a90ef7c3673224fd7fdae7b49406e397cde2de231
-#   7.2.11  fd0fc479f983a8c05313f13e9c36330fe6651cf725396748c40d5cd93fa1e6a4
 # On each bump, add the outgoing pin and drop the oldest; three is enough for a chain.
 #
 # git_commit is the dereferenced tag (`git ls-remote origin 'v<version>^{}'`), not the annotated
@@ -56,9 +56,64 @@ git_commit: 7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
 #   7.3.3   2026-11-08  issue #37: nothing of ours landed, no patch changed.
 #   7.3.4   2026-11-13  issue #42: 0896 landed and was deleted, 0975 regenerated, 1166 now
 #                       load-bearing.
+#   7.3.5   2026-11-17  issue #49: 0897's q6apm/q6prm half landed (apr.c half kept); 1018
+#                       replaced by stable's own fix for the same qrtr HELLO race.
 #
 # A point release inside a series is a prediction about effort, never about risk: 7.2.5 needed a
 # new patch and 7.2.6 broke Wi-Fi, and both were found on hardware, not by an offline gate.
+
+# ============================== 7.3.5 ==============================
+#
+# 515 commits, 467 files. No arm64 dts, no dt-bindings header we use, no drm/msm, adreno, qcom
+# clk/phy/interconnect, soundwire, geni, remoteproc or iris change; the only Kconfig change is
+# MIPS-only (lib/crypto). sha256 from the signed .asc above, git_commit from
+# `git ls-remote ... 'v7.3.5^{}'` ('v7.3.4^{}' gives back the old pin). kernel.org publishes no
+# incr/patch-7.3.4-7.3.5.xz (404), so the file list came from `diff -rq` of the two tarballs.
+#
+# Landed: 0897's 1/2, "ASoC: qcom: q6apm: Guard callbacks until probe data is ready", as stable
+# 91b5278622fd (upstream ef7062864c05), without 2/2. Its q6apm.c/q6prm.c hunks reversed at
+# --fuzz=0 on pristine 7.3.5 and are gone; 0897 keeps the apr.c half, which is only safe with
+# the guards in the tree, and now they always are.
+#
+# Replaced: 1018. Stable took "net: qrtr: announce local services again once our HELLO is sent"
+# (66cab935, upstream 743b5c86276b), the same race as 1018 (modem HELLO first, NEW_SERVER replies
+# dropped, rmtfs never seen, watchdog reset ~40 s later; theirs on Kaanapali and SM7250, ours on
+# the Air X), fixed differently: the remote's HELLO is remembered and replayed to the local name
+# service once ours is out, instead of 1018 flushing our pending HELLO from the enqueue path.
+# 1018 still applied, but two fixes for one race is one too many, so 1018 is deleted and the
+# Air X has to show Wi-Fi without a modem DOG reset again.
+#
+# Intersection with our patches, 5 files, all read:
+#   soc/qcom/qdsp6 q6apm.c, q6prm.c (0852, 0897)   0897's landing, above.
+#   net/qrtr/af_qrtr.c (1018)          the replacement, above.
+#   bluetooth/btqca.c (1006)           WCN3950 now writes the NVM UART baud rate at byte 1, like
+#                                      WCN3991 (stable d360db9d). Air X Bluetooth is a WCN3950:
+#                                      a real change there, a fix by its message.
+#   pci/controller/dwc/pcie-designware.h (1067)   a new PCIE_ATU_DMA_BYPASS bit, see below.
+# Beside us, not intersecting: dw_pcie sets DMA_BYPASS in every outbound iATU region on DWC
+# 4.60A and later (stable 7755725e), which includes pcie-qcom: register-level change on the
+# WCN7850 and ath11k leg; the bypass only steers the controller's own eDMA, which RC mode does not
+# use. bam_dma now takes the IRQ trigger from DT; every BAM node on our six SoCs says
+# IRQ_TYPE_LEVEL_HIGH (what the driver forced before), and they are the crypto BAMs, disabled on
+# every board. mac80211 reinstates IEEE80211_TX_CTL_AMPDU for drv_tx() frames (ath9k-style
+# drivers; our ath1xk go through TXQs). drm_crtc fence RCU fixes (unbind only), a DP AUX MOT fix
+# msm does not opt into (no_zero_sized), three btrfs fixes, qcom bam_dma error-path IRQ order.
+#
+# PATCHES: all 323 (1018 out) applied cumulatively at --fuzz=0, no rejects; check-order.py: no
+# problems. DROP CHECK: 658 (patch, file) pairs reverse-applied --dry-run --fuzz=0 to pristine
+# 7.3.5: only 0897's q6apm.c and q6prm.c reverse. Positive control on the patched tree: 563
+# reverse. CONFIG: all 809 symbols named in kernel/*.config exist in the patched tree
+# (CONFIG_x / CONFIG_ARCH_x are comment placeholders).
+# BUILD: `make kernel` green: vmlinuz.efi + 35 dtbs + modules (7.3.5) staged; the three trim
+# fragments confirmed (42 + 232 + 74 symbols disabled). Warnings only in our own drivers
+# (chipone_tddi, qcom-spmi-haptics, rmi4, wcd939x-usbss) and the fragment-comment `.config`
+# noise, as at 7.3.4; none in a file 7.3.5 touched. The unshipped-qcom list names no symbol new
+# in 7.3.5 (no Kconfig we build changed).
+#
+# Owed on hardware, besides the series list below (Air X Wi-Fi and Bluetooth passed, see
+# "7.3.x on hardware"): WCN7850 (ACE) and ath11k (Max) association and throughput (DWC
+# DMA_BYPASS), AudioReach boot on ACE/S2/FIT with no `CMD timeout for [1001021]` regression
+# (0897 split).
 
 # ============================== 7.3.4 ==============================
 #
@@ -227,7 +282,13 @@ git_commit: 7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
 #   - 7.3.1, Pocket S2 (2026-10-31): sound came up as Dummy Output until the DP route moved into
 #     the APS2 HiFi verb in UCM (8ac2c00d); speaker OK after.
 #   - 7.3.1, Air X (2026-11-01): Wi-Fi late or absent, from 7.3's qrtr HELLO change dropping the
-#     name service's early answer to the modem. Fixed by 1018.
+#     name service's early answer to the modem. Fixed by 1018; since 7.3.5 by stable 66cab935
+#     instead (1018 deleted).
+#   - 7.3.5, Air X MQ66 (2026-11-17, dev card): modem up at 9.5 s with one "failed to announce
+#     new service" (the drop stable still logs before its replay), no modem watchdog reset by
+#     97 s, wlan0 associated at 20 s (26 s with 1018 on 7.3.1). WCN3950 Bluetooth set up over
+#     UART with the new baud byte, powers on (AutoEnable=false keeps it off at boot), scan finds
+#     devices.
 #   - 7.3.3, card 3a87b3fc (PR #38 comment): boot, Wi-Fi and suspend checked on four boards.
 #     ACE: all OK, deep suspend included. Air Y Pro: OK, but the SLPI crashes in its sensor process
 #     60 ms after resume and recovers by itself. Air X: the ADSP crashes the same way after resume,
@@ -299,7 +360,9 @@ git_commit: 7595a62d45ee1a2297eafa5f2ef5d0a45142d84d
 #
 # 1. Upstream intersection, first. Take the `+++ b/` paths out of the release's incremental patch
 #    (https://cdn.kernel.org/pub/linux/kernel/v7.x/incr/patch-A-B.xz) and intersect them with the
-#    `+++ b/` paths in kernel/patches/*.patch. Read every file it names and answer two questions:
+#    `+++ b/` paths in kernel/patches/*.patch; when kernel.org has no incr patch for the pair (as
+#    for 7.3.4 -> 7.3.5), `diff -rq` the two unpacked tarballs. Read every file it names and
+#    answer two questions:
 #    did upstream break one of ours, and did one of ours land (then it is a deletion candidate).
 #    It is the only offline check that sees upstream's own changes: at 7.2.5 neither the patch
 #    apply nor the config sweep could see the DSI break.
