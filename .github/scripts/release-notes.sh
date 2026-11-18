@@ -4,8 +4,10 @@
 #
 #   .github/scripts/release-notes.sh <tag> <ref> <out-file>
 #
-#   <tag>  the release tag, e.g. card/v0.0.6 or ota/v0.0.6. Only its series (`card/` or `ota/`) and
-#          whether it is a pre-release are read: a dispatch with publish:true has no tag yet.
+#   <tag>  the release tag, e.g. release/v0.0.9 (a card) or ota/v0.0.9. Only its series (`release/`
+#          or `ota/`) and whether it is a pre-release are read: a dispatch with publish:true has no
+#          tag yet. Cards were tagged `card/` up to card/v0.0.8, so the `release/` series also
+#          matches those when looking for the previous card.
 #   <ref>  the commit being released (GITHUB_SHA).
 #
 # THE MODEL RUNS ON CLOUDFLARE WORKERS AI, the account that already holds the OTA bucket:
@@ -41,15 +43,26 @@ PARA_CAP=600
 warn() { echo "::warning::release notes: $*" >&2; }
 
 series="${TAG%%/*}"
+# Every prefix the series has been tagged under. Cards moved from `card/` to `release/` on
+# 2026-11-19; without the old prefix the first release/ tag would find no previous card and fall
+# back to "the last 50 commits".
+case "$series" in
+  release) prefixes=(release card) ;;
+  *)       prefixes=("$series") ;;
+esac
+match=() exclude=()
+for p in "${prefixes[@]}"; do
+  match+=(--match "$p/v*")
+  exclude+=(--exclude "$p/v*-*")
+done
 # The previous release in the same series, reachable from this commit and not this commit itself
 # (`$REF^`, so a re-run from the tag does not find itself). A stable release compares against the
 # previous STABLE one, so its notes cover everything its users have not had, betas included; a beta
 # compares against whatever came last.
 case "$TAG" in
   *-*) exclude=() ;;
-  *)   exclude=(--exclude "$series/v*-*") ;;
 esac
-prev="$(git describe --tags --abbrev=0 --match "$series/v*" "${exclude[@]}" "$REF^" 2>/dev/null || true)"
+prev="$(git describe --tags --abbrev=0 "${match[@]}" "${exclude[@]}" "$REF^" 2>/dev/null || true)"
 if [ -n "$prev" ]; then
   range="$prev..$REF"
 else

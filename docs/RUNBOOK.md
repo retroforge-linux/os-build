@@ -72,9 +72,10 @@ dead card. That is a setting, not a fault.
 sdcard` on a dev box (no `RETROFORGE_DEV`) builds the same kind of image, which is how a release image's first boot gets
 tested on hardware without waiting for a run.
 
-The card is an asset of the `card/v*` GitHub Release, next to its checksums and the package lock it
-was built from. A release card compresses to 524 MiB (gz -6, measured 2026-10-13), well inside
-GitHub's 2 GiB per-asset cap; `release-sdcard.yml` refuses to publish one that has grown past it.
+The card is an asset of the `release/v*` GitHub Release (`card/v*` up to v0.0.8), next to its
+checksums and the package lock it was built from. A release card compresses to 524 MiB (gz -6,
+measured 2026-10-13), well inside GitHub's 2 GiB per-asset cap; `release-sdcard.yml` refuses to
+publish one that has grown past it.
 The asset is named for the release, `retroforge-<version>.img.gz`. The repo is public, so it
 downloads from the release page with no login. Write it with
 balenaEtcher or Raspberry Pi Imager, or:
@@ -97,7 +98,7 @@ on any failure, `.github/scripts/release-notes.sh` writes the plain commit list 
 never waits on it. An `ota/` Release carries notes only (the bundle is on R2), is never marked
 Latest, and is a pre-release for a beta tag.
 
-To cut a card: tag `card/vX.Y.Z`. To cut an update instead, tag `ota/vX.Y.Z` — the two ship on
+To cut a card: tag `release/vX.Y.Z`. To cut an update instead, tag `ota/vX.Y.Z` — the two ship on
 independent cadences and a bundle is expected far more often than a card. There is nothing to line
 up first: the release run compiles the overlay from the sources in the commit it is building
 (~34 min on top of the image), so a tag is never waiting on a separate pipeline to have published
