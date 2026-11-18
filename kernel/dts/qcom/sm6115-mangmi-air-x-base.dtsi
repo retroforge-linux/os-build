@@ -663,6 +663,15 @@
 	status = "disabled";
 };
 
+/*
+ * The active-only XO. clk-pwm (the vibrator) keeps GCC_GP1_CLK prepared for
+ * good, and on the two-set XO that is an XO vote in the APSS sleep set that
+ * never goes away: the RPM would not shut XO down in suspend.
+ */
+&gcc {
+	clocks = <&rpmcc RPM_SMD_XO_A_CLK_SRC>, <&sleep_clk>;
+};
+
 &gpi_dma0 {
 	status = "okay";
 };
