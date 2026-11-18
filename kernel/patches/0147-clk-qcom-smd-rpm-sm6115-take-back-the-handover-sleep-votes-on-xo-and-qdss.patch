@@ -1,0 +1,116 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 17 Nov 2026 00:00:00 +0000
+Subject: [PATCH] clk: qcom: smd-rpm: sm6115: take back the handover's sleep
+ votes on XO and QDSS
+
+clk_smd_rpm_handoff() votes every clock of the SoC on in the active set
+and in the sleep set. A sleep set vote goes away again only when a
+consumer unprepares the clock, so a clock nobody ever prepares keeps it
+for good. On SM6115 that is the QDSS clock: its only consumers are the
+CoreSight nodes, all disabled. With it on in the APSS sleep set the RPM
+does not shut XO down while the APSS sleeps, and the SoC never reaches
+its lowest power state in suspend.
+
+Send a zero sleep set vote for the two-set XO and QDSS clocks of SM6115
+straight after the handover, each with its own resource id and key. A
+consumer that prepares one of them later votes it into the sleep set
+again, as before. The active set votes are not touched.
+
+The vendor driver hands the clocks over the same way and then drops the
+vote of every clock without a consumer, in both sets: its clocks carry
+CLK_ENABLE_HAND_OFF, and the clock framework unprepares what is still
+unused at late init (msm-4.19 clk-smd-rpm.c clk_smd_rpm_handoff(), clk.c
+clk_unprepare_unused_subtree()). Mainline never got that second half.
+Posted for the sibling QCM2290 and not merged: "clk: qcom: smd-rpm: Skip
+proxy votes on clocks for QCM2290" (Imran Shaik, 2026-09-10), which
+leaves the handover of these clocks out altogether; its review asked for
+a disable vote after the handover instead (Stephan Gerhold).
+
+Limited to SM6115, the only SoC it was run on: seventeen of the other
+tables vote QDSS with the STATE key, and a board may live on a handover
+vote. For XO the same zero is written once more when the critical
+active-only XO clock is prepared at registration.
+
+Measured on the MANGMI Air X, 7.3.5, in a build that also had every XO
+consumer on the active-only clock: vmin in 5 of 5 suspends, for the
+whole sleep, with one APSS shutdown and one XO shutdown per suspend.
+The builds without it reached vmin in 0 of 23.
+---
+ drivers/clk/qcom/clk-smd-rpm.c | 40 +++++++++++++++++++++++++++++++++-
+ 1 file changed, 39 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/clk-smd-rpm.c b/drivers/clk/qcom/clk-smd-rpm.c
+--- a/drivers/clk/qcom/clk-smd-rpm.c
++++ b/drivers/clk/qcom/clk-smd-rpm.c
+@@ -183,6 +183,14 @@
+ 	const struct clk_smd_rpm ** const icc_clks;
+ 	size_t num_icc_clks;
+ 	bool scaling_before_handover;
++
++	/*
++	 * Clocks whose sleep set vote from the handover is taken back at once.
++	 * Nothing else would do it: a clock that gets no consumer is never
++	 * unprepared.
++	 */
++	const struct clk_smd_rpm ** const sleep_unvote_clks;
++	size_t num_sleep_unvote_clks;
+ };
+ 
+ static DEFINE_MUTEX(rpm_smd_clk_lock);
+@@ -210,6 +218,19 @@
+ 	return 0;
+ }
+ 
++static int clk_smd_rpm_sleep_unvote(const struct clk_smd_rpm *r)
++{
++	struct clk_smd_rpm_req req = {
++		.key = cpu_to_le32(r->rpm_key),
++		.nbytes = cpu_to_le32(sizeof(u32)),
++		.value = cpu_to_le32(0),
++	};
++
++	return qcom_rpm_smd_write(rpmcc_smd_rpm, QCOM_SMD_RPM_SLEEP_STATE,
++				  r->rpm_res_type, r->rpm_clk_id, &req,
++				  sizeof(req));
++}
++
+ static int clk_smd_rpm_set_rate_active(struct clk_smd_rpm *r,
+ 				       unsigned long rate)
+ {
+@@ -1211,11 +1232,22 @@
+ 	[RPM_SMD_RF_CLK2_A_PIN] = &clk_smd_rpm_rf_clk2_a_pin,
+ };
+ 
++/*
++ * Nothing has these two prepared at the handover. Left on in the sleep set,
++ * they keep the RPM from shutting XO down while the APSS sleeps.
++ */
++static const struct clk_smd_rpm *sm6115_sleep_unvote_clks[] = {
++	&clk_smd_rpm_branch_bi_tcxo,
++	&clk_smd_rpm_branch_qdss_clk,
++};
++
+ static const struct rpm_smd_clk_desc rpm_clk_sm6115 = {
+ 	.clks = sm6115_clks,
+ 	.num_clks = ARRAY_SIZE(sm6115_clks),
+ 	.icc_clks = sm_qnoc_icc_clks,
+-	.num_icc_clks = ARRAY_SIZE(sm_qnoc_icc_clks)
++	.num_icc_clks = ARRAY_SIZE(sm_qnoc_icc_clks),
++	.sleep_unvote_clks = sm6115_sleep_unvote_clks,
++	.num_sleep_unvote_clks = ARRAY_SIZE(sm6115_sleep_unvote_clks),
+ };
+ 
+ static struct clk_smd_rpm *sm6375_clks[] = {
+@@ -1372,6 +1404,12 @@
+ 			continue;
+ 
+ 		ret = clk_smd_rpm_handoff(desc->icc_clks[i]);
++		if (ret)
++			goto err;
++	}
++
++	for (i = 0; i < desc->num_sleep_unvote_clks; i++) {
++		ret = clk_smd_rpm_sleep_unvote(desc->sleep_unvote_clks[i]);
+ 		if (ret)
+ 			goto err;
+ 	}
