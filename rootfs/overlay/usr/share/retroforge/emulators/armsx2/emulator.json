@@ -5,7 +5,8 @@
     "gui_args: Big Picture, the pad-driven UI; no -batch, which would quit at once with no game.",
     "ARMSX2 keeps its settings in ~/.config/ARMSX2/inis/PCSX2.ini (the seed must carry [UI] SettingsVersion = 1).",
     "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state (slot 1), R2 fast-forward (HoldTurbo), Start quit — as keyboard F1-F4, bound in the seeded PCSX2.ini [Hotkeys] (LoadStateFromSlot1, SaveStateToSlot1, HoldTurbo, ShutdownVM). ShutdownVM is the pause menu's shut down: resume state and memory cards written, and -batch quits the app. Select + Start (pause menu) stays.",
-    "achievements: the player's one RetroAchievements sign-in and Hardcore toggle, written at every launch (plan standalone-cheevos): Enabled, ChallengeMode, Username in PCSX2.ini [Achievements], the token in inis/secrets.ini where PCSX2 keeps it. A Token in PCSX2.ini is removed: PCSX2 would move it over ours into secrets.ini at start."
+    "achievements: the player's one RetroAchievements sign-in and Hardcore toggle, written at every launch (plan standalone-cheevos): Enabled, ChallengeMode, Username in PCSX2.ini [Achievements], the token in inis/secrets.ini where PCSX2 keeps it. A Token in PCSX2.ini is removed: PCSX2 would move it over ours into secrets.ini at start.",
+    "Games display = the picture (window_size; launch_def, window_size module): before a game the launcher sizes gamescope's games display to the picture's height (stepped up to 430 lines, 16:9 kept, no larger than the output) and gives the normal size back at exit, so the emulator draws it 1:1 and the DPU plane does the upscale. PS2 pictures are 448 lines at 1x (NTSC); [EmuCore/GS] upscale_multiplier multiplies them (default 1)."
   ],
   "format": "appimage",
   "binary": "usr/bin/armsx2-qt",
@@ -22,6 +23,17 @@
   ],
   "env": {},
   "gamepad_profile": "guide-hotkeys.yaml",
+  "window_size": {
+    "lines": {
+      "ps2": 448
+    },
+    "scale": {
+      "file": "main",
+      "section": "EmuCore/GS",
+      "key": "upscale_multiplier",
+      "default": "1"
+    }
+  },
   "seed": [
     {
       "file": "PCSX2.ini",

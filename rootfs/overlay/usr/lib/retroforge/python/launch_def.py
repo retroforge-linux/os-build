@@ -35,6 +35,10 @@
 #                                                  second panel of a dual-screen board (below)
 #    "dual_screen_args": ["--dual-window"],        before the others on a dual-screen board whose X
 #                                                  server shows both panels (below)
+#    "window_size": "retroarch-log",               its window kept the size of the picture it shows,
+#                                                  how the launcher learns that size (below); or
+#    "window_size": {"lines": {"psx": 240},        for a fullscreen one, the games display sized to
+#                    "scale": {...}},              its picture for the run (below)
 #    "seed": [{"file": "x.ini", "to": ".config/x/x.ini"}],   first-run settings (below)
 #    "sync": [{"file": "x.txt", "to": "roms/x/x.txt"}],      RetroForge's own files, kept current (below)
 #    "install": [{"from": "bios/fw.bin",            a one-time step with the emulator's own binary
@@ -95,6 +99,15 @@
 # a warning, and the emulator opens its one window on the main panel: the game always starts. No
 # "{rom}" or "{system}" in them.
 #
+# The picture's size (window_size): gamescope fits any window to the panel, and the DPU plane scales a
+# pre-rotated copy of the WINDOW's size up for free, so an emulator should not scale the picture up itself
+# into a window as big as the game display. "retroarch-log": RetroArch runs with --verbose, its stderr
+# comes through the launcher, and every picture size it logs resizes its window. An object, for an
+# emulator that runs fullscreen: the games display (gamescope's X server for games) is sized to its
+# picture's height for the run, from the console's lines and the emulator's resolution setting, and
+# given its size back when it exits. The window_size module's header has both. Without the key the
+# window and the display are left as they are.
+#
 # Kept current (sync): files that are RetroForge's, not the player's, placed into the download's world --
 # PortMaster's mod_RetroForge.txt and libgl_RetroForge.txt, which every port sources from PortMaster's
 # folder. Copied from the image at every launch when missing or different (an image update must
@@ -108,6 +121,7 @@ import shutil
 
 import achievements
 import emuopts
+import window_size
 from launch_common import EMU_DATA_DIR, ENV, HOME, Exit, device_field, log
 from launch_formats import FORMATS
 
@@ -118,7 +132,7 @@ DEFINITION_KEYS = {"format", "root", "binary", "args", "gui_args", "system_args"
                    "system_settings", "env",
                    "seed", "sync", "install", "stub", "core_dumps", "exit_resend",
                    "gamepad_profile", "achievements", "secondary_window_title", "dual_screen_args",
-                   "notes"}
+                   "window_size", "notes"}
 EXIT_RESEND_MAX = 30  # s: an exit_resend longer than this is a typo, not a plan
 TITLE_MAX = 256  # characters of a secondary_window_title regex
 ROM = "{rom}"
@@ -287,11 +301,18 @@ def load_definition(emulator):
     if exit_resend is not None and not (isinstance(exit_resend, (int, float)) and not isinstance(exit_resend, bool)
                                         and 0 < exit_resend <= EXIT_RESEND_MAX):
         raise bad(f"exit_resend must be a number of seconds, more than 0 and at most {EXIT_RESEND_MAX}")
+    size = d.get("window_size")
+    if isinstance(size, dict):
+        why = window_size.check_display(size)
+        if why:
+            raise bad(f"window_size: {why}")
+    elif size is not None and not (isinstance(size, str) and size in window_size.KINDS):
+        raise bad(f"window_size must be one of {sorted(window_size.KINDS)} or a games display object")
     return {"format": d["format"], "root": d.get("root"), "binary": d["binary"], "args": args, "gui_args": gui_args,
             "system_args": system_args, "system_requires": system_requires, "system_settings": system_settings, "env": env, "seed": seed,
             "sync": sync, "install": install, "stub": stub, "core_dumps": core_dumps,
             "exit_resend": exit_resend, "gamepad_profile": gamepad_profile, "achievements": cheevos,
-            "secondary_window_title": title, "dual_screen_args": dual_screen_args}
+            "secondary_window_title": title, "dual_screen_args": dual_screen_args, "window_size": size}
 
 
 def regex_ok(pattern):

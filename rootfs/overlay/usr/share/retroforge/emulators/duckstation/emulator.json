@@ -4,7 +4,8 @@
     "-batch quits when the game closes, so OpenGamepadUI gets the panel back instead of DuckStation's own UI; -- ends options in case a ROM name starts with '-'.",
     "gui_args (Main menu > Emulators > Open): Big Picture is the pad-driven UI (the desktop one needs a mouse); no -batch, which would quit at once with no game.",
     "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 quick load, R1 quick save (the selected slot, game slot 1), R2 fast-forward, Start quit — as keyboard F1-F4, bound in the seeded settings.ini [Hotkeys] (LoadSelectedSaveState, SaveSelectedSaveState, FastForward, PowerOff). PowerOff is the pause menu's shut down: resume state and memory cards written, and -batch quits the app. Select + Start (pause menu) stays.",
-    "achievements: the player's one RetroAchievements sign-in (Settings > Library > RetroAchievements) and Hardcore toggle, written into settings.ini [Cheevos] at every launch (plan standalone-cheevos). DuckStation keeps Token encrypted with /etc/machine-id and the user name: {duckstation_token}."
+    "achievements: the player's one RetroAchievements sign-in (Settings > Library > RetroAchievements) and Hardcore toggle, written into settings.ini [Cheevos] at every launch (plan standalone-cheevos). DuckStation keeps Token encrypted with /etc/machine-id and the user name: {duckstation_token}.",
+    "Games display = the picture (window_size; launch_def, window_size module): before a game the launcher sizes gamescope's games display to the picture's height (stepped up to 430 lines, 16:9 kept, no larger than the output) and gives the normal size back at exit, so the emulator draws it 1:1 and the DPU plane does the upscale. PS1 pictures are 240 lines at 1x; [GPU] ResolutionScale multiplies them (default 1, 0 = automatic: the display is left alone)."
   ],
   "format": "appimage",
   "binary": "usr/bin/duckstation-qt",
@@ -20,6 +21,20 @@
   ],
   "env": {},
   "gamepad_profile": "guide-hotkeys.yaml",
+  "window_size": {
+    "lines": {
+      "psx": 240
+    },
+    "scale": {
+      "file": "main",
+      "section": "GPU",
+      "key": "ResolutionScale",
+      "default": "1",
+      "auto": [
+        "0"
+      ]
+    }
+  },
   "seed": [
     {
       "file": "settings.ini",

@@ -4,6 +4,7 @@
 #   retroforge-launch <system> <rom>
 #   retroforge-launch --gui <emulator>
 #   retroforge-launch --psn-install
+#   retroforge-launch --restore-display <launcher pid>   (the detached watcher; window_size module)
 #
 # --gui starts the emulator's own UI with no ROM: Main menu > Emulators > Open, for the settings OGUI
 # does not expose. It runs exactly like a ROM (prepare, seed, own session, exit handling below),
@@ -120,6 +121,7 @@
 
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -139,6 +141,7 @@ from launch_def import (FILE, ROM, SYSTEM, SYSTEM_ID, TEXT, apply_system_setting
                         sync_files, systems_of)
 from launch_formats import FORMATS  # noqa: E402
 from psn_inbox import PSN_SYSTEM, psn_install, try_psn_lock  # noqa: E402
+import window_size  # noqa: E402
 import x11_root  # noqa: E402
 
 SECONDARY_TITLE_PROP = "GAMESCOPE_SECONDARY_WINDOW_TITLE"  # gamescope patch 0041 reads it
@@ -146,6 +149,8 @@ SECONDARY_TITLE_PROP = "GAMESCOPE_SECONDARY_WINDOW_TITLE"  # gamescope patch 004
 CPU_ROOT = ENV.get("RETROFORGE_CPU_ROOT", "/sys/devices/system/cpu")
 PLAYER_CONF_DIR = ENV.get("RETROFORGE_PLAYER_CONF_DIR", os.path.join(CONFIG_HOME, "retroforge", "emulators"))
 GAME_CONF_DIR = ENV.get("RETROFORGE_GAME_CONF_DIR", os.path.join(CONFIG_HOME, "retroforge", "games"))
+# What starts the games display's watcher outside the game's process tree (test seam).
+DETACH = ENV.get("RETROFORGE_LAUNCH_DETACH", "systemd-run --user --quiet --collect --")
 STATE_DIR = ENV.get("RETROFORGE_STATE_DIR",
                     os.path.join(ENV.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state"), "retroforge"))
 STATUS = ENV.get("RETROFORGE_LAUNCH_STATUS",
@@ -485,10 +490,26 @@ def run(argv):
     package = FORMATS[definition["format"]](emulator, image)
     profile_declared = False
     title_set = False
+    display_back = None
+    say = lambda msg: log(f"{emulator}: {msg}")  # noqa: E731
+    warn = lambda msg: log(f"warning: {emulator}: {msg}")  # noqa: E731
+    # A games display a killed run left at its game's size (launch_def: window_size).
+    window_size.restore_display(STATE_DIR, warn)
     try:
         # Before the mount: the restore in `finally` must cover every way out from here on.
         opt_args, opt_env = apply_options(emulator, options, confs, system)
         args = opt_args + args
+        # The window follows the picture's size (launch_def: window_size): RetroArch tells it on stderr.
+        follows = definition["window_size"] == window_size.RETROARCH_LOG
+        if follows:
+            args = ["--verbose"] + args
+        if rom is not None and isinstance(definition["window_size"], dict):
+            lines = window_size.display_lines(definition["window_size"], system, args,
+                                              (options or {}).get("files"), HOME, warn)
+            if lines:
+                display_back = window_size.size_display(ENV.get("DISPLAY", ""), lines, STATE_DIR, say, warn)
+            if display_back:
+                watch_display(warn)
         try:
             root = package.prepare()
         except Exit as err:
@@ -511,12 +532,18 @@ def run(argv):
             # lock outlives even a SIGKILLed launcher for as long as the game runs.
             emu = subprocess.Popen(pin + [program] + args, env=env, start_new_session=True,
                                    pass_fds=() if psn_lock is None else (psn_lock.fileno(),),
-                                   preexec_fn=emulator_child(definition["core_dumps"]))
+                                   preexec_fn=emulator_child(definition["core_dumps"]),
+                                   stderr=subprocess.PIPE if follows else None)
         except (OSError, ValueError) as err:
             fail("mount-failed", emulator, f"could not start {binary}: {err}")
+        follower = window_size.follow(definition["window_size"], emu, args, ENV.get("DISPLAY", ""), say, warn)
         rc = wait_emulator(emu, definition["exit_resend"], interrupted)
+        if follower:
+            follower.join(timeout=2)  # the pipe closed with the emulator: its last lines
         return 128 - rc if rc < 0 else rc
     finally:
+        if display_back:
+            display_back()
         if title_set:
             x11_root.remove(ENV.get("DISPLAY", ""), SECONDARY_TITLE_PROP,
                             lambda why: log(f"warning: could not remove {SECONDARY_TITLE_PROP}: {why}"))
@@ -552,6 +579,17 @@ def one_window_per_panel(emulator, dual_args):
     return []
 
 
+def watch_display(warn):
+    """Start the watcher that gives the games display its size back should this process die without
+    doing it (window_size.watch_display), detached from the game's process tree. Without it the next
+    launch still does it."""
+    cmd = shlex.split(DETACH) + [sys.executable, os.path.abspath(__file__), "--restore-display", str(os.getpid())]
+    try:
+        subprocess.run(cmd, check=True, timeout=15, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as err:
+        warn(f"no watcher for the games display ({err}): a killed run gets its size back at the next launch")
+
+
 def wait_emulator(emu, resend_after, interrupted):
     """The emulator's exit status. With exit_resend: once a stop signal reached us (OGUI's Exit
     signals the whole tree) and the emulator still runs resend_after seconds later, it gets ONE
@@ -579,6 +617,11 @@ def wait_emulator(emu, resend_after, interrupted):
 
 
 def main():
+    argv = sys.argv[1:]
+    if len(argv) == 2 and argv[0] == "--restore-display" and argv[1].isdigit():
+        # The watcher: no status file of its own (that is the game launch's).
+        window_size.watch_display(int(argv[1]), STATE_DIR, lambda msg: log(msg), lambda msg: log(f"warning: {msg}"))
+        return 0
     try:
         os.unlink(STATUS)
     except OSError:

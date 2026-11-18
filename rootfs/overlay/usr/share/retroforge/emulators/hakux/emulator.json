@@ -6,7 +6,8 @@
     "Discs: XISO, full .iso dumps (XGD1-3) and DVD .chd; not CD CHDs or CHDs with a parent.",
     "gui_args: the Xbox dashboard from the emulated hard disk (C:\\xboxdash.xbe) when the player installed it; otherwise hakux logs that it isn't installed and exits at once.",
     "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state, Start quit -- F5, Shift+F5 and Ctrl+Q, hakux's keys. Every gamepad is player 1 (the raw device is silent while InputPlumber grabs it); SDL's own mapping of InputPlumber's pad is used, and Guide reaches hakux as nothing (the Duke has none).",
-    "Exit: SIGTERM (OGUI's Exit) stops the core and syncs the hard disk before the process ends. A title's relaunch (another of its XBEs) and a state load run hakux again in the same process (execv), so the launcher keeps waiting on the same PID."
+    "Exit: SIGTERM (OGUI's Exit) stops the core and syncs the hard disk before the process ends. A title's relaunch (another of its XBEs) and a state load run hakux again in the same process (execv), so the launcher keeps waiting on the same PID.",
+    "Games display = the picture (window_size; launch_def, window_size module): before a game the launcher sizes gamescope's games display to the picture's height (stepped up to 430 lines, 16:9 kept, no larger than the output) and gives the normal size back at exit, so the emulator draws it 1:1 and the DPU plane does the upscale. Xbox pictures are 480 lines at 1x (the core's default video flags); the scale=N argument (options.json scale) multiplies them (default 1)."
   ],
   "format": "binary",
   "binary": "current",
@@ -20,5 +21,14 @@
     "/home/player/.local/share/hakux",
     "dash"
   ],
-  "gamepad_profile": "guide-hotkeys.yaml"
+  "gamepad_profile": "guide-hotkeys.yaml",
+  "window_size": {
+    "lines": {
+      "xbox": 480
+    },
+    "scale": {
+      "arg": "scale",
+      "default": "1"
+    }
+  }
 }

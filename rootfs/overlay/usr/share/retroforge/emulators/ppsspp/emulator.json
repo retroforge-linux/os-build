@@ -4,7 +4,8 @@
     "--fullscreen; the ROM boots straight into the game (no game list). --pause-menu-exit: Exit in the pause menu (Select + Start, controls.ini) quits PPSSPP, so OpenGamepadUI gets the panel back. SIGTERM quits cleanly, no dialog.",
     "gui_args: PPSSPP's own pad-driven UI (no --pause-menu-exit there, or ending a game would quit the app).",
     "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 load state, R1 save state (the current slot), R2 fast-forward, Start quit — as keyboard F1-F4, bound in the seeded controls.ini [ControlMapping] (Load State, Save State, Fast-forward, Exit App). Exit App is PPSSPP's clean quit, the same as the pause menu's Exit with --pause-menu-exit; Select + Start (pause menu) stays.",
-    "achievements: the player's one RetroAchievements sign-in and Hardcore toggle, written at every launch (plan standalone-cheevos): ppsspp.ini [Achievements], the token alone in PSP/SYSTEM/ppsspp_retroachievements.dat (PPSSPP's NativeSaveSecret), removed when signed out. AchievementsChallengeMode defaults to True in PPSSPP: always written."
+    "achievements: the player's one RetroAchievements sign-in and Hardcore toggle, written at every launch (plan standalone-cheevos): ppsspp.ini [Achievements], the token alone in PSP/SYSTEM/ppsspp_retroachievements.dat (PPSSPP's NativeSaveSecret), removed when signed out. AchievementsChallengeMode defaults to True in PPSSPP: always written.",
+    "Games display = the picture (window_size; launch_def, window_size module): before a game the launcher sizes gamescope's games display to the picture's height (stepped up to 430 lines, 16:9 kept, no larger than the output) and gives the normal size back at exit, so the emulator draws it 1:1 and the DPU plane does the upscale. PSP pictures are 272 lines at 1x; [Graphics] InternalResolution multiplies them. No default: unset, PPSSPP picks 1x or 2x from the screen it finds, so the display is left alone until its ini holds a value (it writes it at exit)."
   ],
   "format": "appimage-sharun",
   "binary": "bin/PPSSPPSDL",
@@ -18,6 +19,19 @@
   ],
   "env": {},
   "gamepad_profile": "guide-hotkeys.yaml",
+  "window_size": {
+    "lines": {
+      "psp": 272
+    },
+    "scale": {
+      "file": "main",
+      "section": "Graphics",
+      "key": "InternalResolution",
+      "auto": [
+        "0"
+      ]
+    }
+  },
   "seed": [
     {
       "file": "ppsspp.ini",

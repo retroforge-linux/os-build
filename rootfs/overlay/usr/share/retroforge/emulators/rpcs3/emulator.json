@@ -7,7 +7,8 @@
     "Firmware: the player's ~/bios/PS3UPDAT.PUP, installed once by install (--headless --installfw has no dialogs and exits 0 even on failure, so success is dev_flash's version.txt). Without it a game is not started: RPCS3 would only show a fatal error box.",
     "gui_args: Big Picture Mode, RPCS3's pad-driven game grid over ~/roms/ps3 (vfs.yml). Never --no-gui there: with no game it only shows an error box.",
     "SDL_NO_SIGNAL_HANDLERS=1: RPCS3's own SDL3 otherwise catches SIGTERM and turns it into an SDL quit event RPCS3 never reads (its loop is Qt's), so OpenGamepadUI's Exit did nothing (HW 2026-10-07, Pocket FIT: SigCgt had SIGTERM). With the hint SIGTERM keeps its default action and ends RPCS3 at once (RPCS3 saves nothing on exit anyway).",
-    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 reboot from the newest savestate, R1 create a savestate (experimental in RPCS3: a game can refuse it), R2 frame limit off/on (a toggle), Start stop -- as keyboard F1-F4, bound in the seeded CurrentSettings.ini [Shortcuts]. Guide+Start is game_window_stop, RPCS3's graceful shutdown (the game gets its exit request; unlike SIGTERM), and --no-gui then quits RPCS3."
+    "gamepad_profile guide-hotkeys.yaml: hold Guide for L1 reboot from the newest savestate, R1 create a savestate (experimental in RPCS3: a game can refuse it), R2 frame limit off/on (a toggle), Start stop -- as keyboard F1-F4, bound in the seeded CurrentSettings.ini [Shortcuts]. Guide+Start is game_window_stop, RPCS3's graceful shutdown (the game gets its exit request; unlike SIGTERM), and --no-gui then quits RPCS3.",
+    "Games display = the picture (window_size; launch_def, window_size module): before a game the launcher sizes gamescope's games display to the picture's height (stepped up to 430 lines, 16:9 kept, no larger than the output) and gives the normal size back at exit, so the emulator draws it 1:1 and the DPU plane does the upscale. PS3 pictures are 720 lines at 100%; Video/Resolution Scale is a percent (default 100), hence per 100. At 100% the display is the normal 720p one already."
   ],
   "format": "appimage",
   "binary": "usr/bin/rpcs3",
@@ -26,6 +27,18 @@
     "SDL_NO_SIGNAL_HANDLERS": "1"
   },
   "gamepad_profile": "guide-hotkeys.yaml",
+  "window_size": {
+    "lines": {
+      "ps3": 720
+    },
+    "scale": {
+      "file": "main",
+      "section": "Video",
+      "key": "Resolution Scale",
+      "per": 100,
+      "default": "100"
+    }
+  },
   "seed": [
     {
       "file": "config.yml",

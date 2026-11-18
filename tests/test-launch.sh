@@ -102,7 +102,12 @@ on_term() {
 }
 trap on_term TERM
 echo up >> "\$log"
-while [ ! -e "$T/stop-emu" ]; do sleep 0.05; done
+# window_size: picture sizes on stderr as RetroArch logs them; its window (_NET_WM_PID) up 0.3 s later.
+if [ -f "$T/geometry" ]; then cat "$T/geometry" >&2; ( sleep 0.3; echo \$\$ > "$T/win-pid" ) & fi
+while [ ! -e "$T/stop-emu" ]; do
+  if [ -f "$T/geometry-later" ]; then cat "$T/geometry-later" >&2; rm -f "$T/geometry-later"; fi
+  sleep 0.05
+done
 exit 7
 EOF
 
@@ -1034,7 +1039,15 @@ unsigned long XInternAtom(void *d, const char *name, int o) {
   names[n] = strdup(name); return ++n;
 }
 int XChangeProperty(void *d, unsigned long w, unsigned long p, unsigned long t, int fmt, int mode, const unsigned char *data, int len) {
-  (void)d; (void)w; (void)fmt; (void)mode; out("set", p, t, data, len); return 1;
+  (void)d; (void)w; (void)mode;
+  if (fmt == 32 && len == 4 && !strcmp(names[p - 1], "GAMESCOPE_XWAYLAND_MODE_CONTROL")) {  /* gamescope resizes the server */
+    const unsigned long *v = (const unsigned long *)data; FILE *f = fopen(getenv("FAKE_X11_LOG"), "a");
+    if (f) { fprintf(f, "mode %lu %lux%lu\n", v[0], v[1], v[2]); fclose(f); }
+    const char *s = getenv("FAKE_SCREEN_FILE"); FILE *g = s ? fopen(s, "w") : NULL;
+    if (g) { fprintf(g, "%lux%lu\n", v[1], v[2]); fclose(g); }
+    return 1;
+  }
+  out("set", p, t, data, len); return 1;
 }
 int XDeleteProperty(void *d, unsigned long w, unsigned long p) { (void)d; (void)w; out("delete", p, 0, NULL, 0); return 1; }
 int XSync(void *d, int x) { (void)d; (void)x; return 1; }
@@ -1046,6 +1059,36 @@ void *XRRGetMonitors(void *d, unsigned long w, int active, int *n) {
   return *n > 0 ? malloc(1) : NULL;
 }
 void XRRFreeMonitors(void *p) { free(p); }
+/* window_size: the root's size (FAKE_SCREEN, WxH), one window owned by the PID in FAKE_WIN_PID once that
+   file exists, and the resizes logged. */
+int XGetGeometry(void *d, unsigned long w, unsigned long *r, int *x, int *y, unsigned *ww, unsigned *hh, unsigned *b, unsigned *dp) {
+  (void)d; (void)w; *r = 1; *x = *y = 0; *b = 0; *dp = 24; *ww = 1280; *hh = 720;
+  const char *s = getenv("FAKE_SCREEN"); if (s) sscanf(s, "%ux%u", ww, hh);
+  const char *p = getenv("FAKE_SCREEN_FILE"); FILE *f = p ? fopen(p, "r") : NULL;
+  if (f) { if (fscanf(f, "%ux%u", ww, hh) != 2) { *ww = 1280; *hh = 720; } fclose(f); }
+  return 1;
+}
+static unsigned long win_pid(void) {
+  const char *p = getenv("FAKE_WIN_PID"); FILE *f = p ? fopen(p, "r") : NULL; unsigned long pid = 0;
+  if (f) { if (fscanf(f, "%lu", &pid) != 1) pid = 0; fclose(f); } return pid;
+}
+int XQueryTree(void *d, unsigned long w, unsigned long *r, unsigned long *p, unsigned long **kids, unsigned *n) {
+  (void)d; (void)w; *r = 1; *p = 0; *n = 0; *kids = NULL;
+  if (win_pid()) { *kids = malloc(sizeof(unsigned long)); (*kids)[0] = 42; *n = 1; } return 1;
+}
+int XGetWindowProperty(void *d, unsigned long w, unsigned long prop, long off, long len, int del, unsigned long req,
+                       unsigned long *type, int *fmt, unsigned long *items, unsigned long *after, unsigned char **data) {
+  (void)d; (void)prop; (void)off; (void)len; (void)del; (void)req; *after = 0;
+  unsigned long pid = w == 42 ? win_pid() : 0;
+  const char *gs = getenv("FAKE_GAMESCOPE");
+  if (w == 1 && gs && *gs && !strcmp(names[prop - 1], "GAMESCOPE_XWAYLAND_SERVER_ID")) pid = 1;  /* the games server */
+  if (!pid) { *type = 0; *fmt = 0; *items = 0; *data = NULL; return 0; }
+  unsigned long *v = malloc(sizeof *v); *v = pid; *type = 6; *fmt = 32; *items = 1; *data = (unsigned char *)v; return 0;
+}
+int XResizeWindow(void *d, unsigned long w, unsigned ww, unsigned hh) {
+  (void)d; FILE *f = fopen(getenv("FAKE_X11_LOG"), "a"); if (f) { fprintf(f, "resize %lu %ux%u\n", w, ww, hh); fclose(f); } return 1;
+}
+int XFree(void *p) { free(p); return 1; }
 C
 if cc -shared -fPIC -o "$T/libfakex11.so" "$T/fakex11.c" 2>"$T/cc.err"; then
   TITLE_DATA="$T/data-title"; mkdir -p "$TITLE_DATA/duckstation"; cp "$DUAL/duckstation/"* "$TITLE_DATA/duckstation/"
@@ -1109,6 +1152,177 @@ for emu_title in 'dsperate:DSperate (Bottom):DSperate' 'azahar:Azahar 2126.1.2 |
 sys.exit(not (r.search(sys.argv[2]) and not r.search(sys.argv[3])))' "$SEED_DIR/$emu/emulator.json" "$second" "$first" \
     && ok "$emu: its title rule picks '$second' and not '$first'" || bad "$emu: secondary_window_title does not pick its second window only"
 done
+
+# =================================================================================================
+CASE="the window sized to the picture (window_size)"
+# RetroArch sizes its window once; with window_size "retroarch-log" it runs with --verbose, its stderr
+# comes through the launcher, and every picture size it logs resizes its window (_NET_WM_PID on the
+# game's Xwayland) to the picture: a whole-number step up to 430 lines, the configured aspect or the
+# screen's shape with "Stretch to screen", never past the screen. WARN/ERROR lines reach the journal.
+WS_DATA="$T/data-ws"; mkdir -p "$WS_DATA/duckstation"; cp "$SEED_DIR/duckstation/"* "$WS_DATA/duckstation/"
+printf 'video_driver = "vulkan"\naspect_ratio_index = "22"\n' > "$T/ra.cfg"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["window_size"] = "retroarch-log"
+d["args"] = ["--config", sys.argv[2]] + d["args"]; json.dump(d, open(sys.argv[1], "w"))' "$WS_DATA/duckstation/emulator.json" "$T/ra.cfg"
+if [ -f "$T/libfakex11.so" ]; then
+  ws_run() {  # ws_run [DISPLAY]: one game with $T/geometry on its stderr; $T/geometry-later 0.6 s in
+    rm -f "$T/x11.log" "$T/win-pid"; reset_logs
+    DISPLAY="${1-:9}" RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_WIN_PID="$T/win-pid" \
+      RETROFORGE_EMU_DATA_DIR="$WS_DATA" start_launcher
+    wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
+    wait_for '[ -f "$T/win-pid" ]'; sleep 0.4
+    [ -f "$T/later" ] && { cp "$T/later" "$T/geometry-later"; wait_for '[ ! -f "$T/geometry-later" ]'; sleep 0.4; }
+    touch "$T/stop-emu"; reap_launcher "$lpid"
+  }
+  resizes() { sed -n 's/^resize 42 //p' "$T/x11.log" 2>/dev/null | tr '\n' ' '; }
+  printf '%s\n' '[INFO] [Core] Geometry: 320x240, Aspect: 1.333, FPS: 60.00, Sample rate: 44100.00 Hz.' \
+    '[ERROR] [Fake] boom' '[INFO] [Environ] SET_GEOMETRY.' > "$T/geometry"
+  printf '%s\n' '[INFO] [Environ] SET_GEOMETRY: 160x144, Aspect: 1.111.' > "$T/later"
+  ws_run
+  [ "$(sed -n 's/^arg=//p' "$T/emu.log" | head -1)" = --verbose ] \
+    && ok "--verbose comes first on its command line" || bad "args: $(sed -n 's/^arg=//p' "$T/emu.log" | tr '\n' ' ')"
+  [ "$(resizes)" = "640x480 480x432 " ] \
+    && ok "the window waits for its window, then follows: 320x240 at 2x (640x480), a 160x144 picture at 3x (480x432)" \
+    || bad "resizes: '$(resizes)' log: $(tr '\n' '|' < "$T/launch.err")"
+  grep -qx '\[ERROR\] \[Fake\] boom' "$T/launch.err" && ! grep -q 'INFO\] \[Core\] Geometry' "$T/launch.err" \
+    && ok "ERROR lines reach the journal, INFO lines do not" || bad "stderr: $(tr '\n' '|' < "$T/launch.err")"
+  grep -q 'duckstation: window 480x432 for the 160x144 picture' "$T/launch.err" \
+    && ok "each resize is logged" || bad "no resize log: $(tr '\n' '|' < "$T/launch.err")"
+  printf '%s\n' '[INFO] [Environ] SET_GEOMETRY: 600x446, Aspect: 1.333.' > "$T/later"
+  ws_run
+  [ "$(resizes)" = "640x480 595x446 " ] && ok "a 446-line picture is not stepped up (595x446)" || bad "resizes: '$(resizes)'"
+  printf 'aspect_ratio_index = "24"\n' >> "$T/ra.cfg"; rm -f "$T/later"
+  ws_run
+  [ "$(resizes)" = "853x480 " ] && ok "Stretch to screen: the screen's shape (853x480 on 1280x720)" || bad "stretch: '$(resizes)'"
+  printf 'aspect_ratio_index = "22"\n' >> "$T/ra.cfg"
+  printf '%s\n' '[INFO] [Environ] SET_SYSTEM_AV_INFO: 1200x892, Aspect: 1.333, FPS: 60.00, Sample rate: 44100.00 Hz.' > "$T/later"
+  FAKE_SCREEN=800x600 ws_run
+  [ "$(resizes)" = "640x480 800x600 " ] && ok "never past the X screen (1189x892 down to 800x600)" || bad "cap: '$(resizes)'"
+  rm -f "$T/later"
+  ws_run ""
+  [ ! -e "$T/x11.log" ] && grep -q "no DISPLAY: the window keeps RetroArch's size" "$T/launch.err" \
+    && ok "no DISPLAY: a warning, and the game runs" || bad "no DISPLAY: $(tr '\n' '|' < "$T/launch.err")"
+  rm -f "$T/geometry" "$T/later" "$T/win-pid"
+  python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d.pop("window_size"); json.dump(d, open(sys.argv[1], "w"))' \
+    "$WS_DATA/duckstation/emulator.json"
+  ws_run
+  [ "$(sed -n 's/^arg=//p' "$T/emu.log" | head -1)" != --verbose ] && [ ! -e "$T/x11.log" ] \
+    && ok "without window_size: no --verbose, X untouched" || bad "no window_size: $(sed -n 's/^arg=//p' "$T/emu.log" | head -1)"
+else
+  bad "no stand-in libX11 for window_size"
+fi
+for e in '"fullscreen" (not a kind)' '42 (not a string)' '["retroarch-log"] (a list)'; do
+  bad_def "window_size ${e#* }" "d[\"window_size\"] = ${e%% *}"
+done
+python3 - "$ROOT/rootfs/overlay/usr/lib/retroforge/python" <<'PY' && ok "picture sizes: GB 3x, GBA 3x, MD 2x, N64 2x untouched, 4x capped" || bad "window_size.target"
+import sys
+sys.path.insert(0, sys.argv[1])
+import window_size as w
+want = {(160, 144, 0): (480, 432), (240, 160, 0): (720, 480), (320, 224, 1.333): (597, 448),
+        (600, 446, 1.333): (595, 446), (1200, 892, 1.333): (960, 720)}
+got = {k: w.target(*k, (1280, 720), False) for k in want}
+sys.exit(got != want)
+PY
+
+# =================================================================================================
+CASE="the games display sized to the picture (window_size object)"
+# A fullscreen emulator (DuckStation here: the real definition) gets gamescope's games display at its
+# picture's height for the run: its ResolutionScale x 240 lines, stepped up to 430, the display's 16:9
+# kept; the normal size comes back at exit, and from a journal when a killed run could not.
+GD_CONF="$HOME/.config/retroforge/emulators/duckstation.conf"; mkdir -p "${GD_CONF%/*}"
+GD_SAVED="$T/gd-conf-saved"; rm -f "$GD_SAVED"; [ -f "$GD_CONF" ] && cp "$GD_CONF" "$GD_SAVED"
+GD_JOURNAL="$HOME/.local/state/retroforge/restore/games-display.json"
+if [ -f "$T/libfakex11.so" ]; then
+  gd_run() {  # gd_run [gui]: one game (or Open) on the stand-in gamescope; $gd_up = the screen while up
+    rm -f "$T/x11.log"; reset_logs
+    if [ "${1-}" = gui ]; then
+      DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE="${GD_GAMESCOPE-1}" \
+        FAKE_SCREEN_FILE="$T/screen" "$LAUNCH" --gui duckstation 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
+    else
+      DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE="${GD_GAMESCOPE-1}" \
+        FAKE_SCREEN_FILE="$T/screen" start_launcher
+    fi
+    wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
+    gd_up="$(cat "$T/screen")"
+    touch "$T/stop-emu"; reap_launcher "$lpid"
+  }
+  modes() { sed -n 's/^mode //p' "$T/x11.log" 2>/dev/null | tr '\n' ' '; }
+  echo 1280x720 > "$T/screen"; printf 'resolution=2x\n' > "$GD_CONF"
+  gd_run
+  [ "$gd_up" = 853x480 ] && [ "$(modes)" = "1 853x480 1 1280x720 " ] \
+    && ok "2x: 480 lines, 853x480 while it runs, 1280x720 back at exit" || bad "2x: up $gd_up, modes '$(modes)'"
+  [ ! -e "$GD_JOURNAL" ] && ok "no journal left after a clean exit" || bad "journal left: $(cat "$GD_JOURNAL")"
+  grep -q 'duckstation: games display 853x480 for the 480-line picture (it was 1280x720)' "$T/launch.err" \
+    && ok "the size is logged" || bad "log: $(tr '\n' '|' < "$T/launch.err")"
+  printf 'resolution=1x\n' > "$GD_CONF"; gd_run
+  [ "$gd_up" = 853x480 ] && ok "1x: 240 lines stepped up to 480" || bad "1x: up $gd_up, modes '$(modes)'"
+  printf 'resolution=3x\n' > "$GD_CONF"; gd_run
+  [ "$gd_up" = 1280x720 ] && [ -z "$(modes)" ] && ok "3x: 720 lines on a 1280x720 display, nothing to change" \
+    || bad "3x: up $gd_up, modes '$(modes)'"
+  printf 'resolution=5x\n' > "$GD_CONF"; gd_run
+  [ "$gd_up" = 2133x1200 ] && ok "5x: 1200 lines asked (gamescope caps it at its output)" || bad "5x: up $gd_up"
+  printf 'resolution=auto\n' > "$GD_CONF"; gd_run
+  [ -z "$(modes)" ] && ok "Automatic: the display is left alone" || bad "auto: modes '$(modes)'"
+  printf 'resolution=2x\n' > "$GD_CONF"; gd_run gui
+  [ -z "$(modes)" ] && ok "Open (--gui): the display is left alone" || bad "gui: modes '$(modes)'"
+  GD_GAMESCOPE= gd_run
+  [ -z "$(modes)" ] && emu_up && grep -q "is not one of gamescope's X servers" "$T/launch.err" \
+    && ok "an X server that is not gamescope's: a warning, and the game runs" || bad "no gamescope: $(tr '\n' '|' < "$T/launch.err")"
+  # A run SIGKILLed before it gave the size back, its watcher gone too: the next launch does it first.
+  GD_DEAD=2147483646  # above any pid_max: never a live process
+  mkdir -p "${GD_JOURNAL%/*}"
+  printf '{"display": ":9", "server": 1, "width": 1280, "height": 720, "set": [853, 480], "pid": %s}' "$GD_DEAD" > "$GD_JOURNAL"
+  echo 853x480 > "$T/screen"; printf 'resolution=auto\n' > "$GD_CONF"; gd_run
+  [ "$gd_up" = 1280x720 ] && [ "$(modes)" = "1 1280x720 " ] && [ ! -e "$GD_JOURNAL" ] \
+    && ok "a journal a killed run left: the normal size is back before the next start" || bad "journal: up $gd_up, modes '$(modes)'"
+  # ... but not when the display has had another size asked for since: that size stays.
+  printf '{"display": ":9", "server": 1, "width": 1280, "height": 720, "set": [853, 480], "pid": %s}' "$GD_DEAD" > "$GD_JOURNAL"
+  echo 1000x600 > "$T/screen"; gd_run
+  [ "$gd_up" = 1000x600 ] && [ -z "$(modes)" ] && [ ! -e "$GD_JOURNAL" ] \
+    && ok "a stale journal over a size someone asked for since: dropped, that size kept" || bad "changed since: up $gd_up, modes '$(modes)'"
+  # ... and not a journal whose launcher still runs (it gives the size back itself).
+  printf '{"display": ":9", "server": 1, "width": 1280, "height": 720, "set": [853, 480], "pid": %s}' "$$" > "$GD_JOURNAL"
+  echo 853x480 > "$T/screen"; gd_run
+  [ "$gd_up" = 853x480 ] && [ -z "$(modes)" ] && [ -e "$GD_JOURNAL" ] \
+    && ok "a journal of a launcher still running is left to it" || bad "live owner: up $gd_up, modes '$(modes)'"
+  rm -f "$GD_JOURNAL"; echo 1280x720 > "$T/screen"
+  # The watcher (systemd-run on the device; setsid here): a SIGKILLed launcher's size comes back with no
+  # next launch, and a clean exit is not undone twice.
+  printf 'resolution=2x\n' > "$GD_CONF"; rm -f "$T/x11.log"; reset_logs
+  DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE=1 FAKE_SCREEN_FILE="$T/screen" \
+    RETROFORGE_LAUNCH_DETACH="setsid -f" start_launcher
+  wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
+  kill -KILL "$lpid"; wait "$lpid" 2>/dev/null
+  wait_for '[ "$(cat "$T/screen")" = 1280x720 ] && [ ! -e "$GD_JOURNAL" ]' \
+    && [ "$(modes)" = "1 853x480 1 1280x720 " ] && ok "SIGKILLed launcher: its watcher gives 1280x720 back" \
+    || bad "watcher: screen $(cat "$T/screen"), modes '$(modes)', journal $(cat "$GD_JOURNAL" 2>/dev/null)"
+  touch "$T/stop-emu"; wait_for '! emu_up || grep -qx term "$T/emu.log" || [ -z "$(pgrep -f "$T/mnt")" ]'; sleep 0.3
+  rm -f "$T/x11.log"; reset_logs
+  DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE=1 FAKE_SCREEN_FILE="$T/screen" \
+    RETROFORGE_LAUNCH_DETACH="setsid -f" start_launcher
+  wait_for emu_up; touch "$T/stop-emu"; reap_launcher "$lpid"; sleep 1.2
+  [ "$(modes)" = "1 853x480 1 1280x720 " ] && [ "$(cat "$T/screen")" = 1280x720 ] \
+    && ok "a clean exit with a watcher: given back once" || bad "clean exit + watcher: modes '$(modes)'"
+else
+  bad "no stand-in libX11 for the games display"
+fi
+rm -f "$GD_CONF"; [ -f "$GD_SAVED" ] && cp "$GD_SAVED" "$GD_CONF"
+bad_def "window_size without scale" 'd["window_size"] = {"lines": {"psx": 240}}'
+bad_def "window_size lines that are not whole numbers" 'd["window_size"] = {"lines": {"psx": "240"}, "scale": {"arg": "s"}}'
+bad_def "window_size scale with both arg and file" 'd["window_size"] = {"lines": {"psx": 240}, "scale": {"arg": "s", "file": "main", "key": "k"}}'
+bad_def "window_size scale per 0" 'd["window_size"] = {"lines": {"psx": 240}, "scale": {"arg": "s", "per": 0}}'
+python3 - "$ROOT/rootfs/overlay/usr/lib/retroforge/python" <<'PY' && ok "scale from an argument (hakuX) and per (Flycast lines)" || bad "window_size.display_lines"
+import sys
+sys.path.insert(0, sys.argv[1])
+import window_size as w
+warn = lambda m: None
+hakux = {"lines": {"xbox": 480}, "scale": {"arg": "scale", "default": "1"}}
+ok = (w.display_lines(hakux, "xbox", ["{rom}", "scale=3"], None, "/nonexistent", warn) == 1440
+      and w.display_lines(hakux, "xbox", ["{rom}"], None, "/nonexistent", warn) == 480
+      and w.display_lines(hakux, "ps2", ["scale=3"], None, "/nonexistent", warn) is None)
+fly = {"lines": {"dc": 480}, "scale": {"file": "main", "section": "config", "key": "rend.Resolution", "per": 480, "default": "480"}}
+ok = ok and w.display_lines(fly, "dc", [], {"main": {"path": "nope.cfg", "format": "ini"}}, "/nonexistent", warn) == 480
+sys.exit(not ok)
+PY
 
 # =================================================================================================
 CASE="a card moved to a board with the other panel count"
