@@ -89,7 +89,10 @@ different cadences:
 gets its own namespace rather than sharing a bare `v*`. That also fixes a real inversion: while
 `release-sdcard.yml` owned `v*` alone and `release-bundle.yml` had no tag trigger, tagging a release
 built a card and *never* a bundle. `release/v1.3.0` and `ota/v1.3.0` on one commit are the same OS
-delivered two ways.
+delivered two ways. Cards were tagged `card/v*` up to `card/v0.0.8`; since 2026-11-19 they are
+`release/v*` (`ota/v*` unchanged). A `card/` tag no longer starts anything, and `release-notes.sh`
+still counts the old `card/` tags as earlier cards, so the first `release/` notes diff against
+`card/v0.0.8`.
 
 **The card is a release asset** since 2026-10-13: a release card compresses to 524 MiB (gz -6), a
 quarter of GitHub's 2 GiB per-asset cap, and the release job checks the cap before uploading. It went
@@ -138,7 +141,8 @@ job's steps live in the reusable `sign-publish-bundle.yml` (inputs `channel`, `e
   and variables live in `release-signing`, whose deployment policy accepts `ota/v*` tags only;
   until the repo went public (2026-11) GitHub Free had no environments and they were repo-wide.
   It has a required reviewer (since 2026-11-09), so `release` waits for that single approval;
-  `release-cards` has the same reviewer. Keys are written to `$RUNNER_TEMP`, never the workspace — the
+  `release-cards` has the same reviewer, and its deployment policy accepts `release/v*` tags and
+  `main` (a publish dispatch of the card or the FEX guest) and nothing else. Keys are written to `$RUNNER_TEMP`, never the workspace — the
   repo tree gets uploaded as artifacts and cached.
 - **The run ends published or red.** Missing R2 credentials fail the job before anything is
   signed, and `ota/publish-bundle.sh` checks the bundle against the device keyring and refuses a
