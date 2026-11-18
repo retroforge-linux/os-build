@@ -300,7 +300,7 @@ git_commit: 988117cc1bb17338c586a4e21ade88b5397eac33
 # Still owed for the series:
 #   - Audio everywhere: MI2S formats and bit clocks now come from mainline (every MI2S speaker
 #     board; a "pll lock fail" from an aw88xxx amp means no BCLK), S2 + FIT speakers, headphones
-#     and DP, headset jack on MI2S boards (0861).
+#     and DP, headset jack on the Air X and Air Y (0861, 0877, 0878).
 #   - Display: the ICNA35XX panels (Pocket DS/EVO, Odin 2 Portal, Thor, Odin 3, Pocket Max) bind
 #     panel-ddic-icna35xx; SM4450 UBWC through the preset; picture and touch after resume.
 #   - PCIe Wi-Fi on the qcs8550 boards (label move), SM6115 Bluetooth (1020), the RNG (hwrng

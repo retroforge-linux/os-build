@@ -1,0 +1,64 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 17 Nov 2026 09:00:00 -0800
+Subject: [PATCH] ASoC: qcom: sc8280xp: add the MANGMI Air X sound card
+
+The MANGMI Air X and Air Y have no WCD codec. Their headset path is an
+ES8326 on quaternary MI2S, and the ES8326 detects the jack itself: it
+needs snd_soc_component_set_jack(), which the WCD jack setup only calls
+for the TX codec DMA links and LPI_MI2S_RX_0.
+
+Add a card for the two boards, selected by "mangmi,air-x-sndcard". It
+keeps the sm8450 card settings they have used so far (driver name, MI2S
+MCLK and BCLK, codec DAI format) and marks the quaternary MI2S playback
+link for codec jack setup, the way mainline's RubikPi 3 card
+(c82a336b1864) does for its ES8316. The jack is detached again when the
+link exits.
+
+This replaces the earlier approach of adding every MI2S port to
+qcom_snd_wcd_jack_setup(), which attached the headset jack to the codec
+of any MI2S link on any card, an HDMI bridge included.
+---
+ sound/soc/qcom/sc8280xp.c | 23 +++++++++++++++++++++++
+ 1 file changed, 23 insertions(+)
+
+diff --git a/sound/soc/qcom/sc8280xp.c b/sound/soc/qcom/sc8280xp.c
+index 47f0a2b86c1505..d71aa7b30315b7 100644
+--- a/sound/soc/qcom/sc8280xp.c
++++ b/sound/soc/qcom/sc8280xp.c
+@@ -545,6 +545,28 @@ static struct qcom_snd_soc_common ayaneo_ps2_priv_data = {
+ 	.wcd_jack = true,
+ };
+ 
++/*
++ * MANGMI Air X and Air Y: the sm8450 card settings, and an ES8326 on
++ * quaternary MI2S that detects the headset jack itself. No WCD codec.
++ */
++static const struct qcom_snd_soc_common mangmi_air_x_priv_data = {
++	.driver_name = "sm8450",
++	.dapm_widgets = sc8280xp_dapm_widgets,
++	.num_dapm_widgets = ARRAY_SIZE(sc8280xp_dapm_widgets),
++	.mi2s_mclk_enable = true,
++	.mi2s_bclk_enable = true,
++	.codec_dai_fmt = SND_SOC_DAIFMT_BC_FC |
++			 SND_SOC_DAIFMT_NB_NF |
++			 SND_SOC_DAIFMT_I2S,
++	SC8280XP_DAI_DATA({
++			.id = QUATERNARY_MI2S_RX,
++			.mi2s_mclk_enable = true,
++			.mi2s_bclk_enable = true,
++			.jack_setup = SC8280XP_JACK_SETUP_CODEC,
++		}
++	),
++};
++
+ static const struct qcom_snd_soc_common eliza_priv_data = {
+ 	.driver_name = "eliza",
+ 	.dapm_widgets = sc8280xp_dapm_widgets,
+@@ -669,6 +691,7 @@ static const struct qcom_snd_soc_common sm8750_priv_data = {
+ 
+ static const struct of_device_id snd_sc8280xp_dt_match[] = {
+ 	{ .compatible = "ayaneo,pocket-s2-sndcard", .data = &ayaneo_ps2_priv_data },
++	{ .compatible = "mangmi,air-x-sndcard", .data = &mangmi_air_x_priv_data },
+ 	{ .compatible = "qcom,eliza-sndcard", .data = &eliza_priv_data },
+ 	{ .compatible = "qcom,hawi-sndcard", .data = &hawi_priv_data },
+ 	{ .compatible = "qcom,kaanapali-sndcard", .data = &kaanapali_priv_data },

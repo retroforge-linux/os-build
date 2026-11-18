@@ -205,7 +205,8 @@
 	};
 
 	sound {
-		compatible = "qcom,sm8450-sndcard";
+		/* the board card (patch 0878) hooks the ES8326's own jack detection */
+		compatible = "mangmi,air-x-sndcard", "qcom,sm8450-sndcard";
 		model = "MangmiAirX";
 
 		widgets = "Speaker", "SPK_L Speaker",
