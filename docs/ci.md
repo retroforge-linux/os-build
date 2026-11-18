@@ -81,17 +81,17 @@ different cadences:
 
 | workflow | trigger | secrets | ships to |
 |---|---|---|---|
-| `release-sdcard.yml` | `release/v*` tag (`card/v*` up to v0.0.8), or manual | `GITHUB_TOKEN`, plus the ScreenScraper login (`RETROFORGE_SS_*`, baked into the image); `release-cards` for its reviewer | a GitHub Release carrying the card and its checksums (the build's `manifest.lock` stays in the workflow artifact) |
+| `release-sdcard.yml` | `image/v*` tag (`card/v*` up to v0.0.8), or manual | `GITHUB_TOKEN`, plus the ScreenScraper login (`RETROFORGE_SS_*`, baked into the image); `release-cards` for its reviewer | a GitHub Release carrying the card and its checksums (the build's `manifest.lock` stays in the workflow artifact) |
 | `release-bundle.yml` | `ota/v*` tag, or manual | `RAUC_CERT_PEM`/`RAUC_KEY_PEM` and `R2_*`, in the `release-signing` environment (`ota/v*` tags only) | the Cloudflare R2 bucket in `vars.R2_BUCKET`, `<channel>/` prefix, served at `https://ota.retroforge.org` (see `docs/ota.md`) |
 | `nightly-bundle.yml` | daily 02:30 UTC, or manual (`force` to build an unchanged or CI-red `main`) | `RAUC_NIGHTLY_CERT_PEM`/`RAUC_NIGHTLY_KEY_PEM` (a 90-day cert, `make renew-nightly-cert`) and `R2_*`, in the `nightly-signing` environment (`main` only, **no reviewer**) | the same bucket, `nightly/` prefix; skipped when `main` has not moved or `ci.yml` has not passed on it, rebuilt anyway when the published nightly is over 30 days old |
 
 **The tag namespaces are separate on purpose.** A bundle ships far more often than a card, so each
 gets its own namespace rather than sharing a bare `v*`. That also fixes a real inversion: while
 `release-sdcard.yml` owned `v*` alone and `release-bundle.yml` had no tag trigger, tagging a release
-built a card and *never* a bundle. `release/v1.3.0` and `ota/v1.3.0` on one commit are the same OS
+built a card and *never* a bundle. `image/v1.3.0` and `ota/v1.3.0` on one commit are the same OS
 delivered two ways. Cards were tagged `card/v*` up to `card/v0.0.8`; since 2026-11-19 they are
-`release/v*` (`ota/v*` unchanged). A `card/` tag no longer starts anything, and `release-notes.sh`
-still counts the old `card/` tags as earlier cards, so the first `release/` notes diff against
+`image/v*` (`ota/v*` unchanged). A `card/` tag no longer starts anything, and `release-notes.sh`
+still counts the old `card/` tags as earlier cards, so the first `image/` notes diff against
 `card/v0.0.8`.
 
 **The card is a release asset** since 2026-10-13: a release card compresses to 524 MiB (gz -6), a
@@ -141,7 +141,7 @@ job's steps live in the reusable `sign-publish-bundle.yml` (inputs `channel`, `e
   and variables live in `release-signing`, whose deployment policy accepts `ota/v*` tags only;
   until the repo went public (2026-11) GitHub Free had no environments and they were repo-wide.
   It has a required reviewer (since 2026-11-09), so `release` waits for that single approval;
-  `release-cards` has the same reviewer, and its deployment policy accepts `release/v*` tags and
+  `release-cards` has the same reviewer, and its deployment policy accepts `image/v*` tags and
   `main` (a publish dispatch of the card or the FEX guest) and nothing else. Keys are written to `$RUNNER_TEMP`, never the workspace — the
   repo tree gets uploaded as artifacts and cached.
 - **The run ends published or red.** Missing R2 credentials fail the job before anything is

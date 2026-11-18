@@ -4,12 +4,12 @@
 # you flash onto a new device or after a wipe, a bundle is what updates one already in the field.
 # Both delegate to image.yml so the rootfs recipe exists once.
 #
-# TAG NAMESPACE: `release/v*`, NOT a bare `v*` (it was `card/v*` up to card/v0.0.8; renamed
+# TAG NAMESPACE: `image/v*`, NOT a bare `v*` (it was `card/v*` up to card/v0.0.8; renamed
 # 2026-11-19, `ota/v*` unchanged). The two artifacts have independent cadences — a bundle ships far
 # more often than a card — so they get independent tag namespaces rather than sharing one and
 # hoping. This also fixes a real inversion: while this workflow triggered on `v*` and
 # release-bundle.yml had no tag trigger at all, tagging a release built a card and NEVER a bundle,
-# which is backwards from how the two actually ship. `release/v1.3.0` and `ota/v1.3.0` on the same
+# which is backwards from how the two actually ship. `image/v1.3.0` and `ota/v1.3.0` on the same
 # commit mean the same OS delivered two ways; a run of ota tags with no card between them is normal.
 #
 # NEEDS NO SIGNING KEY AND NO R2 CREDENTIAL. Nothing here is signed — an sdcard is flashed over USB
@@ -25,7 +25,7 @@
 #
 # THE `release-cards` ENVIRONMENT STILL GATES THE RELEASE JOB, for its reviewer rather than its
 # secrets: a Release is the record people flash from, so a person signs off on a finished build
-# before one is cut. Its policy allows the `release/v*` tags AND `main`, because a dispatch with
+# before one is cut. Its policy allows the `image/v*` tags AND `main`, because a dispatch with
 # publish:true is a supported way to cut a card and a tag-only policy would reject it at the gate.
 #
 # A LOCAL `make sdcard` PRODUCES THE SAME KIND OF IMAGE. It used to fail an artifact-pin gate by
@@ -39,7 +39,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version for this card, with its v (e.g. v1.3.0 -> tag release/v1.3.0; default: v<date>.<shortsha>)'
+        description: 'Version for this card, with its v (e.g. v1.3.0 -> tag image/v1.3.0; default: v<date>.<shortsha>)'
         required: false
         type: string
         default: ''
@@ -50,14 +50,14 @@ on:
         default: false
   push:
     tags:
-      - 'release/v*'
+      - 'image/v*'
 
 permissions:
   contents: read
 
 jobs:
   # The version has to be computed in a shell step, not an expression: GitHub's expression language
-  # has no string-replace, so `release/v1.3.0` -> `1.3.0` cannot be done inline. Keeping it here rather
+  # has no string-replace, so `image/v1.3.0` -> `1.3.0` cannot be done inline. Keeping it here rather
   # than inside image.yml leaves image.yml's contract simple — it takes a bare version string and
   # knows nothing about our tag scheme.
   prep:
@@ -76,12 +76,12 @@ jobs:
           if [ -n "${INPUT_VERSION:-}" ]; then
             v="$INPUT_VERSION"
           elif [ "$GITHUB_REF_TYPE" = tag ]; then
-            v="${REF_NAME#release/}"
+            v="${REF_NAME#image/}"
           else
             # A dispatch with no version still needs to name itself, or the release tag and the
             # image's own /etc/retroforge-release would both say "unset". A DOT, not a dash: the
             # pre-release check below refuses any `-`, so `date-sha` failed every such dispatch.
-            # The leading `v` matches what a tag run yields, since `release/` is all it strips.
+            # The leading `v` matches what a tag run yields, since `image/` is all it strips.
             v="v$(date -u +%Y%m%d).$(echo "$GITHUB_SHA" | cut -c1-7)"
           fi
           # This becomes a URL path segment; refuse anything that could escape it here rather than
@@ -91,7 +91,7 @@ jobs:
           esac
           # THERE IS NO SUCH THING AS A BETA CARD. release-bundle.yml reads a semver pre-release
           # suffix as "publish to the beta channel" (its prep job carries the reasoning), so
-          # `release/v0.3.0-beta.1` is a tag that LOOKS like it selects something and cannot: a card is
+          # `image/v0.3.0-beta.1` is a tag that LOOKS like it selects something and cannot: a card is
           # a flashable image, not a channel, and every card lands a device on `stable` —
           # ota.conf is written only by rootfs/lib-assemble-devcard.sh, which a release build never
           # sources, so a release image ships no /etc/retroforge/ota.conf and
@@ -146,9 +146,9 @@ jobs:
   # rebuild.
   #
   # PUBLISH IS NOT THE SAME AS TAG: a `workflow_dispatch` with publish:true is a supported way to cut
-  # a card, so this gates on prep's `publish` output and creates the `release/<version>` tag itself,
+  # a card, so this gates on prep's `publish` output and creates the `image/<version>` tag itself,
   # on the commit that was built, when the run did not start from one — the exact inverse of prep
-  # stripping `release/` from a tag, so a dispatch of `v1.3.0` and a push of `release/v1.3.0` produce the
+  # stripping `image/` from a tag, so a dispatch of `v1.3.0` and a push of `image/v1.3.0` produce the
   # same tag and the same version string in the image. The common case — a dispatch
   # answering "does this still build?" — skips this job entirely, and the image still lands as a
   # workflow artifact to download.
@@ -159,12 +159,12 @@ jobs:
     permissions:
       contents: write
     # For the reviewer, not for secrets — see the header. `release-cards`, not `release-signing`:
-    # that environment's deployment policy is `ota/v*` and would reject every `release/v*` tag.
+    # that environment's deployment policy is `ota/v*` and would reject every `image/v*` tag.
     environment: ${{ vars.CARDS_ENVIRONMENT || 'release-cards' }}
     steps:
       # FIRST, because checkout cleans the workspace and the downloads below land in it. Full
       # history and tags, because the notes summarise the commits since the previous card (a
-      # release/ tag, or a card/ one from before the rename).
+      # image/ tag, or a card/ one from before the rename).
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -177,7 +177,7 @@ jobs:
           CF_AI_TOKEN: ${{ secrets.CLOUDFLARE_AI_TOKEN }}
           RELEASE_NOTES_MODEL: ${{ vars.RELEASE_NOTES_MODEL }}
           VERSION: ${{ needs.prep.outputs.version }}
-        run: .github/scripts/release-notes.sh "release/$VERSION" "$GITHUB_SHA" "$RUNNER_TEMP/changes.md"
+        run: .github/scripts/release-notes.sh "image/$VERSION" "$GITHUB_SHA" "$RUNNER_TEMP/changes.md"
 
       # download-artifact v8 ERRORS on a digest mismatch rather than warning as v4 did, and that
       # default is deliberately left alone: the alternative is attaching a corrupted card next to a
@@ -235,7 +235,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             tag="$GITHUB_REF_NAME"
           else
-            tag="release/$VERSION"
+            tag="image/$VERSION"
           fi
           exists="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$tag" \
             --jq "map(select(.ref == \"refs/tags/$tag\")) | length")"

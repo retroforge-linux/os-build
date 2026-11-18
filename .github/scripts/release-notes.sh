@@ -4,9 +4,9 @@
 #
 #   .github/scripts/release-notes.sh <tag> <ref> <out-file>
 #
-#   <tag>  the release tag, e.g. release/v0.0.9 (a card) or ota/v0.0.9. Only its series (`release/`
+#   <tag>  the release tag, e.g. image/v0.0.9 (a card) or ota/v0.0.9. Only its series (`image/`
 #          or `ota/`) and whether it is a pre-release are read: a dispatch with publish:true has no
-#          tag yet. Cards were tagged `card/` up to card/v0.0.8, so the `release/` series also
+#          tag yet. Cards were tagged `card/` up to card/v0.0.8, so the `image/` series also
 #          matches those when looking for the previous card.
 #   <ref>  the commit being released (GITHUB_SHA).
 #
@@ -43,11 +43,11 @@ PARA_CAP=600
 warn() { echo "::warning::release notes: $*" >&2; }
 
 series="${TAG%%/*}"
-# Every prefix the series has been tagged under. Cards moved from `card/` to `release/` on
-# 2026-11-19; without the old prefix the first release/ tag would find no previous card and fall
+# Every prefix the series has been tagged under. Cards moved from `card/` to `image/` on
+# 2026-11-19; without the old prefix the first image/ tag would find no previous card and fall
 # back to "the last 50 commits".
 case "$series" in
-  release) prefixes=(release card) ;;
+  image)   prefixes=(image card) ;;
   *)       prefixes=("$series") ;;
 esac
 match=() exclude=()

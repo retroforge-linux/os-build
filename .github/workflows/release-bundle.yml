@@ -75,7 +75,7 @@ name: release bundle
 # TAG NAMESPACE: `ota/v*`. Bundles and cards ship on independent cadences — an update goes out far
 # more often than a card — so each gets its own namespace instead of sharing a bare `v*`. Until this
 # trigger existed, release-sdcard.yml owned `v*` alone, so tagging a release built a CARD and never
-# a bundle: exactly backwards. `ota/v1.3.0` and `release/v1.3.0` on one commit are the same OS shipped
+# a bundle: exactly backwards. `ota/v1.3.0` and `image/v1.3.0` on one commit are the same OS shipped
 # two ways; a run of ota tags with no card between them is the normal state.
 on:
   workflow_dispatch:
@@ -132,7 +132,7 @@ jobs:
           # device's update check quietly reports "no update found" forever.
           #
           # NOT A SEPARATE TAG NAMESPACE (`ota-beta/v*`), which is the obvious alternative
-          # and the shape the ota/ + release/ split would suggest. The suffix wins because the
+          # and the shape the ota/ + image/ split would suggest. The suffix wins because the
           # VERSION STRING ITSELF then records the channel, and duplicate detection turns on
           # that string: retroforge-update's check compares the offered identity against the
           # running one for INEQUALITY, so two channels publishing the same `0.3.0` would

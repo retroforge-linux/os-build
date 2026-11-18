@@ -15,7 +15,7 @@
 # .github/workflows/overlay.yml for the measurements behind that.
 #
 # THE TWO ARTIFACTS SHIP TO DIFFERENT PLACES, AND NEITHER SHIPS FROM HERE. A CARD goes to the
-# `release/v*` GitHub Release a person downloads and flashes from (524 MiB compressed, measured
+# `image/v*` GitHub Release a person downloads and flashes from (524 MiB compressed, measured
 # 2026-10-13, against a 2 GiB per-asset cap). A BUNDLE goes to the R2 bucket
 # devices fetch their OTAs from — a different host, different credentials, different audience. Both
 # paths stop at a workflow artifact here and are handed off to a publishing job in the caller.
@@ -226,7 +226,7 @@ jobs:
       # The key below only picks WHICH repo to start from: an exact hit is a full set built from
       # these sources; a restore-keys fallback is the previous set, and the stamps sort it out.
       #
-      # WHY ONLY main's. Caches are scoped by ref. A release runs on a TAG (release/v*, ota/v*),
+      # WHY ONLY main's. Caches are scoped by ref. A release runs on a TAG (image/v*, ota/v*),
       # which can read main's caches but saves into its own scope, where the next
       # tag can never see it. So main warms it (overlay.yml `warm`), tags and dispatches read it,
       # and PR caches — fork PRs included — stay invisible to every release.
