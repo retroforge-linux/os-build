@@ -1,0 +1,96 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 18 Nov 2026 00:00:00 +0000
+Subject: [PATCH] clk: qcom: dispcc-sm6115: source the MDSS AHB clock from the
+ active-only XO
+
+The DSI PHY driver hands its "iface" clock to the PM clock framework
+(pm_clk_add(), since 6ab502bc1cf3 "drm/msm/dsi: Enable runtime PM"),
+which prepares a clock when it is added and only disables it at runtime
+suspend. On SM6115 that clock is disp_cc_mdss_ahb_clk, so its source
+stays prepared for as long as the PHY is bound, and through it the
+two-set XO of the RPM: an XO vote in the APSS sleep set with the display
+off, which keeps the RPM from shutting XO down in suspend.
+
+Give the display clock controller a second XO input, the active-only
+one, and source disp_cc_mdss_ahb_clk_src from it, as dispcc-qcm2290 does
+for the same clock of the sibling SoC. The other display sources (the
+PLL and the MDP, rotator, escape and vsync clocks) stay on the two-set
+XO, so a lit display still holds XO while the APSS sleeps and lets it go
+when it is off.
+
+The new input is the sixth clock of the node. A device tree with only
+five keeps the two-set XO for this source.
+
+The vendor has this source on the two-set XO too (dispcc-bengal.c
+disp_cc_parent_names_3; only disp_cc_xo_clk_src is on bi_tcxo_ao). There
+the display driver unprepares its clocks when the display goes off
+(sde_io_util.c msm_dss_enable_clk()), which mainline's PHY has not done
+since the commit above.
+
+Read on the MANGMI Air X, 7.3.5, display off: disp_cc_mdss_ahb_clk_src
+was the one prepared child left under the two-set XO (prepare 1, enable
+0), and the RPM counted an APSS shutdown per suspend but no XO shutdown.
+---
+ .../devicetree/bindings/clock/qcom,sm6115-dispcc.yaml    | 2 ++
+ drivers/clk/qcom/dispcc-sm6115.c                         | 9 ++++++---
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/clock/qcom,sm6115-dispcc.yaml b/Documentation/devicetree/bindings/clock/qcom,sm6115-dispcc.yaml
+--- a/Documentation/devicetree/bindings/clock/qcom,sm6115-dispcc.yaml
++++ b/Documentation/devicetree/bindings/clock/qcom,sm6115-dispcc.yaml
+@@ -21,12 +21,14 @@
+       - qcom,sm6115-dispcc
+ 
+   clocks:
++    minItems: 5
+     items:
+       - description: Board XO source
+       - description: Board sleep clock
+       - description: Byte clock from DSI PHY0
+       - description: Pixel clock from DSI PHY0
+       - description: GPLL0 DISP DIV clock from GCC
++      - description: Board active-only XO source
+ 
+ required:
+   - compatible
+diff --git a/drivers/clk/qcom/dispcc-sm6115.c b/drivers/clk/qcom/dispcc-sm6115.c
+--- a/drivers/clk/qcom/dispcc-sm6115.c
++++ b/drivers/clk/qcom/dispcc-sm6115.c
+@@ -29,10 +29,12 @@
+ 	DT_DSI0_PHY_PLL_OUT_BYTECLK,
+ 	DT_DSI0_PHY_PLL_OUT_DSICLK,
+ 	DT_GPLL0_DISP_DIV,
++	DT_BI_TCXO_AO,
+ };
+ 
+ enum {
+ 	P_BI_TCXO,
++	P_BI_TCXO_AO,
+ 	P_DISP_CC_PLL0_OUT_MAIN,
+ 	P_DSI0_PHY_PLL_OUT_BYTECLK,
+ 	P_DSI0_PHY_PLL_OUT_DSICLK,
+@@ -111,12 +113,13 @@
+ };
+ 
+ static const struct parent_map disp_cc_parent_map_2[] = {
+-	{ P_BI_TCXO, 0 },
++	{ P_BI_TCXO_AO, 0 },
+ 	{ P_GPLL0_OUT_MAIN, 4 },
+ };
+ 
++/* A device tree without the active-only XO gets the two-set one, as before */
+ static const struct clk_parent_data disp_cc_parent_data_2[] = {
+-	{ .index = DT_BI_TCXO },
++	{ .index = DT_BI_TCXO_AO, .name = "bi_tcxo" },
+ 	{ .index = DT_GPLL0_DISP_DIV },
+ };
+ 
+@@ -178,7 +181,7 @@
+ };
+ 
+ static const struct freq_tbl ftbl_disp_cc_mdss_ahb_clk_src[] = {
+-	F(19200000, P_BI_TCXO, 1, 0, 0),
++	F(19200000, P_BI_TCXO_AO, 1, 0, 0),
+ 	F(37500000, P_GPLL0_OUT_MAIN, 8, 0, 0),
+ 	F(75000000, P_GPLL0_OUT_MAIN, 4, 0, 0),
+ 	{ }

@@ -1,0 +1,27 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 18 Nov 2026 00:00:00 +0000
+Subject: [PATCH] arm64: dts: qcom: sm6115: give the display clock controller
+ the active-only XO
+
+The sixth clock of the display clock controller, which the MDSS AHB
+clock source runs from. The DSI PHY keeps that clock prepared for good,
+and on the two-set XO that is an XO vote in the APSS sleep set with the
+display off. agatti.dtsi hands the QCM2290 display clock controller the
+same clock, as "bi_tcxo_ao".
+---
+ arch/arm64/boot/dts/qcom/sm6115.dtsi | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm6115.dtsi b/arch/arm64/boot/dts/qcom/sm6115.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm6115.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6115.dtsi
+@@ -2186,7 +2186,8 @@
+ 				 <&sleep_clk>,
+ 				 <&mdss_dsi0_phy DSI_BYTE_PLL_CLK>,
+ 				 <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>,
+-				 <&gcc GCC_DISP_GPLL0_DIV_CLK_SRC>;
++				 <&gcc GCC_DISP_GPLL0_DIV_CLK_SRC>,
++				 <&rpmcc RPM_SMD_XO_A_CLK_SRC>;
+ 			#clock-cells = <1>;
+ 			#reset-cells = <1>;
+ 			#power-domain-cells = <1>;
