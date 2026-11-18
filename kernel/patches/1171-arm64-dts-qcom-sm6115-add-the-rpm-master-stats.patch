@@ -1,0 +1,77 @@
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 17 Nov 2026 00:00:00 +0000
+Subject: [PATCH] arm64: dts: qcom: sm6115: add the RPM master stats
+
+The RPM keeps one sleep record per master in its message RAM: how often
+and when the APSS, the modem, the ADSP, the CDSP and TZ shut down, and
+how often and for how long each let XO go. They name the master that
+keeps the SoC out of XO shutdown, which the SoC-wide vlow and vmin
+counts of qcom_stats cannot.
+
+The offsets are the vendor node's (bengal-pm.dtsi
+qcom,rpm-master-stats@45f0150: five masters, 0x1000 apart), and the
+stock MANGMI Air X device tree has the same node. Each slice is the 0x50
+bytes of one record (struct rpm_master_stats); the APSS one ends below
+the MPM block at 0x1b8. The node sits under the RPM processor, where the
+binding and mainline's MSM8226 and MSM8974 put it.
+
+Read on the MANGMI Air X, 7.3.5, with the same offsets given in the
+board file: all five records, the APSS shutdown and XO shutdown counts
+rising by one per suspend.
+---
+ arch/arm64/boot/dts/qcom/sm6115.dtsi | 34 ++++++++++++++++++++++++++++
+ 1 file changed, 34 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm6115.dtsi b/arch/arm64/boot/dts/qcom/sm6115.dtsi
+--- a/arch/arm64/boot/dts/qcom/sm6115.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6115.dtsi
+@@ -372,6 +372,20 @@
+ 	rpm: remoteproc {
+ 		compatible = "qcom,sm6115-rpm-proc", "qcom,rpm-proc";
+ 
++		master-stats {
++			compatible = "qcom,rpm-master-stats";
++			qcom,rpm-msg-ram = <&apss_master_stats>,
++					   <&mpss_master_stats>,
++					   <&adsp_master_stats>,
++					   <&cdsp_master_stats>,
++					   <&tz_master_stats>;
++			qcom,master-names = "APSS",
++					    "MPSS",
++					    "ADSP",
++					    "CDSP",
++					    "TZ";
++		};
++
+ 		glink-edge {
+ 			compatible = "qcom,glink-rpm";
+ 
+@@ -1098,8 +1112,28 @@
+ 			#size-cells = <1>;
+ 			ranges = <0 0x0 0x045f0000 0x7000>;
+ 
++			apss_master_stats: sram@150 {
++				reg = <0x150 0x50>;
++			};
++
+ 			apss_mpm: sram@1b8 {
+ 				reg = <0x1b8 0x48>;
++			};
++
++			mpss_master_stats: sram@1150 {
++				reg = <0x1150 0x50>;
++			};
++
++			adsp_master_stats: sram@2150 {
++				reg = <0x2150 0x50>;
++			};
++
++			cdsp_master_stats: sram@3150 {
++				reg = <0x3150 0x50>;
++			};
++
++			tz_master_stats: sram@4150 {
++				reg = <0x4150 0x50>;
+ 			};
+ 		};
+ 
