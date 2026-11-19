@@ -21,6 +21,8 @@ ok()  { PASS=$((PASS+1)); printf '  ok   %s -- %s\n' "$CASE" "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s -- %s\n' "$CASE" "$1"; }
 
 SECONDARY=(RETROFORGE_SECONDARY_CONNECTOR RETROFORGE_SECONDARY_TOUCHSCREEN)
+# Emitted for every board (empty on single-panel ones), but optional on a second-panel board.
+SECONDARY_OPTIONAL=(RETROFORGE_SECONDARY_PLANE_ROTATION)
 
 # What device-env reports for one model string, evaluated the way consumers do.
 report() { (RETROFORGE_MODEL="$1" RETROFORGE_DEVICE_DIR="$DEVICES" bash "$DEVENV"); }
@@ -36,6 +38,9 @@ m="AYN Thor Lite"
 [ "$(value "$m" RETROFORGE_SECONDARY_TOUCHSCREEN)" = bottom_touchscreen ] \
   && ok "bottom digitizer is the input device bottom_touchscreen" \
   || bad "RETROFORGE_SECONDARY_TOUCHSCREEN is '$(value "$m" RETROFORGE_SECONDARY_TOUCHSCREEN)'"
+[ "$(value "$m" RETROFORGE_SECONDARY_PLANE_ROTATION)" = "" ] \
+  && ok "bottom panel keeps the plane rotation (SM8250 offline rotator, HW-clean)" \
+  || bad "RETROFORGE_SECONDARY_PLANE_ROTATION is '$(value "$m" RETROFORGE_SECONDARY_PLANE_ROTATION)', not empty"
 
 # =================================================================================================
 # The SM8550 Thor has its panels the other way round: top on mdss_dsi1 (DSI-2), bottom on mdss_dsi0.
@@ -48,12 +53,16 @@ m="AYN Thor"
 [ "$(value "$m" RETROFORGE_SECONDARY_TOUCHSCREEN)" = bottom_touchscreen ] \
   && ok "bottom digitizer is the input device bottom_touchscreen" \
   || bad "RETROFORGE_SECONDARY_TOUCHSCREEN is '$(value "$m" RETROFORGE_SECONDARY_TOUCHSCREEN)'"
+# Its bottom panel stayed black with the plane rotating app buffers (SM8550 inline rotator).
+[ "$(value "$m" RETROFORGE_SECONDARY_PLANE_ROTATION)" = off ] \
+  && ok "bottom panel's rotation is composited, not done by its plane" \
+  || bad "RETROFORGE_SECONDARY_PLANE_ROTATION is '$(value "$m" RETROFORGE_SECONDARY_PLANE_ROTATION)', not off"
 
 # =================================================================================================
 CASE="single-panel boards"
 for m in "AYANEO Pocket ACE" "KONKR Pocket FIT" "some board nobody knows"; do
   out="$(report "$m")"
-  for v in "${SECONDARY[@]}"; do
+  for v in "${SECONDARY[@]}" "${SECONDARY_OPTIONAL[@]}"; do
     grep -qx "$v=''" <<<"$out" && ok "$m: $v is emitted, empty" \
       || bad "$m: $v is not emitted empty ($(grep "^$v=" <<<"$out" || echo missing))"
   done

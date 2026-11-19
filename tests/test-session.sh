@@ -94,6 +94,17 @@ if grep -Fq 'if [ -n "${RETROFORGE_SECONDARY_TOUCHSCREEN:-}" ]; then' "$SESSION"
 else
   bad "retroforge-session does not pass --secondary-touch-device under a RETROFORGE_SECONDARY_TOUCHSCREEN guard"
 fi
+# gamescope reads ConVar overrides from gamescope_<name> as a Lua assignment: `false`, never 0 (true
+# in Lua), and only under the device-env guard, so every other board keeps the plane rotation.
+if grep -Fq 'if [ "${RETROFORGE_SECONDARY_PLANE_ROTATION:-}" = off ]; then' "$SESSION" &&
+   grep -Fq 'export gamescope_drm_secondary_plane_rotation=false' "$SESSION"; then
+  ok "RETROFORGE_SECONDARY_PLANE_ROTATION=off starts gamescope with drm_secondary_plane_rotation false"
+else
+  bad "retroforge-session does not map RETROFORGE_SECONDARY_PLANE_ROTATION=off to gamescope_drm_secondary_plane_rotation=false"
+fi
+grep -q '0044-secondary-output-direct-scanout-rotated-on-the-plane.patch' "$ROOT/packages/gamescope/source.pin" \
+  && ok "the gamescope build carries ConVar drm_secondary_plane_rotation (patch 0044 in source.pin)" \
+  || bad "drm_secondary_plane_rotation is set but patch 0044 is not in packages/gamescope/source.pin"
 grep -q '0043-wlserver-route-the-secondary-touchscreen-to-the-secondary-output.patch' "$ROOT/packages/gamescope/source.pin" \
   && ok "the gamescope build carries --secondary-touch-device (patch 0043 in source.pin)" \
   || bad "--secondary-touch-device is passed but patch 0043 is not in packages/gamescope/source.pin"

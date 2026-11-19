@@ -532,7 +532,10 @@ rotated (and scaled) to the panel, each FB and rotation checked once with TEST_O
 is composited. On SM8250 the plane rotation uses the offline SDE rotator of kernel 0385 that the
 main output also uses: HW-clean on the Thor Lite with kernel 0397 (Mario Kart DS, both panels
 scanning out melonDS's own buffers, no composite, no DPU/rotator messages). ConVar
-`drm_secondary_plane_rotation` (default on) turns it off at runtime.
+`drm_secondary_plane_rotation` (default on) turns it off at runtime; device-env
+`RETROFORGE_SECONDARY_PLANE_ROTATION=off` has retroforge-session start gamescope with it off
+(`gamescope_drm_secondary_plane_rotation=false`). The SM8550 Thor does: there the plane rotation is
+the inline rotator of kernel 0340, never proven on a second CRTC, and its bottom panel stayed black.
 
 `0045` — **the secondary output gets its own area of the X screen** (ours, 2026-10-12). Windows
 routed by 0041 stayed at 0,0 under the fullscreen main window, and Xwayland routes pointer and
