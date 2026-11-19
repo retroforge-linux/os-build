@@ -115,6 +115,12 @@ which its self-updates would overwrite. The overlay-ownership stage resets it to
   `/run/systemd/generator/<unit>.d/50-retroforge-cpus.conf` (`systemctl cat <unit>` shows it).
   Affinity is inherited by a service's whole process tree. `tests/test-cpu-affinity.sh` drives it
   against fabricated topologies.
+- `usr/lib/retroforge/gpu-worker-cpus` + `retroforge-gpu-worker-cpus.service` — once per boot,
+  moves msm's `gpu-worker` kthread (SCHED_FIFO, no fixed CPU) to every CPU outside the prime
+  cluster minus the interrupt cores from `/proc/irq/default_smp_affinity`, so it never queues
+  behind the Wi-Fi receive softirq. Today: SM8550 3-6, SM8650 2-6, SM8750 2-5; SM8250, SM6115 and
+  SM4450 carry no `irqaffinity`, so the thread is left alone. Retries a late GPU bind for a minute,
+  always exits 0. `tests/test-gpu-worker-cpus.sh` drives it against fabricated topologies.
 - `etc/systemd/system/{shadow,archlinux-keyring-wkd-sync,man-db}.timer -> /dev/null` — Arch
   maintenance timers with nothing to do on an image OS (users and groups are pinned at build time,
   release images carry no pacman keyring, man-db is not installed), which can otherwise fire in
