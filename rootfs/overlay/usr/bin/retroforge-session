@@ -149,6 +149,12 @@ if [ -n "${RETROFORGE_SECONDARY_CONNECTOR:-}" ]; then
   if [ -n "${RETROFORGE_SECONDARY_TOUCHSCREEN:-}" ]; then
     GS_ARGS="$GS_ARGS --secondary-touch-device $RETROFORGE_SECONDARY_TOUCHSCREEN"
   fi
+  # device-env RETROFORGE_SECONDARY_PLANE_ROTATION=off: the panel's rotation is composited, never
+  # done by its plane (patches/0044). gamescope sets any ConVar from gamescope_<name> in its
+  # environment, as a Lua assignment: it must be `false`, a Lua 0 is true.
+  if [ "${RETROFORGE_SECONDARY_PLANE_ROTATION:-}" = off ]; then
+    export gamescope_drm_secondary_plane_rotation=false
+  fi
 fi
 
 # Seat access: let libseat AUTO-PICK its backend — inside our logind session it selects the
