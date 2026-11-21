@@ -135,6 +135,21 @@ reset; si -- status
 python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["steam-client"]["size"] > 1 << 30' "$OUT" \
   && ok "its size for the page: the client with its guest, over 1 GiB" || bad "$OUT"
 
+# The progress file is there while an install runs (Main menu > Steam is hidden meanwhile); one an
+# install that was killed left goes. $T/held exists while a stand-in holds the install's lock.
+CASE="status, a progress file left"
+reset; mkdir -p "${PROG_CLIENT%/*}"; echo 63 >"$PROG_CLIENT"
+python3 -c 'import fcntl, os, sys, time
+f = open(sys.argv[1], "w"); fcntl.flock(f, fcntl.LOCK_EX); open(sys.argv[2], "w").close()
+while os.path.exists(sys.argv[2]): time.sleep(0.05)' "$CACHE/retroforge/steam-install.lock" "$T/held" &
+hp=$!
+for _ in $(seq 100); do [ -e "$T/held" ] && break; sleep 0.05; done
+si -- status
+[ "$RC" = 0 ] && [ -e "$PROG_CLIENT" ] && ok "kept while an install holds the lock" || bad "rc=$RC err=$ERR"
+rm -f "$T/held"; wait "$hp"
+si -- status
+[ "$RC" = 0 ] && [ ! -e "$PROG_CLIENT" ] && ok "removed once none does: a killed install left it" || bad "rc=$RC err=$ERR"
+
 CASE="install client"
 reset; si -- install client
 [ "$RC" = 0 ] && forward && ok "exit 0; stdout: forward-only percentages ending at 100%" || bad "rc=$RC out=$OUT err=$ERR"

@@ -53,6 +53,21 @@ MAGIC_RESTART_EXITCODE=42
 
 log() { echo "steam: $*" >&2; }
 
+# Steam Client's install (steam-install) holds its lock until it is done, and Steam does not start
+# before then: a Steam opened in between (Main menu > Steam showed once the client and its x86 guest
+# were in place) ran beside the install's own update of the client, and the install waited on it
+# for an hour (MANGMI Air X, 2026-11-21). Exit 1, as before Steam Client is installed. Not for
+# RETROFORGE_STEAM_KEPT=1: the install's own run of the client, or the kept unit's run, which a launch
+# that came through here started. The plugin hides Main menu > Steam meanwhile.
+install_lock="${XDG_CACHE_HOME:-$HOME/.cache}/retroforge/steam-install.lock"
+if [ -z "${RETROFORGE_STEAM_KEPT:-}" ] && [ -e "$install_lock" ]; then
+  flock -n "$install_lock" true 2>/dev/null
+  if [ $? -eq 1 ]; then   # held; not 127 (no flock) or an unreadable file
+    log "Steam Client is still being installed: Main menu > Emulators > Steam Client shows its progress"
+    exit 1
+  fi
+fi
+
 client="$("$RETROFORGE_STEAM_BOOTSTRAP")"; rc=$?
 # 10: the client is not installed, and the bootstrap has said where to install it.
 [ "$rc" -eq 10 ] && exit 1

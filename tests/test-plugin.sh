@@ -960,6 +960,14 @@ func test_steam_apps() -> void:
 	OS.set_environment("RETROFORGE_STEAM_X86_GUEST", "")
 	write("$T/retroforge/fex-guest/current", "1")
 	check("steam client: installed with the x86 guest beside the client's folder", SteamApps.client_installed(root), true)
+	OS.set_environment("XDG_CACHE_HOME", "$T/cache")
+	check("steam client: no install running without steam-install's progress file", SteamApps.install_running(), false)
+	write("$T/cache/retroforge/steam-install-steam-client.progress", "63\n")
+	check("steam client: its install running while the progress file is there (Main menu > Steam hidden)",
+		SteamApps.install_running(), true)
+	OS.set_environment("XDG_CACHE_HOME", "$T/cache-old")
+	check("steam client: not for a progress file from before this boot (an install cut off)", SteamApps.install_running(), false)
+	OS.set_environment("XDG_CACHE_HOME", "")
 	var cache := root + "/appcache/librarycache"
 	write(cache + "/1145360/library_600x900.jpg", "p")
 	write(cache + "/1145360/0a1b2c/logo.png", "l")
@@ -1060,6 +1068,9 @@ func test_rom_watch() -> void:
 	check("rescan: a ROM copied between our scan and library_loaded is still picked up",
 		[watch.poll(false), watch.poll(false)], [false, true])
 GD
+  # steam-install's progress file from before this boot (install_running).
+  mkdir -p "$T/cache-old/retroforge"; echo 63 >"$T/cache-old/retroforge/steam-install-steam-client.progress"
+  touch -d '2000-01-01 00:00:00' "$T/cache-old/retroforge/steam-install-steam-client.progress"
   out="$(XDG_CONFIG_HOME="$T/config" "$GODOT" --headless --script "$T/names_test.gd" 2>&1)"; rc=$?
   printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
   n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"

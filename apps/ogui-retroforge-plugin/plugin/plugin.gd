@@ -292,8 +292,8 @@ func _add_proton_rows(box: Node) -> void:
 	_tool.attach(box)
 
 
-## Main menu > Steam, under Apps while Steam Client is installed (looked at each time the main
-## menu opens): what Apps > Steam Client's Open starts. The launch's in-game state closes the main
+## Main menu > Steam, under Apps while Steam Client is installed and its install is not running
+## (looked at each time the main menu opens): what Apps > Steam Client's Open starts. The launch's in-game state closes the main
 ## menu; the popup machine is cleared as OGUI's own buttons do.
 func _add_menu_button(buttons: Node, node_name: String, text: String, after: Control, on_press: Callable) -> Control:
 	var button: Control = load("res://core/ui/components/card_button.tscn").instantiate()
@@ -312,7 +312,7 @@ func _add_menu_button(buttons: Node, node_name: String, text: String, after: Con
 
 
 func _show_app_buttons(_from: State) -> void:
-	_steam_button.visible = SteamApps.client_installed(SteamApps.steam_root())
+	_steam_button.visible = SteamApps.client_installed(SteamApps.steam_root()) and not SteamApps.install_running()
 
 
 func _open_steam() -> void:

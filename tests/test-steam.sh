@@ -40,7 +40,8 @@
 #   Steam Client's install (steam-install) through the wrapper: the client's update runs in the
 #   install's own process tree, its lines on the install's bar, never as the kept unit; and not at
 #   all while a client runs (Steam opened during the install), which updates itself: handed to the
-#   kept client, the install waited on it for an hour.
+#   kept client, the install waited on it for an hour. While the install holds its lock, the wrapper
+#   starts nothing but the install's own run of the client.
 # Valve's servers are replaced by file:// URLs: $CDN for the client.
 set -uo pipefail
 
@@ -810,6 +811,29 @@ inst RETROFORGE_STEAM_KEEP=on
 grep -q "Update complete" <<<"$IERR" && grep -qx "74%" <<<"$IOUT" \
   && ok "its lines reach the install: the bar follows its download (74% at half of it)" || bad "out=$(tr '\n' ' ' <<<"$IOUT")"
 rm -f "$W/say"
+
+# Steam started while the install runs (it holds ~/.cache/retroforge/steam-install.lock): $W/held
+# exists while a stand-in holds it.
+CASE="wrapper: during Steam Client's install"
+LOCK="$W/cache/retroforge/steam-install.lock"
+reset_keep; rm -rf "$W/cache"; mkdir -p "${LOCK%/*}"
+python3 -c 'import fcntl, os, sys, time
+f = open(sys.argv[1], "w"); fcntl.flock(f, fcntl.LOCK_EX); open(sys.argv[2], "w").close()
+while os.path.exists(sys.argv[2]): time.sleep(0.05)' "$LOCK" "$W/held" &
+hp=$!
+until_true '[ -e "$W/held" ]'
+XDG_CACHE_HOME="$W/cache" wrap 0 -gamepadui steam://open/bigpicture
+[ "$WRC" = 1 ] && [ ! -e "$W/count" ] \
+  && grep -q "Steam Client is still being installed: Main menu > Emulators > Steam Client shows its progress" <<<"$WERR" \
+  && ok "refused while the install holds its lock: exit 1, no client, and it says where the install is" \
+  || bad "rc=$WRC runs=$(cat "$W/count" 2>/dev/null) err=$WERR"
+XDG_CACHE_HOME="$W/cache" RETROFORGE_STEAM_KEPT=1 wrap 0 -steamdeck -exitsteam
+[ "$WRC" = 0 ] && grep -qx "args: -steamdeck -exitsteam" "$W/call1" 2>/dev/null \
+  && ok "but the install's own run of the client goes on (RETROFORGE_STEAM_KEPT=1)" || bad "rc=$WRC err=$WERR"
+rm -f "$W/held"; wait "$hp"
+XDG_CACHE_HOME="$W/cache" wrap 0 -gamepadui
+[ "$WRC" = 0 ] && [ -e "$W/call1" ] && ok "once it is done (its lock file left, not held), Steam starts" || bad "rc=$WRC err=$WERR"
+rm -rf "$W/cache"
 reset_keep
 
 echo

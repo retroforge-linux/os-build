@@ -80,7 +80,11 @@ Steam shows in the shell's Emulators screen as one entry, with Download and its 
   (`RETROFORGE_STEAM_KEPT=1`), never as the kept unit, whose output would miss the bar; and not at
   all while a Steam client runs (opened during the install), which updates itself: handed to the
   kept client, it was ignored and the install waited an hour at 63% (MANGMI Air X, 2026-11-21).
-  Steam's default Proton on ARMv8.0 is then set at the client's next start. Installed, the entry
+  Steam's default Proton on ARMv8.0 is then set at the client's next start. Steam is not started
+  during the install: Main menu > Steam stays hidden while its progress file is there (one from
+  before this boot does not count, and `steam-install status` removes one a killed install left),
+  and `steam` exits 1 with one line while the install holds its lock, except for the install's own
+  run of the client. Installed, the entry
   offers Open (Steam's UI: `steam -gamepadui -steamos3 -steampal -steamdeck
   steam://open/bigpicture`) and Repair (the install again, fetching only what is missing). There
   is no Steam library card.

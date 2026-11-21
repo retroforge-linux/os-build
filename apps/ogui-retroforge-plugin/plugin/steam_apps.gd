@@ -149,6 +149,31 @@ static func client_installed(root: String) -> bool:
 	return FileAccess.file_exists(guest.path_join("current"))
 
 
+## Steam Client's install runs: steam-install's progress file is there, from the install's start to
+## its end. Not one from before this boot, which an install cut off left (steam-install status also
+## removes it, once no install runs). The client and its guest are in place before the install's
+## last stages, and Steam opened during them kept the install waiting (MANGMI Air X, 2026-11-21).
+static func install_running() -> bool:
+	var cache := OS.get_environment("XDG_CACHE_HOME")
+	if cache == "":
+		cache = OS.get_environment("HOME").path_join(".cache")
+	var path := cache.path_join("retroforge/steam-install-steam-client.progress")
+	return FileAccess.file_exists(path) and FileAccess.get_modified_time(path) >= _boot_time()
+
+
+## The kernel's boot time (Unix seconds, /proc/stat btime), 0 when unknown. Read by line: Godot reads
+## a whole /proc file as empty (its size is 0).
+static func _boot_time() -> int:
+	var f := FileAccess.open("/proc/stat", FileAccess.READ)
+	if f == null:
+		return 0
+	while not f.eof_reached():
+		var line := f.get_line()
+		if line.begins_with("btime "):
+			return int(line.get_slice(" ", 1))
+	return 0
+
+
 ## The client's cached art of an app for an OGUI layout, or "". Where the client keeps it:
 ## librarycache/<appid>/<file>, or one folder further down (newer clients put some art under a
 ## hashed folder), or librarycache/<appid>_<file> (older clients).

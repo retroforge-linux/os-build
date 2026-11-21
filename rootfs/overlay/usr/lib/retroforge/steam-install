@@ -11,7 +11,10 @@
 # was downloaded is not what was published; nothing is put in place), 5 local (no space, file system,
 # another install running). The Emulators page reads progress from a file, not from our stdout: the
 # same number goes to ~/.cache/retroforge/steam-install-<id>.progress while an install runs, and the
-# file is removed when it ends. Everything else goes to stderr.
+# file is removed when it ends (`status` removes one a killed install left, once no install holds the
+# lock). While it is there, the plugin hides Main menu > Steam (steam_apps.gd install_running). And
+# /usr/bin/steam starts nothing while an install holds the lock, but the install's own run of the
+# client (4). Everything else goes to stderr.
 #
 # STEAM CLIENT (`client`, entry steam-client), three stages, each counted as its share of the bytes
 # (estimates, for the bar only):
@@ -200,7 +203,22 @@ def client_installed():
     return version or "installed"
 
 
+def clear_stale_progress():
+    """The progress file of an install that did not end (killed): removed while no install holds the
+    lock. Every install writes its own from its start."""
+    path = progress_path("steam-client")
+    if not os.path.exists(path):
+        return
+    try:
+        with open(os.path.join(CACHE, "steam-install.lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.unlink(path)
+    except OSError:  # an install runs (BlockingIOError), or the file is gone already
+        pass
+
+
 def cmd_status():
+    clear_stale_progress()
     out = {
         "steam-client": {"installed": client_installed(), "size": sum(client_stages().values()),
                          "progress": progress_path("steam-client")},
