@@ -1,0 +1,2 @@
+#!/bin/sh
+cat "$@" | curl -s -F "content=<-" http://dpaste.com/api/v2/
