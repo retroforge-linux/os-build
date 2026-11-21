@@ -80,7 +80,8 @@ Steam shows in the shell's Emulators screen as one entry, with Download and its 
   (`RETROFORGE_STEAM_KEPT=1`), never as the kept unit, whose output would miss the bar; and not at
   all while a Steam client runs (opened during the install), which updates itself: handed to the
   kept client, it was ignored and the install waited an hour at 63% (MANGMI Air X, 2026-11-21).
-  Steam's default Proton on ARMv8.0 is then set at the client's next start. Steam is not started
+  Steam's default Proton on ARMv8.0 is then set at the client's next start (a kept client is
+  restarted for it, see the ARMv8.0 Proton section). Steam is not started
   during the install: Main menu > Steam stays hidden while its progress file is there (one from
   before this boot does not count, and `steam-install status` removes one a killed install left),
   and `steam` exits 1 with one line while the install holds its lock, except for the install's own
@@ -761,8 +762,16 @@ follows it too.
   writes `config.vdf` only at its first real start, so when there is none yet `apply` writes one holding
   just that default, which the client reads and keeps; the first Windows game already runs with it. It
   does so again at each `steam` start (updating it in the
-  background). On CPUs with LSE atomics Proton-CachyOS stays an optional download (Apps > Proton) and is
-  never made a default.
+  background). Never while the client runs: `config.vdf` is the client's then. A client kept running in
+  the background may not start again before the next boot, so one that started without it (opened
+  while Steam Client's install or the build's download ran, or a Windows game installed under it,
+  which Valve's recommended Proton would otherwise take: priority 85 over the default's 75) is
+  stopped before the next launch from the shell that finds no game running and no other launch
+  holding its UI (`retroforge-steam-proton pending`, `retroforge-steam-keep stop-unused`). That
+  launch starts Steam cold, with the tool set. Once per entry and boot: an entry the client drops
+  after it was written does not restart it again. A game started from inside Steam's own UI while
+  it is open still gets the old tool. On CPUs with LSE atomics Proton-CachyOS stays an optional
+  download (Apps > Proton) and is never made a default.
 - **GOG and Epic:** part of the first game's install (`store install`: its download is 85-99% of that
   bar), on every CPU, as the tool this CPU takes.
 

@@ -144,10 +144,18 @@ fi
 # is stopped once that launch ends. Without a user manager (systemd-run fails), Steam runs with this
 # launch, as with the setting off. steam-install's run of the client's update sets
 # RETROFORGE_STEAM_KEPT=1 too: the client runs under it, its lines on the install's bar.
+# ARMv8.0 CPUs: our Proton becomes Steam's tool only while the client is stopped (the ARMv8.0 block
+# below). A kept client that started without it (opened while Steam Client's install or the build's
+# download ran, or a Windows game installed under it since) is stopped first when nothing else uses
+# it, so the client this launch starts has it: retroforge-steam-proton pending (once per entry and
+# boot) and retroforge-steam-keep stop-unused. That launch starts Steam cold.
 # TEST SEAMS (tests/test-steam.sh): RETROFORGE_STEAM_KEEP_CLI, RETROFORGE_STEAM_LAUNCH_WAIT,
 # RETROFORGE_STEAM_MINIMAL_DELAY, RETROFORGE_STEAM_SIGNIN_WAIT, RETROFORGE_STEAM_UI_WAIT,
-# RETROFORGE_STEAM_UI_SETTLE, RETROFORGE_PROC, and systemd-run and systemctl from PATH.
+# RETROFORGE_STEAM_UI_SETTLE, RETROFORGE_PROC, RETROFORGE_STEAM_PROTON_CLI, RETROFORGE_CPUINFO, and
+# systemd-run and systemctl from PATH.
 keep_cli="${RETROFORGE_STEAM_KEEP_CLI:-/usr/bin/retroforge-steam-keep}"
+proton_cli="${RETROFORGE_STEAM_PROTON_CLI:-/usr/bin/retroforge-steam-proton}"
+lacks_atomics() { grep '^Features' "${RETROFORGE_CPUINFO:-/proc/cpuinfo}" 2>/dev/null | grep -vqw atomics; }
 KEPT_UNIT=retroforge-steam
 kept_active() { systemctl --user is-active --quiet "$KEPT_UNIT.service" 2>/dev/null; }
 kept_start() {
@@ -179,6 +187,9 @@ kept_launch() {
     case "$arg" in steam://rungameid/*) appid="${arg#steam://rungameid/}" ;; esac
   done
   case "$appid" in *[!0-9]*) appid="" ;; esac
+  if kept_active && lacks_atomics && [ -x "$proton_cli" ] && "$proton_cli" pending && "$keep_cli" stop-unused; then
+    log "stopped the kept Steam: it starts again with Proton-CachyOS ARMv8.0 as its tool"
+  fi
   if kept_active; then
     local slog="$RETROFORGE_STEAM_ROOT/logs/console_log.txt" lines=0 woke wait
     [ -r "$slog" ] && lines=$(wc -l <"$slog")
@@ -366,7 +377,7 @@ unset STEAM_RUNTIME STEAM_RUNTIME_LIBRARY_PATH
 # (retroforge-steam-proton; nothing elsewhere). TEST SEAM: RETROFORGE_STEAM_PROTON_CLI.
 # Only when the client starts: what it sets is the client's, and it also starts an update in the
 # background, which a launch without the client would have competing with the game's start.
-proton_cli="${RETROFORGE_STEAM_PROTON_CLI:-/usr/bin/retroforge-steam-proton}"
+# (proton_cli is set with the kept client's seams above.)
 if [ -z "$direct" ]; then
   [ -x "$proton_cli" ] && "$proton_cli" apply >/dev/null
 fi

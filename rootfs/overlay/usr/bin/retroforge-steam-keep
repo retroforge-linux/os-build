@@ -15,6 +15,9 @@
 #                                        process is created, Failed, a step in between, nothing before
 #                                        Steam has picked the launch up, `unknown` without Steam's log
 #   retroforge-steam-keep stop-idle      stop the kept client unless it runs a game
+#   retroforge-steam-keep stop-unused    stop the kept client unless it runs a game or a live launch holds
+#                                        its UI; exit 1 when it is left running for that (a restart, see
+#                                        retroforge-steam-proton's A RUNNING CLIENT)
 #   retroforge-steam-keep full [PID]     give the kept client its UI back (its web helper running); with
 #                                        PID, keep it so while PID runs (a launch that needs Steam's UI).
 #                                        Prints `woke` when the UI was frozen: it starts up again (~11 s)
@@ -175,6 +178,12 @@ stop_idle() {
   systemctl --user stop "$UNIT.service"
 }
 
+stop_unused() {
+  systemctl --user is-active --quiet "$UNIT.service" 2>/dev/null || return 0
+  if held || [ -n "$(games)" ]; then return 1; fi
+  systemctl --user stop "$UNIT.service"
+}
+
 client() {  # the client's PID: ~/.steam/steam.pid, while that names a live process called steam
   local pid comm
   { read -r pid <"$HOME/.steam/steam.pid"; } 2>/dev/null || return 1
@@ -277,12 +286,15 @@ case "${1-}:$#" in
   stop-idle:1)
     stop_idle
     ;;
+  stop-unused:1)
+    stop_unused
+    ;;
   full:1|full:2|minimal:1|minimal:2)
     case "${2-0}" in ''|*[!0-9]*) log "not a PID: $2"; exit 2 ;; esac
     "$1" "${2-}"
     ;;
   *)
-    log "usage: retroforge-steam-keep status|on|off|games [APPID]|end APPID|launch APPID SINCE|stop-idle|full [PID]|minimal [PID]"
+    log "usage: retroforge-steam-keep status|on|off|games [APPID]|end APPID|launch APPID SINCE|stop-idle|stop-unused|full [PID]|minimal [PID]"
     exit 2
     ;;
 esac

@@ -7,6 +7,9 @@
 #   retroforge-steam-proton status   armv8, or steam (not an ARMv8.0 CPU)
 #   retroforge-steam-proton apply    /usr/bin/steam runs this before the client starts, and
 #                                    steam-install once Steam Client is installed
+#   retroforge-steam-proton pending  exit 0 when the running client should be restarted for apply to
+#                                    set our build (/usr/bin/steam asks before a kept client gets a
+#                                    launch), 1 otherwise
 #
 # apply installs or updates the build in the background (steam-compat-tools; Steam Client's install
 # has already put it in place, see steam-install), and once it is installed and the client is not
@@ -22,6 +25,16 @@
 # player would set it in its Properties; a game set to any other tool keeps it, one set to an ARMv8.0
 # build RetroForge offered before (Valve's Proton rebuilt, OLD_DIRS) moves to this one. Native Linux
 # games are left to Steam.
+#
+# A RUNNING CLIENT. config.vdf is the client's while it runs (it writes its own when it exits), so apply
+# leaves it alone then, and our build is set at the client's next start. A client kept running in the
+# background (/usr/bin/steam, retroforge-steam-keep) may not start again before the next boot: one
+# opened while Steam Client's install or this build's download ran never had it, and a Windows game
+# installed under it ran its first launches with Valve's Proton, which Valve recommends for it (85 over
+# the default's 75). `pending` says when set_tools would change config.vdf for an entry it has not
+# written since this boot ($XDG_RUNTIME_DIR/retroforge-steam-proton.set): /usr/bin/steam then restarts
+# a kept client nothing else uses before it hands it a launch. An entry the client dropped after we wrote
+# it is not pending again: a restart would not keep it either.
 #
 # TEST SEAMS (tests/test-steam-proton.sh): RETROFORGE_STEAM_ROOT, RETROFORGE_CPUINFO,
 # RETROFORGE_STEAM_COMPAT_TOOLS (the helper), RETROFORGE_STEAM_PROTON_START (a command run with the
@@ -47,6 +60,8 @@ VDF = os.path.join(STEAM_ROOT, "config", "config.vdf")
 MAPPING = ["InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping"]
 EMPTY_VDF = '"InstallConfigStore"\n{\n}\n'  # what set_tools starts from before the client wrote one
 DEFAULT = MAPPING + ["0"]
+# The CompatToolMapping entries set_tools wrote since this boot, one key per line ("0", app ids).
+WRITTEN = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "retroforge-steam-proton.set")
 
 
 def log(msg):
@@ -235,8 +250,9 @@ def windows_games():
     return games
 
 
-def set_tools(name):
-    """Our build as Steam's default and as each Windows game's own tool (see EACH WINDOWS GAME TOO)."""
+def plan(name):
+    """(text, new, fresh, keys, added): config.vdf now and as set_tools writes it, whether there was
+    none, the CompatToolMapping entries it changes ("0", app ids) and the games among them."""
     fresh = False
     try:
         with open(VDF, encoding="utf-8") as f:
@@ -246,6 +262,7 @@ def set_tools(name):
         # and reads one that is there: so it starts with our default, not Valve's Proton.
         text, fresh = EMPTY_VDF, True
     new = set_entry(text, DEFAULT, {"name": name, "config": "", "priority": "75"})
+    keys = ["0"] if new != text else []
     try:
         games = windows_games()
     except Exception as err:  # appinfo.vdf unreadable: the default alone
@@ -257,7 +274,33 @@ def set_tools(name):
         if have == name or (have is not None and have not in OLD_DIRS):
             continue
         new = set_entry(new, MAPPING + [str(appid)], {"name": name, "config": "", "priority": "250"})
+        keys.append(str(appid))
         added.append(game)
+    return text, new, fresh, keys, added
+
+
+def written():
+    try:
+        with open(WRITTEN, encoding="utf-8") as f:
+            return set(f.read().split())
+    except OSError:
+        return set()
+
+
+def pending():
+    """See A RUNNING CLIENT."""
+    if not lacks_atomics() or not installed(os.path.join(STEAM_ROOT, "compatibilitytools.d", DIR)):
+        return False
+    try:
+        keys = plan(DIR)[3]
+    except (OSError, ValueError):  # a config.vdf we cannot edit: a restart would not help
+        return False
+    return bool(set(keys) - written())
+
+
+def set_tools(name):
+    """Our build as Steam's default and as each Windows game's own tool (see EACH WINDOWS GAME TOO)."""
+    text, new, fresh, keys, added = plan(name)
     if added:
         log(f"{name} is now the tool of {', '.join(added)}")
     if new == text:
@@ -270,6 +313,11 @@ def set_tools(name):
     with open(VDF + ".part", "w", encoding="utf-8") as f:
         f.write(new)
     os.replace(VDF + ".part", VDF)
+    try:
+        with open(WRITTEN, "a", encoding="utf-8") as f:
+            f.write("".join(k + "\n" for k in keys))
+    except OSError:
+        pass
     if mappings(text).get("0") != name:
         log(f"Steam's default compatibility tool is now {name}")
 
@@ -282,7 +330,8 @@ def apply():
     if not installed(tool):
         log(f"{DIR} is not installed yet (it downloads in the background); Steam keeps its default for now")
     elif client_running():
-        log("the Steam client is running; its default tool is set at its next start")
+        log("the Steam client is running; its default tool is set at its next start (a kept client "
+            "is restarted for it before a launch that nothing else needs it during)")
     else:
         try:
             set_tools(DIR)
@@ -298,7 +347,9 @@ def main(argv):
     if argv[1:] == ["apply"]:
         print(apply())
         return 0
-    log("usage: retroforge-steam-proton status|apply")
+    if argv[1:] == ["pending"]:
+        return 0 if pending() else 1
+    log("usage: retroforge-steam-proton status|apply|pending")
     return 2
 
 

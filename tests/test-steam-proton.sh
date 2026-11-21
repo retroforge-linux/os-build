@@ -67,7 +67,7 @@ EOF
 tool() { mkdir -p "$TOOLS/$1"; : >"$TOOLS/$1/.retroforge-pin"; : >"$TOOLS/$1/proton"; : >"$TOOLS/$1/compatibilitytool.vdf"; }
 run() {  # run <cpuinfo> <args>: OUT, ERR, RC
   rm -f "$T/started"
-  OUT="$(HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_DATA_HOME="$T/home/.local/share" \
+  OUT="$(HOME="$T/home" XDG_CONFIG_HOME="$T/home/.config" XDG_DATA_HOME="$T/home/.local/share" XDG_RUNTIME_DIR="$T/run" \
          RETROFORGE_STEAM_ROOT="$S" RETROFORGE_CPUINFO="$1" RETROFORGE_STEAM_COMPAT_TOOLS="$T/helper" \
          RETROFORGE_STEAM_PROTON_START="$T/start" RETROFORGE_STEAM_LIBRARY="$LIBRARY" python3 "$CLI" "${@:2}" 2>"$T/err")"; RC=$?
   ERR="$(cat "$T/err")"
@@ -182,6 +182,31 @@ run "$T/v80" apply
 [ "$RC" = 0 ] && [ "$(default_of)" = proton-cachyos-armv8-retroforge ] && [ -z "$(tool_of 2000)" ] && grep -q "could not read" <<<"$ERR" \
   && ok "the default is still set" || bad "rc=$RC default=$(default_of) err=$ERR"
 rm -rf "$S/steamapps" "$S/appcache"
+
+# A kept client that started without our build (Steam open while Steam Client's install ran) is
+# restarted by /usr/bin/steam when `pending` says so; apply then runs before it starts again.
+CASE="pending"
+SET="$T/run/retroforge-steam-proton.set"
+rm -rf "$T/run" "$S/steamapps" "$S/appcache" "$T/apps" "$TOOLS/proton-cachyos-armv8-retroforge"; mkdir -p "$T/run"
+vdf   # the client's own default, Valve's
+run "$T/v82" pending; [ "$RC" = 1 ] && ok "a CPU with LSE atomics: never" || bad "rc=$RC err=$ERR"
+run "$T/v80" pending; [ "$RC" = 1 ] && ok "our build not installed yet: no (a restart would not set it)" || bad "rc=$RC err=$ERR"
+tool proton-cachyos-armv8-retroforge; cp "$VDF" "$T/before"
+run "$T/v80" pending
+[ "$RC" = 0 ] && cmp -s "$VDF" "$T/before" && [ ! -e "$T/started" ] \
+  && ok "installed, Steam's default not ours: a restart is due (asking writes nothing, starts nothing)" || bad "rc=$RC err=$ERR"
+run "$T/v80" apply   # the restarted client's start
+[ "$(default_of)" = proton-cachyos-armv8-retroforge ] && grep -qx 0 "$SET" && ok "apply sets it, and notes it for this boot" || bad "default=$(default_of) set=$(cat "$SET" 2>&1)"
+run "$T/v80" pending; [ "$RC" = 1 ] && ok "then nothing is due" || bad "rc=$RC"
+vdf   # the client put its own default back
+run "$T/v80" pending; [ "$RC" = 1 ] && ok "a default the client dropped after it was written: no second restart this boot" || bad "rc=$RC"
+game 2000 "Win Game" game windows; appinfo
+run "$T/v80" pending; [ "$RC" = 0 ] && ok "a Windows game installed since: due (Valve's recommended Proton would take it)" || bad "rc=$RC err=$ERR"
+run "$T/v80" apply; run "$T/v80" pending
+[ "$RC" = 1 ] && [ "$(tool_of 2000)" = "proton-cachyos-armv8-retroforge 250" ] && ok "and done once apply gave it its entry" || bad "rc=$RC 2000=$(tool_of 2000)"
+printf 'junk {' >"$VDF"; rm -f "$SET"
+run "$T/v80" pending; [ "$RC" = 1 ] && ok "a config.vdf it cannot edit: no restart (it would not help)" || bad "rc=$RC err=$ERR"
+rm -rf "$S/steamapps" "$S/appcache" "$T/apps"
 
 CASE="usage"
 run "$T/v80" set stable; [ "$RC" = 2 ] && ok "set is gone: there is no channel" || bad "rc=$RC out=$OUT"

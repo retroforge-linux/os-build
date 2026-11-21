@@ -32,7 +32,8 @@
 #      it. After the client's update (4), retroforge-steam-proton apply makes it Steam's default (it
 #      writes config.vdf if the client has not yet: the client writes its own only at its first real
 #      start, and reads one that is there; with a client running it leaves config.vdf alone, and the
-#      default is set at the client's next start). Other CPUs get no Proton here: Steam
+#      default is set at the client's next start: a kept one is restarted for it before the next
+#      launch that nothing else needs it during). Other CPUs get no Proton here: Steam
 #      keeps its own default, and Proton-CachyOS is an optional download in Apps > Proton;
 #   4. the client's own update, by Valve's updater: `steam -steamdeck -exitsteam` through /usr/bin/steam
 #      (the wrapper every start goes through), which downloads the rest of the client (~600 MB: its
