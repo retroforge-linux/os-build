@@ -186,7 +186,11 @@ for pin in "${PINS[@]}"; do
 
   # Stage: fetch (or copy) the PKGBUILD, drop patches in, edit the PKGBUILD. Fresh per-package
   # staging dir so a re-stage never mixes with a prior attempt.
-  bd="$STAGE/$name"; rm -rf "$bd"; mkdir -p "$bd"
+  # chmod first: Go extracts a GOTOOLCHAIN download into the module cache read-only even under
+  # -modcacherw (tailscale), and a plain rm -rf of the previous attempt then fails.
+  bd="$STAGE/$name"
+  [ -d "$bd" ] && chmod -R u+w "$bd"
+  rm -rf "$bd"; mkdir -p "$bd"
   if [ -n "$local_pb" ]; then
     # Local PKGBUILD: a retroforge-owned recipe checked in at packages/<name>/<pkgbuild_local>,
     # used when there is no suitable holo PKGBUILD to fetch (e.g. a version bump or a
