@@ -5,6 +5,19 @@ LSE atomics unconditionally. The SM6115's Cortex-A73/A53 (every A53/A55-class So
 such a binary dies with SIGILL on its first atomic. The fix is `kernel/patches/0025`
 (`CONFIG_ARM64_LSE_EMULATION`); these are the tools around it. See `docs/steam-arm64.md`.
 
+`kernel/patches/0026` stops a site trapping: after emulating it, the kernel rewrites the
+instruction into a B to a native LDXR/STXR stub in an `[lse_stubs]` mapping (LDAPR into LDAR), so
+a trap's ~280 ns (A73) / ~490 ns (A53) becomes a few instructions. The mapping goes in free space
+within branch reach, or, where there is none (Valve's FEX reserves all of it), in the PROT_NONE
+padding between two segments of the site's own ELF file. `kernel/patches/0027` waits for a site's
+4th emulation (`/proc/sys/abi/lse_patch_after`, 1-255; 1 patches at the first, as 0026 alone
+does): a patch costs ~32 µs and a private copy of the site's text page, and 37% of the sites
+Proton's wineboot emulated ran once (MANGMI Air X, 2026-11-21). 0027 also has each process
+remember the arenas its stubs went into last, so a site near one skips the search for a slot.
+`/proc/sys/abi/lse_patch` (1) turns patching off; `abi/lse_patched` counts patched sites and
+`abi/lse_patch_failed` attempts that could not patch. Sites in JIT code and SP-based forms keep
+trapping.
+
 - **`lsetest.c`** — checks an LSE implementation: every LDADD/LDCLR/LDEOR/LDSET/LD{S,U}{MAX,MIN},
   SWP, CAS, CASP form at every size and ordering, over edge values, against a C reference
   (55,288 checks), plus 4-thread contended LDADDAL and CAS-lock counters that must come out exact.
