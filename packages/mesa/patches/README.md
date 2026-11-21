@@ -129,3 +129,32 @@ Wayland GL clients with "No EGL configuration available" (mesa work item 16934, 
 radeonsi with GTK4, `gles1=disabled` as in our build too). The revert puts back 26.2's
 `_mesa_get_version()`, so nothing changes compared to the mesa this image shipped before. Drop it
 when a release fixes 16934 upstream, or when Arch drops it.
+
+## A8xx GL hangs (0021, 0022), added 2026-11-21
+
+Ported from Nova-Deck `b7585c0` (their `0003`/`0004`, renumbered: our `0003`/`0004` are the
+pre-rotation series). Both are FeralAI's, armada PR #894 `0016`/`0017` (merged 2026-11-14), never
+posted upstream, bodies identical to the source. A8xx only (SM8750 / A830 here), so every other
+board builds the same code as before.
+
+- **0021-freedreno-a8xx-wait-for-zpass-sample-counts.patch** — on A830 the GPU can hang at high
+  clocks when it moves on after a ZPASS_DONE end event before the sample count write has landed.
+  Turnip already waits there (`emit_counter_barrier()` after the occlusion-query end event in
+  `tu_query_pool.cc`); freedreno had the same helper but used it only for pipeline-statistics
+  queries. This calls it after every ZPASS_DONE end event: occlusion pause and resume, and the
+  autotune end event. No switch: it mirrors Turnip and costs one WFI per query end. Applies at a
+  90-line offset on 26.3.1 (upstream drift in `fd6_gmem.cc`, same as Nova-Deck sees).
+
+- **0022-freedreno-a8xx-rb-done-ts-after-each-draw.patch** — on A830, freedreno GMEM rendering can
+  hang the GPU during bursts of small blended draws (reported: Doom 2016 and Half-Life 2 under
+  GL). An RB_DONE_TS event with a memory write after every draw prevents it. Empirical: no root
+  cause.
+
+  Nova-Deck A/B'd it 2026-11-14 on an Odin 3 with `0021` applied, in one build that carried a
+  runtime switch for the event. Half-Life 2 (GL, under FEX) with the event off: `hangcheck detected
+  gpu lockup` from `hl2_linux` twice in about 3½ minutes, each recovered by a GPU reset. With the
+  event on: no lockup. The event costs frame rate (measured there, not quantified); the switch was
+  dropped and the event is unconditional. The original commit says every 8th draw did NOT prevent
+  the hang, so any cheaper variant needs the same HL2 A/B (`dmesg | grep -c hangcheck`).
+
+**HW check owed here:** not run on our Odin 3. A GL title on it, `dmesg | grep -c hangcheck` after.
