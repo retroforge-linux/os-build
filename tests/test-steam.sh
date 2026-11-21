@@ -37,6 +37,10 @@
 #   nothing it had started yet lives; frozen already, nothing is killed; a launch that needs Steam's
 #   UI holds it running (Steam's UI until OGUI closes it, a game until it has run a while), a hold of a
 #   launch that is gone does not.
+#   Steam Client's install (steam-install) through the wrapper: the client's update runs in the
+#   install's own process tree, its lines on the install's bar, never as the kept unit; and not at
+#   all while a client runs (Steam opened during the install), which updates itself: handed to the
+#   kept client, the install waited on it for an hour.
 # Valve's servers are replaced by file:// URLs: $CDN for the client.
 set -uo pipefail
 
@@ -263,6 +267,7 @@ n=\$(( \$(cat "$W/count" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"$W/count"
 { echo "args: \$*"; echo "cwd: \$PWD"; echo "dbus: \${DBUS_SESSION_BUS_ADDRESS-unset}"; echo "rt: \${STEAM_RUNTIME-unset}"
   echo "ld: \${LD_LIBRARY_PATH-unset}"; } >"$W/call\$n"
 codes=(\$(cat "$W/codes")); c="\${codes[\$((n-1))]:-0}"
+[ -e "$W/say" ] && cat "$W/say"   # the real client's lines, for steam-install's cases
 if [ "\$c" = S ]; then   # S: run until TERMed, like the real client
   trap 'echo term >"$W/term"; exit 143' TERM; echo \$\$ >"$W/runpid"
   while :; do sleep 0.1; done
@@ -753,6 +758,58 @@ until_true '[ -e "$W/call1" ]'; sleep 1.2
 kill -TERM "$wpid"; wait "$wpid"; WRC=$?
 [ "$WRC" = 143 ] && [ "$(tail -1 "$W/keep.calls")" = "minimal pid handed" ] && [ ! -e "$W/run/retroforge-steam-full/$wpid" ] \
   && ok "OGUI closes it: minimal again, the hold gone" || bad "rc=$WRC keep: $(cat "$W/keep.calls" 2>&1)"
+reset_keep
+
+# ================================================================================================
+# Steam Client's install (steam-install install client) with this wrapper for its last stage, the
+# client's own update (`steam -steamdeck -exitsteam`). On an ARMv8.0 CPU, so Steam's default Proton
+# is applied after it. The other stages and their bar have their own suite (test-steam-install.sh).
+INSTALL="$ROOT/rootfs/overlay/usr/lib/retroforge/steam-install"
+printf 'processor\t: 0\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 cpuid\n' >"$W/v80"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s/proton.log"\n' "$W" >"$W/bin/proton"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s/steam-proton.log"; echo armv8\n' "$W" >"$W/bin/steam-proton"
+chmod +x "$W/bin/proton" "$W/bin/steam-proton"
+inst() {  # inst [VAR=value...]: the install, with an hour's UPDATE_TIMEOUT as 8 s
+  local start=$SECONDS
+  rm -rf "$W/proton.log" "$W/steam-proton.log" "$W/cache"
+  IOUT="$("${WENV[@]}" RETROFORGE_STEAM_ROOT="$WROOT" XDG_CACHE_HOME="$W/cache" RETROFORGE_STEAM_WRAPPER="$WRAP" \
+          RETROFORGE_CPUINFO="$W/v80" RETROFORGE_PROTON_CLI="$W/bin/proton" RETROFORGE_STEAM_PROTON_CLI="$W/bin/steam-proton" \
+          RETROFORGE_STEAM_UPDATE_TIMEOUT=8 RETROFORGE_STEAM_DONE_GRACE=1 "$@" python3 "$INSTALL" install client 2>"$W/ierr")"; IRC=$?
+  IERR="$(cat "$W/ierr")"; ITOOK=$((SECONDS - start))
+}
+
+CASE="install: Steam kept, opened during the install"   # MANGMI Air X, 2026-11-21
+reset_keep; touch "$W/unit-active"
+inst RETROFORGE_STEAM_KEEP=on
+[ "$IRC" = 0 ] && [ "$ITOOK" -lt 5 ] && [ "$(tail -1 <<<"$IOUT")" = 100% ] \
+  && ok "the install ends at once at 100%, not at UPDATE_TIMEOUT (it waited on the kept client, the bar at 63%)" \
+  || bad "rc=$IRC took $ITOOK s out=$(tr '\n' ' ' <<<"$IOUT") err=$IERR"
+[ ! -e "$W/call1" ] && ok "no second client process: the update is not handed to the kept client, which ignores -exitsteam" \
+  || bad "the client ran: $(cat "$W/call1")"
+grep -q "it updates itself" <<<"$IERR" && ok "and it says the running client updates itself" || bad "err=$IERR"
+grep -qx apply "$W/steam-proton.log" 2>/dev/null \
+  && ok "Steam's default Proton is still applied (retroforge-steam-proton leaves config.vdf alone under a running client)" \
+  || bad "apply: $(cat "$W/steam-proton.log" 2>&1)"
+[ -e "$W/unit-active" ] && ! grep -q " stop " "$W/sysd.log" 2>/dev/null && ok "the player's Steam keeps running" || bad "$(cat "$W/sysd.log")"
+
+CASE="install: Steam opened during the install, not kept"
+reset_keep; mkdir -p "$W/home/.steam"; echo 7000 >"$W/home/.steam/steam.pid"
+fakeproc 7000 1 steam "$WROOT/steamrtarm64/steam" -gamepadui
+inst
+[ "$IRC" = 0 ] && [ "$ITOOK" -lt 5 ] && [ ! -e "$W/call1" ] \
+  && ok "a client a launch runs (~/.steam/steam.pid): no update run beside it either" || bad "rc=$IRC took $ITOOK s err=$IERR"
+gone 7000; rm -f "$W/home/.steam/steam.pid"
+
+CASE="install: no Steam running"
+reset_keep
+printf '[ 50%%] Downloading update (500 of 1,000 KB)...\n[2026-11-21 12:00:00] Update complete, launching...\n' >"$W/say"
+inst RETROFORGE_STEAM_KEEP=on
+[ "$IRC" = 0 ] && grep -qx "args: -steamdeck -exitsteam" "$W/call1" 2>/dev/null && [ ! -e "$W/sdrun.args" ] && [ ! -e "$W/unit-active" ] \
+  && ok "the update runs the client here, not as the kept unit (Keep Steam running on)" \
+  || bad "rc=$IRC took $ITOOK s systemd-run: $(cat "$W/sdrun.args" 2>&1) err=$IERR"
+grep -q "Update complete" <<<"$IERR" && grep -qx "74%" <<<"$IOUT" \
+  && ok "its lines reach the install: the bar follows its download (74% at half of it)" || bad "out=$(tr '\n' ' ' <<<"$IOUT")"
+rm -f "$W/say"
 reset_keep
 
 echo

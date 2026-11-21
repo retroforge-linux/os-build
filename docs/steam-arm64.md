@@ -76,9 +76,14 @@ Steam shows in the shell's Emulators screen as one entry, with Download and its 
   fetch`, below), then the client's own update by Valve's updater (`steam -steamdeck -exitsteam`
   through the wrapper, with no display), so its first Open starts at once instead of downloading
   ~650 MB with nothing on screen. If that update does not finish, the install still succeeds and
-  the client finishes it on its first Open. Installed, the entry offers Open (Steam's UI:
-  `steam -gamepadui -steamos3 -steampal -steamdeck steam://open/bigpicture`) and Repair (the
-  install again, fetching only what is missing). There is no Steam library card.
+  the client finishes it on its first Open. The update runs the client under the install
+  (`RETROFORGE_STEAM_KEPT=1`), never as the kept unit, whose output would miss the bar; and not at
+  all while a Steam client runs (opened during the install), which updates itself: handed to the
+  kept client, it was ignored and the install waited an hour at 63% (MANGMI Air X, 2026-11-21).
+  Steam's default Proton on ARMv8.0 is then set at the client's next start. Installed, the entry
+  offers Open (Steam's UI: `steam -gamepadui -steamos3 -steampal -steamdeck
+  steam://open/bigpicture`) and Repair (the install again, fetching only what is missing). There
+  is no Steam library card.
 
 `retroforge-emu` lists it beside the emulators (`kind: steam`, from `steam-install status`) and
 hands its install to `steam-install`, whose `N%` lines and exit statuses are its own. The page

@@ -93,6 +93,8 @@ cat >"$T/bin/steam-proton" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >>"$T/steam-proton.log"; echo apply >>"$T/order.log"; echo armv8
 EOF
+# systemctl: no kept Steam running (a real one, on a device, would skip the update stage).
+mkdir -p "$T/path"; printf '#!/bin/sh\nexit 3\n' >"$T/path/systemctl"; chmod +x "$T/path/systemctl"
 printf 'processor\t: 0\nFeatures\t: fp asimd evtstrm aes pmull sha1 sha2 crc32 cpuid\n' >"$T/v80"
 printf 'processor\t: 0\nFeatures\t: fp asimd aes pmull sha1 sha2 crc32 atomics fphp cpuid\n' >"$T/v82"
 chmod +x "$T/bin"/*
@@ -101,7 +103,7 @@ ENVS=(env -u DISPLAY -u WAYLAND_DISPLAY -u RETROFORGE_STEAM_X86_GUEST HOME="$H" 
       RETROFORGE_STEAM_BOOTSTRAP="$T/bin/bootstrap" RETROFORGE_STEAM_X86_GUEST_HELPER="$T/bin/guest"
       RETROFORGE_STEAM_WRAPPER="$T/bin/steam" RETROFORGE_CPUINFO="$T/v82"
       RETROFORGE_PROTON_CLI="$T/bin/proton" RETROFORGE_STEAM_PROTON_CLI="$T/bin/steam-proton"
-      RETROFORGE_STEAM_DONE_GRACE=1 DISPLAY=:1 WAYLAND_DISPLAY=gamescope-0)
+      RETROFORGE_STEAM_DONE_GRACE=1 DISPLAY=:1 WAYLAND_DISPLAY=gamescope-0 PATH="$T/path:$PATH")
 si() {  # si [VAR=value...] -- <args...>
   local vars=(); while [ $# -gt 0 ] && [ "$1" != -- ]; do vars+=("$1"); shift; done; shift
   OUT="$("${ENVS[@]}" "${vars[@]}" python3 "$TOOL" "$@" 2>"$T/err")"; RC=$?

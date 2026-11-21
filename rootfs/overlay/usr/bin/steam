@@ -127,7 +127,8 @@ fi
 # windows.
 # A kept client also takes this path while the setting is off (it was turned off during a game), and
 # is stopped once that launch ends. Without a user manager (systemd-run fails), Steam runs with this
-# launch, as with the setting off.
+# launch, as with the setting off. steam-install's run of the client's update sets
+# RETROFORGE_STEAM_KEPT=1 too: the client runs under it, its lines on the install's bar.
 # TEST SEAMS (tests/test-steam.sh): RETROFORGE_STEAM_KEEP_CLI, RETROFORGE_STEAM_LAUNCH_WAIT,
 # RETROFORGE_STEAM_MINIMAL_DELAY, RETROFORGE_STEAM_SIGNIN_WAIT, RETROFORGE_STEAM_UI_WAIT,
 # RETROFORGE_STEAM_UI_SETTLE, RETROFORGE_PROC, and systemd-run and systemctl from PATH.

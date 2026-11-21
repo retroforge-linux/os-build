@@ -28,7 +28,8 @@
 #      for the bar. Without it Steam has no Proton that runs well there, so the install fails without
 #      it. After the client's update (4), retroforge-steam-proton apply makes it Steam's default (it
 #      writes config.vdf if the client has not yet: the client writes its own only at its first real
-#      start, and reads one that is there). Other CPUs get no Proton here: Steam
+#      start, and reads one that is there; with a client running it leaves config.vdf alone, and the
+#      default is set at the client's next start). Other CPUs get no Proton here: Steam
 #      keeps its own default, and Proton-CachyOS is an optional download in Apps > Proton;
 #   4. the client's own update, by Valve's updater: `steam -steamdeck -exitsteam` through /usr/bin/steam
 #      (the wrapper every start goes through), which downloads the rest of the client (~600 MB: its
@@ -43,7 +44,12 @@
 #      the unpacking short. If the update does not finish, the install still succeeds, and the client
 #      finishes it when it is first opened, behind an updater window that shows nothing for a minute
 #      or two (its font, clientui/fonts/GoNotoKurrent-Regular.ttf, comes with that very update);
-#      stderr says so.
+#      stderr says so. It runs with RETROFORGE_STEAM_KEPT=1, so /usr/bin/steam runs the client here,
+#      as inside its kept unit: not as that unit (retroforge-steam.service, whose output goes to the
+#      journal, not to this bar), and not handed to a client already running.
+#      Not run at all while a Steam client runs (the player opened Steam during the install): that
+#      client updates itself. Handed to it, `-exitsteam` was ignored and /usr/bin/steam waited on the
+#      kept client, the bar at 63% for UPDATE_TIMEOUT (MANGMI Air X, 2026-11-21).
 # Installed = the client binary and an x86 guest image (unless the guest is turned off). The entry's
 # Open starts Steam's UI (the Emulators page does that, not this).
 #
@@ -57,7 +63,8 @@
 # TEST SEAMS (tests/test-steam-install.sh): RETROFORGE_STEAM_BOOTSTRAP, RETROFORGE_STEAM_X86_GUEST_HELPER,
 # RETROFORGE_STEAM_WRAPPER, RETROFORGE_STEAM_ROOT, RETROFORGE_STEAM_X86_GUEST_DIR,
 # RETROFORGE_STEAM_UPDATE_TIMEOUT, RETROFORGE_STEAM_DONE_GRACE, RETROFORGE_CPUINFO,
-# RETROFORGE_PROTON_CLI, RETROFORGE_STEAM_PROTON_CLI.
+# RETROFORGE_PROTON_CLI, RETROFORGE_STEAM_PROTON_CLI; RETROFORGE_PROC (/proc) and systemctl from PATH
+# (tests/test-steam.sh, the update through the real /usr/bin/steam).
 import fcntl
 import json
 import os
@@ -84,6 +91,8 @@ CPUINFO = os.environ.get("RETROFORGE_CPUINFO", "/proc/cpuinfo")
 PROTON_CLI = os.environ.get("RETROFORGE_PROTON_CLI", "/usr/bin/retroforge-proton")
 STEAM_PROTON_CLI = os.environ.get("RETROFORGE_STEAM_PROTON_CLI", "/usr/bin/retroforge-steam-proton")
 PROTON_PROGRESS = os.path.join(DATA, "retroforge", "steam-compat-tools.progress")
+PROC = os.environ.get("RETROFORGE_PROC", "/proc")
+KEPT_UNIT = "retroforge-steam.service"  # /usr/bin/steam's kept client
 MB = 1 << 20
 
 EXIT_OK, EXIT_USAGE, EXIT_NET, EXIT_VERIFY, EXIT_LOCAL = 0, 2, 3, 4, 5
@@ -161,6 +170,26 @@ def client_version():
 
 def guest_installed():
     return os.path.isfile(os.path.join(GUEST, "current"))
+
+
+def client_running():
+    """Whether a Steam client runs: the kept unit is active (also while it starts its client), or
+    ~/.steam/steam.pid names a live process called steam, as retroforge-steam-keep reads it."""
+    try:
+        if subprocess.run(["systemctl", "--user", "is-active", "--quiet", KEPT_UNIT], stdin=subprocess.DEVNULL,
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+            return True
+    except OSError:  # no systemctl
+        pass
+    try:
+        with open(os.path.expanduser("~/.steam/steam.pid")) as f:
+            pid = f.read().strip()
+        if not pid.isdigit():
+            return False
+        with open(os.path.join(PROC, pid, "comm")) as f:
+            return f.read().strip() == "steam"
+    except OSError:
+        return False
 
 
 def client_installed():
@@ -347,7 +376,7 @@ def install_client():
         if armv8:
             install_proton(prog)
 
-        # 4. the client's own update
+        # 4. the client's own update, unless a client runs; RETROFORGE_STEAM_KEPT: not as the kept unit
         def on_update(line):
             m = UPDATE_LINE.search(line)
             if m:
@@ -359,12 +388,17 @@ def install_client():
                     prog.set("update", 1.0)
                     prog.set("apply", fraction)
 
-        env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
-        code, tail = run_stage([WRAPPER, "-steamdeck", "-exitsteam"], on_update, env=env,
-                               timeout=UPDATE_TIMEOUT, done=UPDATE_DONE, grace=DONE_GRACE)
-        if code != 0 or not client_version():
-            log(f"the client did not finish its own update here (exit {code}); it finishes it when "
-                "Steam is first opened")
+        if client_running():
+            log("Steam is running (opened during the install): it updates itself, so its update is "
+                "not run here")
+        else:
+            env = {k: v for k, v in os.environ.items() if k not in ("DISPLAY", "WAYLAND_DISPLAY")}
+            env["RETROFORGE_STEAM_KEPT"] = "1"
+            code, tail = run_stage([WRAPPER, "-steamdeck", "-exitsteam"], on_update, env=env,
+                                   timeout=UPDATE_TIMEOUT, done=UPDATE_DONE, grace=DONE_GRACE)
+            if code != 0 or not client_version():
+                log(f"the client did not finish its own update here (exit {code}); it finishes it when "
+                    "Steam is first opened")
         if client_installed() is None:
             raise Fail(EXIT_LOCAL, "the client is not complete after the install")
         if armv8:
