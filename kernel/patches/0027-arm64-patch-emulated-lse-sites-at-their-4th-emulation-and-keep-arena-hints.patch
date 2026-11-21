@@ -1,0 +1,302 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] arm64: patch an emulated LSE site at its 4th emulation, and keep each mm's arenas
+
+0026 patches a site after its first emulation, and finds a stub slot by
+walking every mapping within 128 MiB of it. In Proton's processes on the
+MANGMI Air X (Proton 11.0 ARM64's wineboot on a fresh prefix, 2026-11-21) a
+patch cost ~32 us (median 19): the walk was ~35% of it, the copy-on-write of
+text and stub pages ~17%. And of the 2,637 sites it emulated (3.83M
+emulations counted, none lost), 37% ran once, 57% at most four times.
+
+Patch a site at its abi.lse_patch_after-th emulation (default 4; 1 is the
+old behaviour). A lossy, lock-free table of 4096 words counts emulations per
+(mm, pc): a 56-bit hash tag over an 8-bit count. A collision or a race
+changes only when a site is patched. By the counts above this halves the
+time spent patching and takes the private text copies from 5.0 to 2.0 MiB,
+for ~2 ms of extra traps.
+
+Each mm keeps the four arenas its stubs went into last, newest first, with
+the slot to try next in each (mm->context.lse_arenas), so a site near one
+skips the walk. They are hints: checked before use (still that arena, the
+slot still free), copied by fork along with the arenas, cleared by exec.
+
+Applies after 0026.
+
+---
+diff -ruN a/arch/arm64/include/asm/mmu.h b/arch/arm64/include/asm/mmu.h
+--- a/arch/arm64/include/asm/mmu.h
++++ b/arch/arm64/include/asm/mmu.h
+@@ -16,6 +16,13 @@
+ #include <linux/refcount.h>
+ #include <asm/cpufeature.h>
+ 
++#ifdef CONFIG_ARM64_LSE_EMULATION
++/* An "[lse_stubs]" arena and the slot to try next in it (kernel/lse_emulate.c). */
++struct lse_arena_hint {
++	unsigned long	start, end, next;
++};
++#endif
++
+ typedef struct {
+ 	atomic64_t	id;
+ #ifdef CONFIG_COMPAT
+@@ -25,6 +32,10 @@
+ 	void		*vdso;
+ 	unsigned long	flags;
+ 	u8		pkey_allocation_map;
++#ifdef CONFIG_ARM64_LSE_EMULATION
++	/* Arenas stubs went into last, newest first: hints, which fork copies, exec clears. */
++	struct lse_arena_hint	lse_arenas[4];
++#endif
+ } mm_context_t;
+ 
+ /*
+diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
+--- a/arch/arm64/kernel/lse_emulate.c
++++ b/arch/arm64/kernel/lse_emulate.c
+@@ -23,10 +23,12 @@
+  * Every emulation counts as a PERF_COUNT_SW_EMULATION_FAULTS event.
+  *
+  * A trap costs ~280 ns on a Cortex-A73 and ~490 ns on an A53, against
+- * ~11 ns for the atomic itself, so after an emulation the site is patched
+- * (lse_patch): the instruction becomes a B to a native LL/SC stub in an
+- * "[lse_stubs]" mapping within branch reach, or LDAR for LDAPR, written
+- * the way ptrace writes a breakpoint. That site never traps again. When no
++ * ~11 ns for the atomic itself, so at its abi.lse_patch_after-th emulation
++ * (4) the site is patched (lse_patch): the instruction becomes a B to a
++ * native LL/SC stub in an "[lse_stubs]" mapping within branch reach, or LDAR
++ * for LDAPR, written the way ptrace writes a breakpoint. That site never
++ * traps again. Each mm remembers the arenas its stubs went into last
++ * (mm->context.lse_arenas), so a site near one skips the search. When no
+  * free address space is in reach (FEX reserves all of it around its own
+  * binary), the arena goes into the PROT_NONE padding between two segments
+  * of the site's own ELF file, which lives and dies with that object. Sites
+@@ -34,6 +36,12 @@
+  * with neither keep trapping. abi.lse_patch turns patching off;
+  * abi.lse_patched counts patched sites, abi.lse_patch_failed attempts that
+  * found no way to patch.
++ *
++ * Why the 4th: a patch costs ~32 us (median 19) in Proton's processes and a
++ * private copy of the site's text page, and 37% of the sites Proton's wineboot
++ * emulated ran once, 57% at most four times (MANGMI Air X, 2026-11-21). By
++ * those counts, patching at the 4th emulation halves the time spent patching
++ * and takes the text copies from 5.0 to 2.0 MiB, for ~2 ms of extra traps.
+  */
+ 
+ #include <linux/fs.h>
+@@ -308,8 +316,10 @@
+ /* Room left above the heap when an arena has to go above a site. */
+ #define LSE_BRK_ROOM		SZ_32M
+ #define LSE_FAILED_BITS		10
++#define LSE_SEEN_BITS		12
+ 
+ static int lse_patch_enabled = 1;
++static int lse_patch_after = 4, lse_patch_after_max = 255;
+ static unsigned long lse_patched, lse_patch_failed;
+ static DEFINE_MUTEX(lse_patch_lock);
+ static struct page *lse_arena_pages[LSE_ARENA_SIZE / PAGE_SIZE + 1];
+@@ -320,6 +330,31 @@
+ 	unsigned long pc;
+ } lse_failed[1 << LSE_FAILED_BITS];
+ 
++/*
++ * How often each site has been emulated, so it is patched at its
++ * lse_patch_after-th: one word per entry, the top 56 bits of a hash of
++ * (mm, pc) over a count in the low 8. Lossy and lock-free: a collision or a
++ * race changes only when a site is patched, never whether it can be.
++ */
++static u64 lse_seen[1 << LSE_SEEN_BITS];
++
++static bool lse_due(struct mm_struct *mm, unsigned long pc)
++{
++	int after = READ_ONCE(lse_patch_after);
++	u64 key, tag, e, *slot;
++	unsigned int n;
++
++	if (after <= 1)
++		return true;
++	key = ((u64)(unsigned long)mm ^ ((u64)pc * GOLDEN_RATIO_64)) * GOLDEN_RATIO_64;
++	slot = &lse_seen[key >> (64 - LSE_SEEN_BITS)];
++	tag = key & ~0xffULL;
++	e = READ_ONCE(*slot);
++	n = (e & ~0xffULL) == tag ? (e & 0xff) + 1 : 1;
++	WRITE_ONCE(*slot, tag | min(n, 0xffU));
++	return n >= after;
++}
++
+ static int lse_arena_mremap(const struct vm_special_mapping *sm,
+ 			    struct vm_area_struct *new_vma)
+ {
+@@ -350,9 +385,10 @@
+ 	return lo < slots ? arena + lo * LSE_SLOT_SIZE : 0;
+ }
+ 
+-/* A free slot in an arena that lies within [lo, hi), or 0. */
++/* A free slot in an arena that lies within [lo, hi), or 0; the arena in *start, *end. */
+ static unsigned long lse_find_slot(struct mm_struct *mm, unsigned long lo,
+-				   unsigned long hi)
++				   unsigned long hi, unsigned long *start,
++				   unsigned long *end)
+ {
+ 	unsigned long arenas[8], sizes[8], slot;
+ 	struct vm_area_struct *vma;
+@@ -375,13 +411,74 @@
+ 
+ 	for (i = 0; i < nr; i++) {
+ 		slot = lse_free_slot(arenas[i], sizes[i]);
+-		if (slot)
++		if (slot) {
++			*start = arenas[i];
++			*end = arenas[i] + sizes[i];
+ 			return slot;
++		}
+ 	}
+ 	return 0;
+ }
+ 
+ /*
++ * A free slot from the arenas this mm's stubs went into last, newest first,
++ * or 0: no walk of every mapping within 128 MiB, which was a third of a
++ * patch's time in Proton's processes. Each hint is checked (still an arena
++ * from start to end, the slot still free), as fork copies them and munmap
++ * can take an arena away.
++ */
++static unsigned long lse_hint_slot(struct mm_struct *mm, unsigned long lo,
++				   unsigned long hi, unsigned long *start,
++				   unsigned long *end)
++{
++	struct lse_arena_hint *h = mm->context.lse_arenas;
++	struct vm_area_struct *vma;
++	unsigned long slot;
++	bool ok;
++	int i;
++	u32 w;
++
++	for (i = 0; i < ARRAY_SIZE(mm->context.lse_arenas); i++) {
++		if (!h[i].next || h[i].start < lo || h[i].end > hi)
++			continue;
++		if (mmap_read_lock_killable(mm))
++			return 0;
++		vma = vma_lookup(mm, h[i].start);
++		ok = vma && vma_is_special_mapping(vma, &lse_arena_spec) &&
++		     vma->vm_start == h[i].start && vma->vm_end == h[i].end;
++		mmap_read_unlock(mm);
++		slot = h[i].next;
++		if (ok && (get_user(w, (u32 __user *)slot) || w))
++			slot = lse_free_slot(h[i].start, h[i].end - h[i].start);
++		if (ok && slot) {
++			*start = h[i].start;
++			*end = h[i].end;
++			return slot;
++		}
++		h[i].next = 0;		/* gone or full */
++	}
++	return 0;
++}
++
++/* Note that the next free slot of the arena start..end is next: it goes first. */
++static void lse_hint(struct mm_struct *mm, unsigned long start,
++		     unsigned long end, unsigned long next)
++{
++	struct lse_arena_hint *h = mm->context.lse_arenas;
++	int n = ARRAY_SIZE(mm->context.lse_arenas), i;
++
++	for (i = 0; i < n - 1 && h[i].start != start; i++)
++		;
++	/* Take out its entry (or the oldest one), then put it first unless full. */
++	memmove(&h[i], &h[i + 1], (n - 1 - i) * sizeof(*h));
++	memset(&h[n - 1], 0, sizeof(*h));
++	if (next >= end)
++		return;
++	memmove(&h[1], &h[0], (n - 1) * sizeof(*h));
++	h[0] = (struct lse_arena_hint){ .start = start, .end = end, .next = next };
++}
++
++/*
+  * A PROT_NONE gap between two mappings of the same ELF file as the site's
+  * (the padding the loader leaves between 64 KiB-aligned segments), lying in
+  * [lo, hi): up to LSE_ARENA_SIZE of it in *start and *len. The loader never maps
+@@ -415,10 +512,11 @@
+  * Map a new arena within [lo, hi) for the site at pc: in free space below
+  * the site's mapping first, where nothing grows, else above it but clear of
+  * the heap and of the stack's gap above mmap_base, else in a padding gap of
+- * the site's own file. Returns its first slot.
++ * the site's own file. Returns its first slot, its end in *end.
+  */
+ static unsigned long lse_new_arena(struct mm_struct *mm, unsigned long pc,
+-				   unsigned long lo, unsigned long hi)
++				   unsigned long lo, unsigned long hi,
++				   unsigned long *end)
+ {
+ 	struct vm_unmapped_area_info info = { .length = LSE_ARENA_SIZE };
+ 	unsigned long addr = -ENOMEM, heap_end, vm_start, vm_end, len = LSE_ARENA_SIZE;
+@@ -466,7 +564,10 @@
+ 			addr = -ENOMEM;
+ 	}
+ 	mmap_write_unlock(mm);
+-	return IS_ERR_VALUE(addr) ? 0 : addr;
++	if (IS_ERR_VALUE(addr))
++		return 0;
++	*end = addr + len;
++	return addr;
+ }
+ 
+ /* Write into the task's own code, as ptrace does: copy-on-write, I-cache synced. */
+@@ -480,7 +581,7 @@
+ {
+ 	struct mm_struct *mm = current->mm;
+ 	struct vm_area_struct *vma;
+-	unsigned long lo, hi, slot;
++	unsigned long lo, hi, slot, start = 0, end = 0;
+ 	u32 words[LSE_STUB_WORDS], cur, b;
+ 	unsigned int h;
+ 	int n;
+@@ -490,6 +591,8 @@
+ 	b = lse_stub_inplace(insn);
+ 	if (!b && !lse_stub_gen(insn, 0, 0, words))
+ 		return;				/* a form that stays on the trap path */
++	if (!lse_due(mm, pc))
++		return;				/* not yet: code that runs once is never patched */
+ 	if (!mutex_trylock(&lse_patch_lock))
+ 		return;				/* busy: this site traps once more */
+ 
+@@ -519,9 +622,13 @@
+ 	lo = pc > LSE_REACH ? pc - LSE_REACH : 0;
+ 	lo = PAGE_ALIGN(max3(lo, PAGE_ALIGN(mmap_min_addr), PAGE_SIZE));
+ 	hi = min(pc + LSE_REACH, DEFAULT_MAP_WINDOW) & PAGE_MASK;
+-	slot = lse_find_slot(mm, lo, hi);
++	slot = lse_hint_slot(mm, lo, hi, &start, &end);
+ 	if (!slot)
+-		slot = lse_new_arena(mm, pc, lo, hi);
++		slot = lse_find_slot(mm, lo, hi, &start, &end);
++	if (!slot) {
++		slot = lse_new_arena(mm, pc, lo, hi, &end);
++		start = slot;
++	}
+ 	if (!slot)
+ 		goto fail;
+ 
+@@ -531,6 +638,7 @@
+ 		goto fail;
+ 	if (!lse_poke(mm, slot, words, 4 * n))
+ 		goto fail;
++	lse_hint(mm, start, end, slot + LSE_SLOT_SIZE);
+ 	b = lse_i_b(pc, slot);
+ 	if (!lse_poke(mm, pc, &b, 4))
+ 		goto fail;
+@@ -617,6 +725,15 @@
+ 		.proc_handler	= proc_dointvec_minmax,
+ 		.extra1		= SYSCTL_ZERO,
+ 		.extra2		= SYSCTL_ONE,
++	},
++	{
++		.procname	= "lse_patch_after",
++		.data		= &lse_patch_after,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ONE,
++		.extra2		= &lse_patch_after_max,
+ 	},
+ 	{
+ 		.procname	= "lse_patched",
