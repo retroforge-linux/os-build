@@ -37,7 +37,8 @@ jobs:
   test:
     name: offline suites (slot state, bootctl, post-install)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # make test takes 9-9.5 min on a hosted runner; 10 cancelled it on and off (2026-11-18..21).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       # grub-common carries grub-editenv, and tests/test-install.sh SKIPS its strongest case
