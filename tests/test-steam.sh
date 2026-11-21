@@ -471,6 +471,39 @@ fakeproc 4244 4242 steam-launch-wr x; fakeproc 4245 4244 "game (main)" x; fakepr
   || bad "kills: $(cat "$W/kills" 2>&1) $(cat "$W/kerr")"
 [ -d "$P/4300" ] && [ -d "$P/4343" ] && [ -d "$P/5000" ] && ok "nothing else: another game, OGUI's reaper" || bad "$(ls "$P")"
 
+CASE="keep: pausing a launch"
+reset_keep
+PQ="$W/run/retroforge-steam-pause"
+fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- "$WROOT/linuxarm64/steam-launch-wrapper" -- game
+fakeproc 4244 4242 steam-launch-wr x; fakeproc 4245 4244 "game (main)" x
+fakeproc 4343 1 reaper "$STEAM_REAPER" SteamLaunch AppId=43 -- game
+fakeproc 5000 1 reaper /usr/share/opengamepadui/reaper SteamLaunch AppId=42 -- env steam steam://rungameid/42
+"${KENV[@]}" bash "$KEEP" pause 42 2>"$W/kerr"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$W/kills" 2>/dev/null)" = "-STOP 4242 4244 4245" ] \
+  && ok "pause STOPs Steam's reaper and everything under it, not another game or OGUI's reaper" \
+  || bad "rc=$rc kills: $(cat "$W/kills" 2>&1) $(cat "$W/kerr")"
+rm -f "$W/kills"
+"${KENV[@]}" bash "$KEEP" resume 42 2>"$W/kerr"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$W/kills" 2>/dev/null)" = "-CONT 4242 4244 4245" ] && [ ! -e "$PQ/42" ] \
+  && ok "resume CONTs the same processes and clears the request" \
+  || bad "rc=$rc kills: $(cat "$W/kills" 2>&1) $(ls "$PQ" 2>&1) $(cat "$W/kerr")"
+rm -f "$W/kills"
+"${KENV[@]}" bash "$KEEP" pause 44 2>"$W/kerr"; rc=$?
+[ "$rc" = 1 ] && [ ! -e "$W/kills" ] && [ ! -e "$PQ/44" ] \
+  && ok "exit 1 for an app with no launch running, and nothing is signalled" \
+  || bad "rc=$rc kills: $(cat "$W/kills" 2>&1) $(ls "$PQ" 2>&1)"
+# OGUI starts both in the background: hold the lock while a pause and then a resume are asked for.
+exec 8>>"$PQ/lock"; flock 8
+"${KENV[@]}" bash "$KEEP" pause 42 2>/dev/null & p1=$!
+until_true '[ "$(cat "$PQ/42" 2>/dev/null)" = STOP ]'
+"${KENV[@]}" bash "$KEEP" resume 42 2>/dev/null & p2=$!
+until_true '[ "$(cat "$PQ/42" 2>/dev/null)" = CONT ]'
+flock -u 8; exec 8>&-
+wait "$p1" "$p2"
+[ "$(cat "$W/kills" 2>/dev/null)" = "-CONT 4242 4244 4245" ] && [ ! -e "$PQ/42" ] \
+  && ok "a pause and a resume started together end in the state asked for last, whichever ran first" \
+  || bad "kills: $(cat "$W/kills" 2>&1) $(ls "$PQ" 2>&1)"
+
 CASE="keep: a launch's steps"
 reset_keep
 since="$(date '+%F %T')"

@@ -7,7 +7,12 @@ extends RefCounted
 ##
 ## A stopped process cannot act on SIGTERM, so "Exit game" would hang until it was continued:
 ## the app is continued synchronously (OS.execute) on app_stopped, which RunningApp.kill emits
-## before it sends the signal. Steam apps are left alone: their tree holds the Steam client.
+## before it sends the signal. A Steam game is frozen differently: OGUI's tree for it holds the
+## Steam client (or a wrapper that waits on the kept one), so it is the game's own tree under
+## Steam's reaper that stops, through `retroforge-steam-keep pause <appid>`, and Steam keeps
+## running. That runs in the background (it reads /proc twice, ~0.3 s on the MANGMI Air X, too long
+## to hold OGUI's frame), and so does its resume except before an exit; a pause and a resume started
+## together end in the state asked for last.
 ## Stored in OGUI's settings, section "retroforge", key "pause_in_menus" (default on).
 ##
 ## The freeze is OGUI's own pause (RunningApp.suspend, is_suspended), so the running game card's
@@ -21,6 +26,8 @@ extends RefCounted
 ## it. Frozen behind the keyboard, a game never saw the keys (Air X, 2026-10-28).
 
 const GeneralBox := preload("general_box.gd")
+const SteamApps := preload("steam_apps.gd")
+const KEEP := "/usr/bin/retroforge-steam-keep"
 const SECTION := "retroforge"
 const RUNNING_GAME_CARD := "res://core/ui/card_ui/navigation/running_game_card.gd"
 const KEY := "pause_in_menus"
@@ -36,6 +43,7 @@ var logger := Log.get_logger("RetroForgePause", Log.LEVEL.INFO)
 var tree: SceneTree
 var _toggle: Control  # OGUI Toggle
 var _paused: RunningApp
+var _paused_steam := 0  # the Steam app id of _paused, when it is a Steam game frozen by keep
 
 
 func setup(scene_tree: SceneTree) -> RefCounted:
@@ -68,7 +76,7 @@ func attach() -> bool:
 
 
 func detach() -> void:
-	resume()
+	resume(true)
 	if is_instance_valid(_toggle):
 		_toggle.queue_free()
 
@@ -95,7 +103,18 @@ func _pause() -> void:
 	if not enabled() or _paused:
 		return
 	var app := launch_manager.get_current_app()
-	if not app or app.state in [RunningApp.STATE.STOPPING, RunningApp.STATE.STOPPED] or app.is_steam_app():
+	if not app or app.state in [RunningApp.STATE.STOPPING, RunningApp.STATE.STOPPED]:
+		return
+	if app.is_steam_app():
+		var appid := SteamApps.appid_of(app.launch_item.args) if app.launch_item else 0
+		if appid == 0:
+			return
+		_paused = app
+		_paused_steam = appid
+		if not app.app_stopped.is_connected(_on_app_stopped):
+			app.app_stopped.connect(_on_app_stopped.bind(app))
+		OS.create_process(KEEP, ["pause", str(appid)])
+		logger.info("paused Steam app %d (%s)" % [appid, app.launch_item.name])
 		return
 	_paused = app
 	if not app.app_stopped.is_connected(_on_app_stopped):
@@ -110,12 +129,22 @@ func _on_in_game_entered(_from: State) -> void:
 	resume()
 
 
-## Continue the paused app, if any. Synchronous: an exit right after must find it running.
-func resume() -> void:
+## Continue the paused app, if any. Synchronous: an exit right after must find it running. A Steam
+## game is continued in the background unless `sync` (before an exit, or when the plugin unloads).
+func resume(sync := false) -> void:
 	if not _paused:
 		return
 	var app := _paused
 	_paused = null
+	if _paused_steam:
+		var args := PackedStringArray(["resume", str(_paused_steam)])
+		_paused_steam = 0
+		if sync:
+			OS.execute(KEEP, args)
+		else:
+			OS.create_process(KEEP, args)
+		logger.info("resumed Steam app %s" % args[1])
+		return
 	var pids: Array = Reaper.pstree(app.pid)
 	pids.push_front(app.pid)
 	var args := PackedStringArray(["-CONT", "--"])
@@ -131,9 +160,12 @@ func resume() -> void:
 ## Exit game: continue it first, also when it was paused from the menu's Pause entry outside a
 ## freeze of ours, so it can act on SIGTERM.
 func _on_app_stopped(app: RunningApp) -> void:
-	if app == _paused or app.is_suspended:
+	if app == _paused:
+		resume(true)
+	elif app.is_suspended:
 		_paused = app
-		resume()
+		_paused_steam = 0
+		resume(true)
 
 
 ## The running game card of `app` labels its Pause entry by is_suspended, as its own press does.

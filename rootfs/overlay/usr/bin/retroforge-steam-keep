@@ -9,6 +9,12 @@
 #                                        when given (one per line; nothing when there are none)
 #   retroforge-steam-keep end APPID      end Steam's launch of APPID: TERM its reaper and everything
 #                                        under it, KILL what is left 5 s later. Steam keeps running
+#   retroforge-steam-keep pause APPID    freeze Steam's launch of APPID: SIGSTOP its reaper and everything
+#                                        under it (the game, Wine or FEX, the runtime container), not
+#                                        Steam. Exit 1 when APPID has no launch running
+#   retroforge-steam-keep resume APPID   SIGCONT it again. A pause and a resume started together end in
+#                                        the state asked for last, whichever runs first (OGUI's "Pause
+#                                        game in menus" starts both in the background)
 #   retroforge-steam-keep launch APPID SINCE
 #                                        print the step Steam's launch of APPID last reached since SINCE
 #                                        ("YYYY-MM-DD HH:MM:SS", local time): Completed once the game's
@@ -57,7 +63,7 @@
 #
 # TEST SEAMS (tests/test-steam.sh): RETROFORGE_PROC (/proc), RETROFORGE_STEAM_KEEP_KILL (kill),
 # RETROFORGE_STEAM_ROOT (also set by /usr/bin/steam), RETROFORGE_STEAM_PARK_WAIT, XDG_RUNTIME_DIR (the
-# holds), and systemctl from PATH.
+# holds and the pauses), and systemctl from PATH.
 set -u
 
 export LC_ALL=C
@@ -67,6 +73,7 @@ PROC="${RETROFORGE_PROC:-/proc}"
 KILL="${RETROFORGE_STEAM_KEEP_KILL:-kill}"
 UNIT=retroforge-steam
 HOLDS="${XDG_RUNTIME_DIR:-/tmp}/retroforge-steam-full"   # one empty file per launch, named by its PID
+PAUSES="${XDG_RUNTIME_DIR:-/tmp}/retroforge-steam-pause"  # per app id, what its launch should be: STOP|CONT
 PARK_WAIT="${RETROFORGE_STEAM_PARK_WAIT:-30}"
 
 log() { echo "retroforge-steam-keep: $*" >&2; }
@@ -154,6 +161,45 @@ end() {
   log "still running after 5 s, killed:$left"
   # shellcheck disable=SC2086
   "$KILL" -KILL $left 2>/dev/null
+  return 0
+}
+
+# pause_set APPID STOP|CONT: record what Steam's launch of APPID should be, then, holding the lock,
+# signal its reaper and everything under it to match what is recorded. Whichever of a pause and a
+# resume takes the lock last applies the request made last. STOP goes round again for a process
+# forked while the others were being stopped; a stopped process cannot fork, so CONT needs one pass.
+pause_set() {
+  local f="$PAUSES/$1" want="" pid n
+  local -a pids all new
+  local -A sent=()
+  mkdir -p "$PAUSES" || return 1
+  { printf '%s\n' "$2" >"$f.part" && mv -f "$f.part" "$f"; } || return 1
+  exec 9>>"$PAUSES/lock"
+  flock 9
+  { read -r want <"$f"; } 2>/dev/null
+  [ -n "$want" ] || return 0   # a resume already applied, and cleared, the latest request
+  read -ra pids <<<"$(games "$1" | tr '\n' ' ')"
+  if [ "${#pids[@]}" -eq 0 ]; then
+    rm -f "$f"
+    log "app $1 has no launch running"
+    return 1
+  fi
+  for n in 1 2 3; do
+    read -ra all <<<"${pids[*]} $(under "${pids[@]}" | tr '\n' ' ')"
+    new=()
+    for pid in "${all[@]}"; do
+      [ -n "${sent[$pid]-}" ] || { sent[$pid]=1; new+=("$pid"); }
+    done
+    [ "${#new[@]}" -gt 0 ] || break
+    "$KILL" "-$want" "${new[@]}" 2>/dev/null
+    [ "$want" = CONT ] && break
+  done
+  if [ "$want" = CONT ]; then
+    rm -f "$f"
+    log "resumed Steam's launch of app $1 (${#sent[@]} processes)"
+  else
+    log "paused Steam's launch of app $1 (${#sent[@]} processes, pass $n)"
+  fi
   return 0
 }
 
@@ -283,6 +329,10 @@ case "${1-}:$#" in
     case "$2" in ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
     launch "$2" "$3"
     ;;
+  pause:2|resume:2)
+    case "$2" in ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
+    if [ "$1" = pause ]; then pause_set "$2" STOP; else pause_set "$2" CONT; fi
+    ;;
   stop-idle:1)
     stop_idle
     ;;
@@ -294,7 +344,7 @@ case "${1-}:$#" in
     "$1" "${2-}"
     ;;
   *)
-    log "usage: retroforge-steam-keep status|on|off|games [APPID]|end APPID|launch APPID SINCE|stop-idle|stop-unused|full [PID]|minimal [PID]"
+    log "usage: retroforge-steam-keep status|on|off|games [APPID]|end APPID|pause APPID|resume APPID|launch APPID SINCE|stop-idle|stop-unused|full [PID]|minimal [PID]"
     exit 2
     ;;
 esac
