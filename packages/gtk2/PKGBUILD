@@ -1,0 +1,125 @@
+# gtk2 — the legacy GTK+ 2 toolkit, for the Steam client's steamui.so (see source.pin).
+#
+# Recipe mirrors Arch's gtk2 2.24.33-5 PKGBUILD (the last one the deckard snapshot carried) with
+# these changes:
+# - Source: GNOME's release tarball, not git+https://gitlab.gnome.org/GNOME/gtk.git#tag=2.24.33.
+#   No git in the build, and makepkg runs with --skipinteg here, so prepare() checks the sha256
+#   itself (measured, and equal to GNOME's gtk+-2.24.33.sha256sum).
+# - Arch's two patches come from patches/ through source.pin (build-overlay.sh applies them -p1
+#   after the first cd in prepare()); their b2sums match Arch's PKGBUILD.
+# - The gtk-query-immodules-2.0 pacman hook is written in package(), byte for byte Arch's file,
+#   because build-overlay.sh stages only the PKGBUILD, *.install and the declared patches.
+# - The prebuilt gtk-doc API reference is removed in package().
+# Kept from Arch: autoreconf (the 2020 configure predates GCC 16's stricter defaults), the same
+# configure options and CFLAGS, the same gtkrc, and gtk-update-icon-cache left to GTK 4's package.
+
+pkgname=gtk2
+pkgver=2.24.33
+pkgrel=5
+pkgdesc="GObject-based multi-platform GUI toolkit (legacy)"
+url="https://www.gtk.org/"
+arch=(aarch64)
+license=(LGPL-2.1-or-later)
+depends=(
+  atk
+  cairo
+  desktop-file-utils
+  fontconfig
+  gdk-pixbuf2
+  glib2
+  glibc
+  gtk-update-icon-cache
+  libcups
+  librsvg
+  libx11
+  libxcomposite
+  libxcursor
+  libxdamage
+  libxext
+  libxfixes
+  libxi
+  libxinerama
+  libxrandr
+  libxrender
+  pango
+  shared-mime-info
+)
+makedepends=(
+  glib2-devel
+  gobject-introspection
+  gtk-doc
+)
+source=("https://download.gnome.org/sources/gtk+/${pkgver%.*}/gtk+-${pkgver}.tar.xz")
+sha256sums=('ac2ac757f5942d318a311a54b0c80b5ef295f299c2a73c632f6bfb1ff49cc6da')
+
+prepare() {
+  echo "${sha256sums[0]}  ${source[0]##*/}" | sha256sum -c - >/dev/null \
+    || { echo "checksum mismatch: ${source[0]##*/}" >&2; return 1; }
+  cd "gtk+-${pkgver}"
+  # build-overlay.sh injects `patch -p1 < "$srcdir/<patch>"` for each source.pin `patches:` entry
+  # here: 0001 lowers the XID collision warnings, 0002 is CVE-2024-6655 (no modules from cwd).
+
+  sed -i '/AM_INIT_AUTOMAKE/s/]/ foreign]/' configure.ac
+  autoreconf -fvi
+}
+
+build() {
+  local configure_options=(
+    --prefix=/usr
+    --sysconfdir=/etc
+    --localstatedir=/var
+    --with-xinput=yes
+    --disable-gtk-doc
+  )
+
+  CFLAGS+=" -Wno-error=implicit-int -Wno-error=incompatible-pointer-types"
+
+  cd "gtk+-${pkgver}"
+  ./configure "${configure_options[@]}"
+  sed -i -e 's/ -shared / -Wl,-O1,--as-needed\0/g' libtool
+  make
+}
+
+package() {
+  optdepends=(
+    'adwaita-icon-theme: Default icon theme'
+    'gnome-themes-standard: Default widget theme'
+    'python: gtk-builder-convert'
+  )
+  provides=(
+    libgailutil.so
+    libgdk-x11-2.0.so
+    libgtk-x11-2.0.so
+  )
+  install=gtk2.install
+
+  make -C "gtk+-${pkgver}" DESTDIR="$pkgdir" install
+
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/gtk-2.0/gtkrc" <<END
+gtk-icon-theme-name = "Adwaita"
+gtk-theme-name = "Adwaita"
+gtk-font-name = "Cantarell 11"
+END
+
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/libalpm/hooks/gtk-query-immodules-2.0.hook" <<'END'
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/lib/gtk-2.0/2.10.0/immodules/*.so
+
+[Action]
+Description = Probing GTK2 input method modules...
+When = PostTransaction
+Exec = /usr/bin/gtk-query-immodules-2.0 --update-cache
+END
+
+  # Built by GTK 4, shared with GTK 2/3
+  rm "$pkgdir/usr/bin/gtk-update-icon-cache"
+
+  # The API reference (gtk2, gdk2, gail-libgail-util: 606 files, 16.8 MB) ships prebuilt in the
+  # tarball and installs even with --disable-gtk-doc. Nothing on the device reads it. gtk-doc stays
+  # in makedepends anyway: autoreconf needs its GTK_DOC_CHECK macro.
+  rm -r "$pkgdir/usr/share/gtk-doc"
+}

@@ -98,10 +98,11 @@ glob usr/share/locale/!(C|en|en_US)
 # and no longer pulls the Go and D runtimes (libgo, libgphobos, libgdruntime) at all; their rows
 # were dropped when they stopped matching anything.
 glob usr/lib/libgfortran.so.*
-# The sanitizer runtimes (-fsanitize=address/thread/leak/undefined). Development tooling: a
+# The sanitizer runtimes (-fsanitize=address/thread/leak/undefined/hwaddress; libhwasan joined
+# gcc-libs in mash-20260704.1.pvt). Development tooling: a
 # sanitized binary links them explicitly, and we ship none. `@(...)` is extglob for exactly one
 # of the alternatives.
-glob usr/lib/lib@(a|t|l|ub)san.so.*
+glob usr/lib/lib@(a|t|l|ub|hw)san.so.*
 #
 # libgomp is deliberately NOT here despite looking like the same kind of thing: it is OpenMP, and
 # it IS linked — by libb2, libsoxr, libvidstab and the fftw *_omp variants (whatever is left of them now that ffmpeg is gone —

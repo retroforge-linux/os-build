@@ -227,6 +227,18 @@ else
   bad "a package-fixed low id failed assertion 8: $out"
 fi
 
+# systemd 261's `u! systemd-imds -`: the pin keeps the `!` (fully locked account), and the guard
+# must read a `u!` line as a `u` line in both directions.
+stage="$TMP/ids-locked"; idstage "$stage" $'systemd-imds:x:964:\n'
+printf 'u! systemd-imds 964 "systemd Instance Metadata" -\n' >>"$stage/usr/lib/sysusers.d/01-retroforge-enforce-ids.conf"
+printf 'systemd-imds:x:964:964::/:/usr/bin/nologin\n' >>"$stage/etc/passwd"
+out="$(guard8 "$stage")"
+if grep -q '3 pinned system ids match' <<<"$out"; then
+  ok "a u! pin (fully locked account) counts as a pinned user (the systemd 261 imds case)"
+else
+  bad "a matching u! pin did not pass assertion 8: $out"
+fi
+
 echo
 echo "assertion 10 wants the image's own Python bytecode and nothing else"
 

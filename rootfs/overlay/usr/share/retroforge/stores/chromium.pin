@@ -2,12 +2,12 @@
 # not hand-edit. Chromium and the packages of its closure the image lacks, from the image's snapshot;
 # /usr/lib/retroforge/store downloads them at the first Sign in, checks each against its sha256 and
 # unpacks them into the player's home. Fields: repo, file, sha256, size in bytes.
-# 20 packages, 192 MB to download.
-snapshot: https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/mash-20260528.1.pvt
+# 20 packages, 196 MB to download.
+snapshot: https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/mash-20260704.1.pvt
 package: extra adwaita-cursors-50.0-1-any.pkg.tar.zst 895066c2404a301eade011fe252681919939f2ba6a1b16c66f1c6c7dec23bf14 573484
 package: extra adwaita-icon-theme-50.0-1-any.pkg.tar.zst 39bf76835780f01b82df1502c37c0ffc26d5319e834fc288e84ea7a6f7360d53 251377
 package: extra adwaita-icon-theme-legacy-46.2-3-any.pkg.tar.zst c14690d14e1d8a67e6b5570a2b28a2da6de4ebeb592a629b2a70e41411bafc5a 2275676
-package: extra chromium-148.0.7778.178-3-aarch64.pkg.tar.zst 471add0448c40145cf5cb024718d22ae3991edba5e3cfcc55b869c081afb7c51 163525213
+package: extra chromium-150.0.7871.46-1-aarch64.pkg.tar.zst 5e68776386125062e82eeac542d62cf479e2ef1f2a482f07b0859f3bd4c12768 167559657
 package: extra glib-networking-1:2.80.1-1-aarch64.pkg.tar.zst f68eda63052f47d90c203571c28315b4d8ad44d492612c5adb7fed909460f27b 174576
 package: extra gtk3-1:3.24.52-1-aarch64.pkg.tar.zst 142c8c60ca3b053b021025072e6e2dc4516f78ef4bff36d5a6d19f71b606c112 13020096
 package: extra iso-codes-4.20.1-1-any.pkg.tar.zst 708a4a0c059d86884cc2d5e0ede6a8715e0e6bf1f9ba2c3c62dedd0947ddb0ab 6415296
@@ -15,8 +15,8 @@ package: extra libcloudproviders-0.4.0-1-aarch64.pkg.tar.zst 966963355fd8c19a3d5
 package: extra libcolord-1.4.8-1-aarch64.pkg.tar.zst 19321861c7995e6d2adba1c7bf09e14be110e6c10c4283e722d609019e0c9e4b 232199
 package: extra libproxy-0.5.12-1-aarch64.pkg.tar.zst 9eead709f2690ec38c284d6e13ce7a6f46ddc128a3cf4b6c3ff59c94675c1ba1 35860
 package: extra libsoup3-3.6.6-2-aarch64.pkg.tar.zst 1c27b5bc27b23e570cac74ea63ae1456442a3f57f90ebb6f47aa66131eeadfd6 511447
-package: extra libstemmer-3.1.0-1-aarch64.pkg.tar.zst f3d355d6a2a3279650d59f8614f0570c52c54db49f5d4bf29675f783730e359e 215237
-package: extra libva-2.23.0-1-aarch64.pkg.tar.zst d3c6ef8106be483088d1cc52686250e36f6870f564dd699b1eb8d6ca3eb9d02c 254892
+package: extra libstemmer-3.1.1-1-aarch64.pkg.tar.zst 0377f4f7f472eabc7e31222d114d5b4aaf71265ae172711ad248ed5bbd318b83 214954
+package: extra libva-2.23.0-2-aarch64.pkg.tar.zst e1c9ae784c88c1527e9dce58c35f6f7d4c1923a6192a3b2b26a98921290391ed 255222
 package: extra libxslt-1.1.45-2-aarch64.pkg.tar.zst 8a741992fe0156b0a3f41410a14f2a8e191bc7b7ac8c202c88fa17a7c7c1de97 253348
 package: extra libxss-1.2.5-1-aarch64.pkg.tar.zst 355cb9290e0a91e01ea536ade623505f414844bba1fc88af1da6492e9463ebe6 16401
 package: core minizip-1:1.3.2-3-aarch64.pkg.tar.zst ec6d0cdda786f051f8191cf20d6f680726b72448aae5bc260e9caea2f1daa26e 39255
