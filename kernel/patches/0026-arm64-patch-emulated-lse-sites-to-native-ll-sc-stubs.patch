@@ -1,0 +1,708 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] arm64: patch emulated LSE atomic sites to native LL/SC stubs
+
+0025 emulates each LSE atomic in the undefined-instruction handler. The
+trap is what costs: ~280 ns on the SM6115's Cortex-A73 and ~490 ns on its
+A53, against ~11 ns for an LL/SC atomic. Valve's Proton spent 1-1.5 cores
+on it while Hades loaded (3.36M emulations/s).
+
+After an emulation succeeds, rewrite the site so it never traps again:
+LDAPR becomes LDAR in place; every other form becomes a B to a stub that
+does the same operation with an LDXR/STXR (LDXP/STXP) loop and branches
+back. Stubs live in 64 KiB "[lse_stubs]" special mappings placed within
+branch reach of the site (below its mapping first), in 128-byte slots
+taken in order. Code and stubs are written with access_remote_vm() and
+FOLL_FORCE, the path ptrace uses for breakpoints, so text pages become
+private copies and the I-cache is synced. Arenas cannot be moved.
+
+Stubs (lse_stub.h; run against the real instructions on an LSE CPU, 300,000
+random cases matched) keep all registers but the destination
+and the flags: scratch registers from x9-x17 are saved below SP after SP
+moves. A forms load-acquire, L forms store-release, AL forms do both and a
+DMB ISH after, as the kernel's fully-ordered LL/SC atomics do. A CASP
+mismatch stores back the pair it read, so the returned pair is atomic.
+
+Where no free address space is in reach (Valve's FEX reserves everything
+around its own binary as one PROT_NONE mapping, so its stats-counter
+atomics trapped ~110,000 times a second under Megabonk on the Air X), the
+arena takes up to 64 KiB of a PROT_NONE gap between two mappings of the
+site's own ELF file: the padding the loader leaves between 64 KiB-aligned
+segments, which nothing maps into and which goes away with the object.
+
+Only sites in private file-backed executable mappings are patched; JIT
+code, SP-based forms, odd CASP pairs and sites with neither stay on the
+trap path, and a failed site (1024-entry cache) is not retried at every
+trap. If another CPU traps on a site while it is being rewritten, the
+handler finds a B or LDAR at pc (never undefined), syncs the I-cache for
+it and returns to it.
+
+abi.lse_patch (default 1) turns patching off; abi.lse_patched counts
+patched sites and abi.lse_patch_failed attempts that could not patch.
+Applies after 0025.
+
+---
+diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
+--- a/arch/arm64/kernel/lse_emulate.c
++++ b/arch/arm64/kernel/lse_emulate.c
+@@ -21,19 +21,42 @@
+  * interoperate with the native LDXR/STXR atomics in the same process, so
+  * the emulated operations stay atomic with respect to everything else.
+  * Every emulation counts as a PERF_COUNT_SW_EMULATION_FAULTS event.
++ *
++ * A trap costs ~280 ns on a Cortex-A73 and ~490 ns on an A53, against
++ * ~11 ns for the atomic itself, so after an emulation the site is patched
++ * (lse_patch): the instruction becomes a B to a native LL/SC stub in an
++ * "[lse_stubs]" mapping within branch reach, or LDAR for LDAPR, written
++ * the way ptrace writes a breakpoint. That site never traps again. When no
++ * free address space is in reach (FEX reserves all of it around its own
++ * binary), the arena goes into the PROT_NONE padding between two segments
++ * of the site's own ELF file, which lives and dies with that object. Sites
++ * outside private file-backed code (JIT code), SP-based forms and sites
++ * with neither keep trapping. abi.lse_patch turns patching off;
++ * abi.lse_patched counts patched sites, abi.lse_patch_failed attempts that
++ * found no way to patch.
+  */
+ 
++#include <linux/fs.h>
++#include <linux/hash.h>
++#include <linux/mm.h>
++#include <linux/mutex.h>
+ #include <linux/perf_event.h>
+ #include <linux/printk.h>
+ #include <linux/sched.h>
++#include <linux/security.h>
++#include <linux/sizes.h>
++#include <linux/sysctl.h>
+ #include <linux/uaccess.h>
+ 
+ #include <asm/asm-extable.h>
++#include <asm/cacheflush.h>
+ #include <asm/insn-def.h>
+ #include <asm/cpufeature.h>
+ #include <asm/ptrace.h>
+ #include <asm/traps.h>
+ 
++#include "lse_stub.h"
++
+ /* LDADD..LDUMIN, SWP, LDAPR: size 111 V=0 00 A R 1 Rs o3 opc 00 Rn Rt */
+ #define LSE_MEMOP_MASK	0x3f200c00
+ #define LSE_MEMOP_VAL	0x38200000
+@@ -269,16 +292,302 @@
+ 	       (insn & LSE_CASP_MASK) == LSE_CASP_VAL;
+ }
+ 
++/*
++ * Patching. Stubs live in "[lse_stubs]" special mappings of up to 64 KiB, in
++ * 128-byte slots filled in order; a slot is free while its first word is
++ * zero (no stub starts with one), so the arenas need no bookkeeping and a
++ * fork copies them with the rest of the address space. Every arena page
++ * starts as one shared zero page; the first stub written to it copies it,
++ * as a breakpoint copies a text page.
++ */
++#define LSE_ARENA_SIZE		SZ_64K
++#define LSE_ARENA_MIN		(2 * PAGE_SIZE)
++#define LSE_SLOT_SIZE		(LSE_STUB_WORDS * 4)
++/* B reaches +-128 MiB; a whole arena stays a page inside that from a site. */
++#define LSE_REACH		(SZ_128M - LSE_ARENA_SIZE - PAGE_SIZE)
++/* Room left above the heap when an arena has to go above a site. */
++#define LSE_BRK_ROOM		SZ_32M
++#define LSE_FAILED_BITS		10
++
++static int lse_patch_enabled = 1;
++static unsigned long lse_patched, lse_patch_failed;
++static DEFINE_MUTEX(lse_patch_lock);
++static struct page *lse_arena_pages[LSE_ARENA_SIZE / PAGE_SIZE + 1];
++
++/* Sites that could not be patched, so they are not tried at every trap. */
++static struct {
++	struct mm_struct *mm;
++	unsigned long pc;
++} lse_failed[1 << LSE_FAILED_BITS];
++
++static int lse_arena_mremap(const struct vm_special_mapping *sm,
++			    struct vm_area_struct *new_vma)
++{
++	return -EINVAL;		/* patched sites reach their stubs by offset */
++}
++
++static const struct vm_special_mapping lse_arena_spec = {
++	.name	= "[lse_stubs]",
++	.pages	= lse_arena_pages,
++	.mremap	= lse_arena_mremap,
++};
++
++/* The first free slot of an arena of size bytes, or 0 when it is full or gone. */
++static unsigned long lse_free_slot(unsigned long arena, unsigned long size)
++{
++	unsigned int lo = 0, hi = size / LSE_SLOT_SIZE, mid, slots = hi;
++	u32 w;
++
++	while (lo < hi) {
++		mid = (lo + hi) / 2;
++		if (get_user(w, (u32 __user *)(arena + mid * LSE_SLOT_SIZE)))
++			return 0;
++		if (w)
++			lo = mid + 1;
++		else
++			hi = mid;
++	}
++	return lo < slots ? arena + lo * LSE_SLOT_SIZE : 0;
++}
++
++/* A free slot in an arena that lies within [lo, hi), or 0. */
++static unsigned long lse_find_slot(struct mm_struct *mm, unsigned long lo,
++				   unsigned long hi)
++{
++	unsigned long arenas[8], sizes[8], slot;
++	struct vm_area_struct *vma;
++	int i, nr = 0;
++	VMA_ITERATOR(vmi, mm, lo);
++
++	if (mmap_read_lock_killable(mm))
++		return 0;
++	for_each_vma_range(vmi, vma, hi) {
++		if (vma_is_special_mapping(vma, &lse_arena_spec) &&
++		    vma->vm_start >= lo && vma->vm_end <= hi &&
++		    vma->vm_end - vma->vm_start <= LSE_ARENA_SIZE) {
++			arenas[nr] = vma->vm_start;
++			sizes[nr++] = vma->vm_end - vma->vm_start;
++			if (nr == ARRAY_SIZE(arenas))
++				break;
++		}
++	}
++	mmap_read_unlock(mm);
++
++	for (i = 0; i < nr; i++) {
++		slot = lse_free_slot(arenas[i], sizes[i]);
++		if (slot)
++			return slot;
++	}
++	return 0;
++}
++
++/*
++ * A PROT_NONE gap between two mappings of the same ELF file as the site's
++ * (the padding the loader leaves between 64 KiB-aligned segments), lying in
++ * [lo, hi): up to LSE_ARENA_SIZE of it in *start and *len. The loader never maps
++ * into it, and unloading the object unmaps it with the code that uses it.
++ */
++static bool lse_find_gap(struct mm_struct *mm, struct inode *inode, unsigned long lo,
++			 unsigned long hi, unsigned long *start, unsigned long *len)
++{
++	struct vm_area_struct *a = NULL, *g = NULL, *v;
++	VMA_ITERATOR(vmi, mm, lo);
++
++	for_each_vma_range(vmi, v, hi) {
++		if (a && g && a->vm_end == g->vm_start && g->vm_end == v->vm_start &&
++		    !(g->vm_flags & (VM_ACCESS_FLAGS | VM_SEALED)) &&
++		    a->vm_file && file_inode(a->vm_file) == inode &&
++		    v->vm_file && file_inode(v->vm_file) == inode &&
++		    (!g->vm_file || file_inode(g->vm_file) == inode) &&
++		    g->vm_start >= lo && g->vm_end <= hi &&
++		    g->vm_end - g->vm_start >= LSE_ARENA_MIN) {
++			*start = g->vm_start;
++			*len = min(g->vm_end - g->vm_start, (unsigned long)LSE_ARENA_SIZE);
++			return true;
++		}
++		a = g;
++		g = v;
++	}
++	return false;
++}
++
++/*
++ * Map a new arena within [lo, hi) for the site at pc: in free space below
++ * the site's mapping first, where nothing grows, else above it but clear of
++ * the heap and of the stack's gap above mmap_base, else in a padding gap of
++ * the site's own file. Returns its first slot.
++ */
++static unsigned long lse_new_arena(struct mm_struct *mm, unsigned long pc,
++				   unsigned long lo, unsigned long hi)
++{
++	struct vm_unmapped_area_info info = { .length = LSE_ARENA_SIZE };
++	unsigned long addr = -ENOMEM, heap_end, vm_start, vm_end, len = LSE_ARENA_SIZE;
++	struct vm_area_struct *vma;
++	struct inode *inode;
++
++	if (mmap_write_lock_killable(mm))
++		return 0;
++	vma = vma_lookup(mm, pc);
++	if (!vma || !vma->vm_file) {
++		mmap_write_unlock(mm);
++		return 0;
++	}
++	vm_start = vma->vm_start;
++	vm_end = vma->vm_end;
++	inode = file_inode(vma->vm_file);
++
++	info.flags = VM_UNMAPPED_AREA_TOPDOWN;
++	info.low_limit = lo;
++	info.high_limit = min(vm_start, hi);
++	if (info.high_limit > info.low_limit + LSE_ARENA_SIZE)
++		addr = vm_unmapped_area(&info);
++
++	if (IS_ERR_VALUE(addr)) {
++		info.flags = 0;
++		info.low_limit = max(vm_end, lo);
++		info.high_limit = min(hi, mm->mmap_base);
++		heap_end = PAGE_ALIGN(mm->brk) + LSE_BRK_ROOM;
++		if (mm->start_brk < info.high_limit && heap_end > info.low_limit)
++			info.low_limit = max(info.low_limit, heap_end);
++		if (info.high_limit > info.low_limit + LSE_ARENA_SIZE)
++			addr = vm_unmapped_area(&info);
++	}
++
++	if (IS_ERR_VALUE(addr) && lse_find_gap(mm, inode, lo, hi, &addr, &len) &&
++	    do_munmap(mm, addr, len, NULL))
++		addr = -ENOMEM;
++
++	if (!IS_ERR_VALUE(addr)) {
++		vma = _install_special_mapping(mm, addr, len,
++					       VM_READ | VM_EXEC | VM_MAYREAD |
++					       VM_MAYWRITE | VM_MAYEXEC,
++					       &lse_arena_spec);
++		if (IS_ERR(vma))
++			addr = -ENOMEM;
++	}
++	mmap_write_unlock(mm);
++	return IS_ERR_VALUE(addr) ? 0 : addr;
++}
++
++/* Write into the task's own code, as ptrace does: copy-on-write, I-cache synced. */
++static bool lse_poke(struct mm_struct *mm, unsigned long addr, void *buf, int len)
++{
++	return access_remote_vm(mm, addr, buf, len, FOLL_FORCE | FOLL_WRITE) == len;
++}
++
++/* After emulating insn at pc: point the site at native code if it can be. */
++static void lse_patch(unsigned long pc, u32 insn)
++{
++	struct mm_struct *mm = current->mm;
++	struct vm_area_struct *vma;
++	unsigned long lo, hi, slot;
++	u32 words[LSE_STUB_WORDS], cur, b;
++	unsigned int h;
++	int n;
++
++	if (!READ_ONCE(lse_patch_enabled) || !mm || !lse_arena_pages[0])
++		return;
++	b = lse_stub_inplace(insn);
++	if (!b && !lse_stub_gen(insn, 0, 0, words))
++		return;				/* a form that stays on the trap path */
++	if (!mutex_trylock(&lse_patch_lock))
++		return;				/* busy: this site traps once more */
++
++	h = hash_long((unsigned long)mm ^ pc, LSE_FAILED_BITS);
++	if (lse_failed[h].mm == mm && lse_failed[h].pc == pc)
++		goto out;
++
++	if (mmap_read_lock_killable(mm))
++		goto out;
++	vma = vma_lookup(mm, pc);
++	if (!vma || !vma->vm_file || (vma->vm_flags & (VM_SHARED | VM_WRITE)) ||
++	    (vma->vm_flags & (VM_EXEC | VM_MAYWRITE)) != (VM_EXEC | VM_MAYWRITE)) {
++		mmap_read_unlock(mm);
++		goto fail;
++	}
++	mmap_read_unlock(mm);
++
++	if (get_user(cur, (u32 __user *)pc) || cur != insn)
++		goto out;			/* rewritten meanwhile */
++
++	if (b) {
++		if (!lse_poke(mm, pc, &b, 4))
++			goto fail;
++		goto done;
++	}
++
++	lo = pc > LSE_REACH ? pc - LSE_REACH : 0;
++	lo = PAGE_ALIGN(max3(lo, PAGE_ALIGN(mmap_min_addr), PAGE_SIZE));
++	hi = min(pc + LSE_REACH, DEFAULT_MAP_WINDOW) & PAGE_MASK;
++	slot = lse_find_slot(mm, lo, hi);
++	if (!slot)
++		slot = lse_new_arena(mm, pc, lo, hi);
++	if (!slot)
++		goto fail;
++
++	n = lse_stub_gen(insn, slot, pc + 4, words);
++	if (!lse_b_reaches(pc, slot) ||
++	    !lse_b_reaches(slot + 4 * (n - 1), pc + 4))
++		goto fail;
++	if (!lse_poke(mm, slot, words, 4 * n))
++		goto fail;
++	b = lse_i_b(pc, slot);
++	if (!lse_poke(mm, pc, &b, 4))
++		goto fail;
++done:
++	lse_patched++;
++	pr_info_once("LSE atomics: patching emulated sites to native code (first: %s[%d])\n",
++		     current->comm, task_pid_nr(current));
++	goto out;
++fail:
++	lse_failed[h].mm = mm;
++	lse_failed[h].pc = pc;
++	lse_patch_failed++;
++out:
++	mutex_unlock(&lse_patch_lock);
++}
++
++/*
++ * The CPU took an undefined-instruction trap on something else than what is
++ * at pc now: a B or LDAR that lse_patch wrote (neither can be undefined), or
++ * a stub word in an arena it fetched before the stub was written. Sync the
++ * I-cache for the word (in case whoever wrote it did not) and return to pc,
++ * which runs the instruction as it now is.
++ */
++static bool lse_stale(struct pt_regs *regs, u32 insn)
++{
++	struct mm_struct *mm = current->mm;
++	struct vm_area_struct *vma;
++	bool arena;
++
++	if ((insn & 0xfc000000) == 0x14000000 ||		/* B */
++	    (insn & 0x3ffffc00) == 0x08dffc00)			/* LDAR */
++		goto retry;
++	if (!insn || !mm || mmap_read_lock_killable(mm))
++		return false;
++	vma = vma_lookup(mm, regs->pc);
++	arena = vma && vma_is_special_mapping(vma, &lse_arena_spec);
++	mmap_read_unlock(mm);
++	if (!arena)
++		return false;
++retry:
++	if (access_ok((void __user *)regs->pc, AARCH64_INSN_SIZE))
++		caches_clean_inval_user_pou(regs->pc, regs->pc + AARCH64_INSN_SIZE);
++	return true;
++}
++
+ bool try_emulate_lse(struct pt_regs *regs, u32 insn)
+ {
+-	unsigned long fault;
++	unsigned long fault, pc = regs->pc;
+ 	int sig;
+ 
+-	if (!user_mode(regs) || compat_user_mode(regs) || !lse_candidate(insn))
++	if (!user_mode(regs) || compat_user_mode(regs))
+ 		return false;
+ 	/* A CPU with LSE never traps on these; anything it rejects is genuine. */
+ 	if (cpus_have_final_cap(ARM64_HAS_LSE_ATOMICS))
+ 		return false;
++	if (!lse_candidate(insn))
++		return lse_stale(regs, insn);
+ 
+ 	sig = lse_emulate(regs, insn, &fault);
+ 	if (sig == SIGILL)
+@@ -288,11 +597,56 @@
+ 	pr_info_once("LSE atomics emulated for userspace on this CPU (first: %s[%d])\n",
+ 		     current->comm, task_pid_nr(current));
+ 
+-	if (sig == SIGBUS)
++	if (sig == SIGBUS) {
+ 		force_sig_fault(SIGBUS, BUS_ADRALN, (void __user *)fault);
+-	else if (sig == SIGSEGV)
++	} else if (sig == SIGSEGV) {
+ 		arm64_notify_segfault(fault);
+-	else
++	} else {
+ 		arm64_skip_faulting_instruction(regs, AARCH64_INSN_SIZE);
++		lse_patch(pc, insn);
++	}
+ 	return true;
+ }
++
++static const struct ctl_table lse_sysctl[] = {
++	{
++		.procname	= "lse_patch",
++		.data		= &lse_patch_enabled,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= proc_dointvec_minmax,
++		.extra1		= SYSCTL_ZERO,
++		.extra2		= SYSCTL_ONE,
++	},
++	{
++		.procname	= "lse_patched",
++		.data		= &lse_patched,
++		.maxlen		= sizeof(unsigned long),
++		.mode		= 0444,
++		.proc_handler	= proc_doulongvec_minmax,
++	},
++	{
++		.procname	= "lse_patch_failed",
++		.data		= &lse_patch_failed,
++		.maxlen		= sizeof(unsigned long),
++		.mode		= 0444,
++		.proc_handler	= proc_doulongvec_minmax,
++	},
++};
++
++static int __init lse_patch_init(void)
++{
++	struct page *zero;
++	int i;
++
++	if (cpus_have_final_cap(ARM64_HAS_LSE_ATOMICS))
++		return 0;
++	zero = alloc_page(GFP_KERNEL | __GFP_ZERO);
++	if (!zero)
++		return -ENOMEM;
++	for (i = 0; i < LSE_ARENA_SIZE / PAGE_SIZE; i++)
++		lse_arena_pages[i] = zero;
++	register_sysctl_init("abi", lse_sysctl);
++	return 0;
++}
++arch_initcall(lse_patch_init);
+diff -ruN a/arch/arm64/kernel/lse_stub.h b/arch/arm64/kernel/lse_stub.h
+--- a/arch/arm64/kernel/lse_stub.h
++++ b/arch/arm64/kernel/lse_stub.h
+@@ -0,0 +1,250 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Native ARMv8.0 code for one LSE atomic, to replace an emulated site.
++ *
++ * lse_stub_gen() writes a stub that does what the instruction does with an
++ * LDXR/STXR (LDXP/STXP) loop and returns with a B to the next instruction;
++ * the site becomes a B to the stub. lse_stub_inplace() gives the one-word
++ * replacement for LDAPR (LDAR, which orders at least as strongly).
++ *
++ * Pure functions of the instruction and two addresses, so they can be run
++ * in userspace against the real instructions on an LSE CPU (300,000 random
++ * cases matched, 2026-11-21).
++ *
++ * A stub keeps every register but its destination and the condition flags:
++ * scratch registers from x9-x17 are saved below SP (AArch64 has no red
++ * zone, and SP moves first, so a signal cannot clobber them). SP-based
++ * forms are therefore not patched. Orderings: A forms use LDAXR, L forms
++ * STLXR, AL forms both and a DMB ISH after the loop, as the kernel's own
++ * fully-ordered LL/SC atomics do. A CASP mismatch writes the pair it read
++ * back, so the pair it returns is single-copy atomic as CASP's is.
++ */
++#ifndef __LSE_STUB_H
++#define __LSE_STUB_H
++
++#define LSE_STUB_WORDS	32	/* largest stub is 18 words; slots hold 32 */
++
++enum { LSE_K_OP, LSE_K_MINMAX, LSE_K_SWP, LSE_K_CAS, LSE_K_CASP };
++
++#define LSE_I_CLREX	0xd5033f5fu
++#define LSE_I_DMB_ISH	0xd5033bbfu
++
++/* B from one address to another; the caller checks the reach. */
++static inline unsigned int lse_i_b(unsigned long from, unsigned long to)
++{
++	return 0x14000000u | (unsigned int)(((to - from) >> 2) & 0x03ffffffu);
++}
++
++static inline int lse_b_reaches(unsigned long from, unsigned long to)
++{
++	long d = (long)(to - from);
++
++	return d >= -(1L << 27) && d < (1L << 27);
++}
++
++static inline unsigned int lse_i_ldx(unsigned int size, unsigned int acq,
++				     unsigned int rt, unsigned int rn)
++{
++	return 0x085f7c00u | size << 30 | acq << 15 | rn << 5 | rt;
++}
++
++static inline unsigned int lse_i_stx(unsigned int size, unsigned int rel,
++				     unsigned int ws, unsigned int rt, unsigned int rn)
++{
++	return 0x08007c00u | size << 30 | ws << 16 | rel << 15 | rn << 5 | rt;
++}
++
++/* sz: 0 = W pair, 1 = X pair */
++static inline unsigned int lse_i_ldxp(unsigned int sz, unsigned int acq, unsigned int rt,
++				      unsigned int rt2, unsigned int rn)
++{
++	return 0x887f0000u | sz << 30 | acq << 15 | rt2 << 10 | rn << 5 | rt;
++}
++
++static inline unsigned int lse_i_stxp(unsigned int sz, unsigned int rel, unsigned int ws,
++				      unsigned int rt, unsigned int rt2, unsigned int rn)
++{
++	return 0x88200000u | sz << 30 | ws << 16 | rel << 15 | rt2 << 10 | rn << 5 | rt;
++}
++
++/* add, bic, eor, orr (shifted register, no shift); sf 1 = X */
++static inline unsigned int lse_i_alu(unsigned int op, unsigned int sf, unsigned int d,
++				     unsigned int n, unsigned int m)
++{
++	static const unsigned int base[4] = {
++		0x0b000000u, 0x0a200000u, 0x4a000000u, 0x2a000000u
++	};
++
++	return base[op] | sf << 31 | m << 16 | n << 5 | d;
++}
++#define LSE_ALU_EOR	2
++#define LSE_ALU_ORR	3
++
++static inline unsigned int lse_i_mov(unsigned int d, unsigned int m)
++{
++	return 0xaa0003e0u | m << 16 | d;		/* orr xd, xzr, xm */
++}
++
++/* cbnz xt to a word offset from this instruction */
++static inline unsigned int lse_i_cbnz(unsigned int t, int words)
++{
++	return 0xb5000000u | ((unsigned int)words & 0x7ffffu) << 5 | t;
++}
++
++static inline unsigned int lse_i_bw(int words)
++{
++	return 0x14000000u | ((unsigned int)words & 0x03ffffffu);
++}
++
++/*
++ * Stub for insn at a site, placed at stub and returning to ret. Returns its
++ * length in words (at most LSE_STUB_WORDS), or 0 when the form is not
++ * patched (SP base, UNDEFINED register pairs, not an LSE operation).
++ */
++static inline int lse_stub_gen(unsigned int insn, unsigned long stub,
++			       unsigned long ret, unsigned int *w)
++{
++	/* LDSMAX, LDSMIN, LDUMAX, LDUMIN: gt, lt, hi, lo */
++	static const unsigned int cond[4] = { 0xc, 0xb, 0x8, 0x3 };
++	unsigned int size = insn >> 30, rs = (insn >> 16) & 31;
++	unsigned int rn = (insn >> 5) & 31, rt = insn & 31;
++	unsigned int kind, opc = 0, acq, rel, sf, used, r, k = 0;
++	unsigned int t0, t1, t2, t3, t[4];
++	int n = 0, loop, br, br2;
++
++	if ((insn & 0x3f200c00u) == 0x38200000u) {	/* LD<op>, SWP, LDAPR */
++		unsigned int o3 = (insn >> 15) & 1;
++
++		opc = (insn >> 12) & 7;
++		if (o3 && opc)
++			return 0;		/* LDAPR (in place) or not an LSE op */
++		kind = o3 ? LSE_K_SWP : opc < 4 ? LSE_K_OP : LSE_K_MINMAX;
++		acq = (insn >> 23) & 1;
++		rel = (insn >> 22) & 1;
++	} else if ((insn & 0x3fa07c00u) == 0x08a07c00u) {	/* CAS */
++		kind = LSE_K_CAS;
++		acq = (insn >> 22) & 1;
++		rel = (insn >> 15) & 1;
++	} else if ((insn & 0xbfa07c00u) == 0x08207c00u) {	/* CASP */
++		if ((rs & 1) || (rt & 1))
++			return 0;
++		kind = LSE_K_CASP;
++		size = (insn >> 30) & 1;
++		acq = (insn >> 22) & 1;
++		rel = (insn >> 15) & 1;
++	} else {
++		return 0;
++	}
++	if (rn == 31)
++		return 0;
++
++	used = 1u << rn | 1u << rs | 1u << rt;
++	if (kind == LSE_K_CASP)
++		used |= 1u << (rs + 1) | 1u << (rt + 1);
++	for (r = 9; r <= 17 && k < 4; r++)
++		if (!(used & 1u << r))
++			t[k++] = r;
++	if (k < 4)
++		return 0;
++	t0 = t[0], t1 = t[1], t2 = t[2], t3 = t[3];
++	sf = kind != LSE_K_CASP && size == 3;
++
++	w[n++] = 0xa9be03e0u | t1 << 10 | t0;		/* stp t0, t1, [sp, #-32]! */
++	w[n++] = 0xa90103e0u | t3 << 10 | t2;		/* stp t2, t3, [sp, #16] */
++	if (kind == LSE_K_MINMAX)
++		w[n++] = 0xd53b4200u | t3;		/* mrs t3, nzcv */
++
++	loop = n;
++	if (kind == LSE_K_CASP)
++		w[n++] = lse_i_ldxp(size, acq, t0, t1, rn);
++	else
++		w[n++] = lse_i_ldx(size, acq, t0, rn);
++
++	switch (kind) {
++	case LSE_K_OP:
++		w[n++] = lse_i_alu(opc, sf, t1, t0, rs);
++		w[n++] = lse_i_stx(size, rel, t2, t1, rn);
++		w[n] = lse_i_cbnz(t2, loop - n);
++		n++;
++		break;
++	case LSE_K_SWP:
++		w[n++] = lse_i_stx(size, rel, t2, rs, rn);
++		w[n] = lse_i_cbnz(t2, loop - n);
++		n++;
++		break;
++	case LSE_K_MINMAX: {
++		unsigned int sgn = !(opc & 2), cmpn = t0;
++
++		if (size < 2 && sgn) {		/* sxtb/sxth wt1, wt0 */
++			w[n++] = (size ? 0x13003c00u : 0x13001c00u) | t0 << 5 | t1;
++			cmpn = t1;
++		}
++		if (size < 2)			/* cmp wcmpn, wrs, {u,s}xt{b,h} */
++			w[n++] = 0x6b20001fu | rs << 16 |
++				 ((sgn ? 4u : 0u) | size) << 13 | cmpn << 5;
++		else				/* cmp t0, rs */
++			w[n++] = 0x6b00001fu | sf << 31 | rs << 16 | t0 << 5;
++		/* csel t1, t0, rs, cond */
++		w[n++] = 0x1a800000u | sf << 31 | rs << 16 | cond[opc - 4] << 12 | t0 << 5 | t1;
++		w[n++] = lse_i_stx(size, rel, t2, t1, rn);
++		w[n] = lse_i_cbnz(t2, loop - n);
++		n++;
++		break;
++	}
++	case LSE_K_CAS:
++		if (size < 2) {			/* uxtb/uxth wt1, wrs; eor wt1, wt1, wt0 */
++			w[n++] = (size ? 0x53003c00u : 0x53001c00u) | rs << 5 | t1;
++			w[n++] = lse_i_alu(LSE_ALU_EOR, 0, t1, t1, t0);
++		} else {
++			w[n++] = lse_i_alu(LSE_ALU_EOR, sf, t1, t0, rs);
++		}
++		br = n++;			/* cbnz t1, out */
++		w[n++] = lse_i_stx(size, rel, t2, rt, rn);
++		w[n] = lse_i_cbnz(t2, loop - n);
++		n++;
++		w[br] = lse_i_cbnz(t1, n - br);
++		w[n++] = LSE_I_CLREX;		/* out: */
++		break;
++	case LSE_K_CASP:
++		w[n++] = lse_i_alu(LSE_ALU_EOR, size, t2, t0, rs);
++		w[n++] = lse_i_alu(LSE_ALU_EOR, size, t3, t1, rs + 1);
++		w[n++] = lse_i_alu(LSE_ALU_ORR, 1, t2, t2, t3);
++		br = n++;			/* cbnz t2, mismatch */
++		w[n++] = lse_i_stxp(size, rel, t2, rt, rt + 1, rn);
++		br2 = n++;			/* b check */
++		w[br] = lse_i_cbnz(t2, n - br);
++		w[n++] = lse_i_stxp(size, rel, t2, t0, t1, rn);	/* mismatch: */
++		w[br2] = lse_i_bw(n - br2);
++		w[n] = lse_i_cbnz(t2, loop - n);	/* check: */
++		n++;
++		break;
++	}
++
++	if (acq && rel)
++		w[n++] = LSE_I_DMB_ISH;
++	if (kind == LSE_K_CAS || kind == LSE_K_CASP) {
++		if (rs != 31)
++			w[n++] = lse_i_mov(rs, t0);
++		if (kind == LSE_K_CASP && rs + 1 != 31)
++			w[n++] = lse_i_mov(rs + 1, t1);
++	} else if (rt != 31) {
++		w[n++] = lse_i_mov(rt, t0);
++	}
++	if (kind == LSE_K_MINMAX)
++		w[n++] = 0xd51b4200u | t3;		/* msr nzcv, t3 */
++	w[n++] = 0xa94103e0u | t3 << 10 | t2;		/* ldp t2, t3, [sp, #16] */
++	w[n++] = 0xa8c203e0u | t1 << 10 | t0;		/* ldp t0, t1, [sp], #32 */
++	w[n] = lse_i_b(stub + 4UL * n, ret);
++	n++;
++	return n;
++}
++
++/* The word that replaces insn in place (LDAPR -> LDAR), or 0. */
++static inline unsigned int lse_stub_inplace(unsigned int insn)
++{
++	if ((insn & 0x3ffffc00u) == 0x38bfc000u)
++		return 0x08dffc00u | (insn & 0xc00003ffu);
++	return 0;
++}
++
++#endif /* __LSE_STUB_H */
