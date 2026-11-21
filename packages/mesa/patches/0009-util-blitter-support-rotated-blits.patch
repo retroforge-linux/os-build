@@ -1,4 +1,4 @@
-From eca7fe68870d205ae802cb17f4f56fbf62bd7c16 Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sunshineinabox <aqemail@gmail.com>
 Date: Wed, 23 Sep 2026 11:15:46 -0700
 Subject: [PATCH] util/blitter: support rotated blits
@@ -10,7 +10,7 @@ transposed box as unscaled.
  1 file changed, 43 insertions(+), 6 deletions(-)
 
 diff --git a/src/gallium/auxiliary/util/u_blitter.c b/src/gallium/auxiliary/util/u_blitter.c
-index 0e2c0a75648..b6e21f26624 100644
+index f7506511..4cea9414 100644
 --- a/src/gallium/auxiliary/util/u_blitter.c
 +++ b/src/gallium/auxiliary/util/u_blitter.c
 @@ -72,6 +72,9 @@ struct blitter_context_priv
@@ -23,7 +23,7 @@ index 0e2c0a75648..b6e21f26624 100644
     /* Templates for various state objects. */
  
     /* Constant state objects. */
-@@ -909,6 +912,36 @@ static void set_texcoords_in_vertices(const struct blitter_attrib *attrib,
+@@ -915,6 +918,36 @@ static void set_texcoords_in_vertices(const struct blitter_attrib *attrib,
     out[1] = attrib->texcoord.y2;
  }
  
@@ -60,7 +60,7 @@ index 0e2c0a75648..b6e21f26624 100644
  /** Convert PIPE_TEXTURE_x to TGSI_TEXTURE_x */
  static inline enum tgsi_texture_type
  util_pipe_tex_to_tgsi_tex(enum pipe_texture_target pipe_tex_target,
-@@ -1485,6 +1518,10 @@ void util_blitter_draw_rectangle(struct blitter_context *blitter,
+@@ -1491,6 +1524,10 @@ void util_blitter_draw_rectangle(struct blitter_context *blitter,
        default:;
     }
  
@@ -71,7 +71,7 @@ index 0e2c0a75648..b6e21f26624 100644
     blitter_draw(ctx, vertex_elements_cso, get_vs, x1, y1, x2, y2, depth,
                  num_instances);
  }
-@@ -1830,6 +1867,8 @@ blitter_draw_tex(struct blitter_context_priv *ctx,
+@@ -1845,6 +1882,8 @@ blitter_draw_tex(struct blitter_context_priv *ctx,
        float face_coord[4][2];
  
        set_texcoords_in_vertices(&coord, &face_coord[0][0], 2);
@@ -80,7 +80,7 @@ index 0e2c0a75648..b6e21f26624 100644
        util_map_texcoords2d_onto_cubemap((unsigned)layer % 6,
                                          /* pointer, stride in floats */
                                          &face_coord[0][0], 2,
-@@ -2007,9 +2046,7 @@ bool util_blitter_blit_with_txf(struct blitter_context *blitter,
+@@ -2028,9 +2067,7 @@ bool util_blitter_blit_with_txf(struct blitter_context *blitter,
           util_format_description(src->format);
     bool src_has_stencil = util_format_has_stencil(src_desc);
  
@@ -91,7 +91,7 @@ index 0e2c0a75648..b6e21f26624 100644
  
     if (src_has_stencil || !is_scaled)
        filter = PIPE_TEX_FILTER_NEAREST;
-@@ -2095,9 +2132,7 @@ void util_blitter_blit_generic(struct blitter_context *blitter,
+@@ -2116,9 +2153,7 @@ void util_blitter_blit_generic(struct blitter_context *blitter,
        goto out;
     }
  
@@ -102,7 +102,7 @@ index 0e2c0a75648..b6e21f26624 100644
  
     if (src_has_stencil || !is_scaled)
        filter = PIPE_TEX_FILTER_NEAREST;
-@@ -2305,12 +2340,14 @@ util_blitter_blit(struct blitter_context *blitter,
+@@ -2326,12 +2361,14 @@ util_blitter_blit(struct blitter_context *blitter,
     src_view = pipe->create_sampler_view(pipe, src, &src_templ);
  
     /* Copy. */

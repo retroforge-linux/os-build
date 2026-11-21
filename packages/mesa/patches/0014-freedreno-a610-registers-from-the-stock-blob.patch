@@ -6,9 +6,11 @@ Give the A610 its own entry with the init registers the stock Android 14
 driver writes on SM6115, its primitive allocation threshold, and the
 highest bank bit every A610 SoC reports. A605 keeps the shared table.
 ---
+diff --git a/src/freedreno/common/freedreno_devices.py b/src/freedreno/common/freedreno_devices.py
+index f28a0b3a..8e94b7ec 100644
 --- a/src/freedreno/common/freedreno_devices.py
 +++ b/src/freedreno/common/freedreno_devices.py
-@@ -291,7 +291,6 @@
+@@ -333,7 +333,6 @@ a6xx_gen1_low_raw_magic_regs = [
  
  add_gpus([
          GPUId(605), # TODO: Test it, based only on libwrapfake dumps
@@ -16,7 +18,7 @@ highest bank bit every A610 SoC reports. A605 keeps the shared table.
      ], A6xxGPUInfo(
          CHIP.A6XX,
          [a6xx_base, a6xx_gen1_low],
-@@ -311,7 +310,69 @@
+@@ -352,6 +351,69 @@ add_gpus([
          raw_magic_regs = a6xx_gen1_low_raw_magic_regs,
      ))
  
@@ -59,9 +61,11 @@ highest bank bit every A610 SoC reports. A605 keeps the shared table.
 +        [A6XXRegs.REG_A6XX_RB_UNKNOWN_8A10+5, 0xfc00fc00],
 +        [A6XXRegs.REG_A6XX_RB_UNKNOWN_8A20,   0],
 +        [A6XXRegs.REG_A6XX_RB_UNKNOWN_8A30,   0],
++        [A6XXRegs.REG_A6XX_RB_RBP_CNTL,       0x1],
++        [A6XXRegs.REG_A6XX_RB_DBG_ECO_CNTL,   0x04100000],
 +    ]
 +
- add_gpus([
++add_gpus([
 +        GPUId(610),
 +    ], A6xxGPUInfo(
 +        CHIP.A6XX,
@@ -78,11 +82,9 @@ highest bank bit every A610 SoC reports. A605 keeps the shared table.
 +        highest_bank_bit = 14,
 +        ubwc_swizzle = 0x7,
 +        macrotile_mode = 0,
-+        magic_regs = a6xx_gen1_low_magic_regs,
 +        raw_magic_regs = a610_raw_magic_regs,
 +    ))
 +
-+add_gpus([
+ add_gpus([
          GPUId(608),
          GPUId(612),
-         GPUId(613),

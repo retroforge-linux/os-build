@@ -1,4 +1,4 @@
-From 7703bc91b70e690918de232158b6a4c39c3ea49b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 22 Sep 2026 19:09:33 -0700
 Subject: [PATCH] wsi/wayland: keep the modifier on feedback changes when
@@ -14,10 +14,10 @@ modifier.
  1 file changed, 11 insertions(+), 2 deletions(-)
 
 diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
-index 83f04b73c45..b89def03cb8 100644
+index dbf63e7b..18170cf0 100644
 --- a/src/vulkan/wsi/wsi_common_wayland.c
 +++ b/src/vulkan/wsi/wsi_common_wayland.c
-@@ -2536,8 +2536,17 @@ surface_dmabuf_feedback_done(void *data,
+@@ -2602,8 +2602,17 @@ surface_dmabuf_feedback_done(void *data,
     if (f && !sets_of_modifiers_are_the_same(u_vector_length(&f->modifiers),
                                              u_vector_tail(&f->modifiers),
                                              chain->num_drm_modifiers,

@@ -9,17 +9,17 @@
 # the same order.
 #
 # The patches, by area (patches/README.md describes each one and when it can go):
-#   0001          Adreno 830 chip ids (SM8750).
-#   0002-0013     pre-rotated presents: Turnip's VK_QCOM_rotated_copy_commands, rotated
-#                 preTransform and optional pre-rotated presents in the Wayland WSI and EGL,
-#                 rotated blits in gallium/freedreno.
+#   0003-0013     pre-rotated presents: rotated preTransform and optional pre-rotated presents
+#                 in the Wayland WSI and EGL, rotated blits in gallium/freedreno.
 #   0014          the A610's own register table, from the stock Android driver.
-#   0015-0019     Turnip autotune: GMEM vs sysmem from per-GPU costs (0015/0016 are 26.3
-#                 backports, to drop at that bump).
+#   0017-0019     Turnip autotune: GMEM vs sysmem from per-GPU costs.
+#   0020          Arch's revert of a 26.3.1 EGL regression (mesa#16934).
+# The gaps are patches 26.3 took (0001, 0002, 0015, 0016); the numbers are kept so the ones still
+# here keep the names the docs and history use.
 #
 # Upstream source (informational; build-overlay.sh and fetch-source.sh use the PKGBUILD's):
-#   url:    https://archive.mesa3d.org/mesa-26.2.6.tar.xz
-#   sha256: b9436b3e1a8be76fbd4823dc884f90596ab7c6ac5e1867a305e66ffccfb31a92
+#   url:    https://archive.mesa3d.org/mesa-26.3.1.tar.xz
+#   sha256: 4e4e438eac7b840a9383988cbb7c08dad8041da544b9319fc26d319fa7348961
 #
 # To bump mesa:
 #   1. Download the tarball and its .sig, verify the signature and check the signer against the
@@ -41,4 +41,4 @@
 name: mesa
 pkgbuild_local: PKGBUILD
 pkgrel_suffix: 1
-patches: 0001-add-a830-chip-id.patch 0002-tu-implement-VK_QCOM_rotated_copy_commands.patch 0003-wsi-wayland-sort-surface-formats-by-preference.patch 0004-wsi-add-vkCmdBlitImage2-to-the-dispatch-table.patch 0005-wsi-wayland-support-rotated-preTransform.patch 0006-wsi-wayland-add-optional-pre-rotated-presents.patch 0007-wsi-wayland-keep-the-modifier-on-feedback-changes-wh.patch 0008-gallium-add-rotation-to-pipe_blit_info.patch 0009-util-blitter-support-rotated-blits.patch 0010-freedreno-support-rotated-blits.patch 0011-dri-pass-rotation-through-dri2_blit_image.patch 0012-egl-wayland-add-optional-pre-rotated-presents.patch 0013-wsi-wayland-resend-a-rotated-buffer-transform-with-e.patch 0014-freedreno-a610-registers-from-the-stock-blob.patch 0015-tu-autotune-Track-binning-pass-for-RP-duration.patch 0016-tu-autotune-Stabilize-RP-hash-for-replays.patch 0017-tu-autotune-Estimate-GMEM-and-sysmem-time-from-per-G.patch 0018-tu-autotune-Correct-the-estimates-with-measured-rend.patch 0019-tu-autotune-Add-a-probe-that-measures-the-costs-on-t.patch
+patches: 0003-wsi-wayland-sort-surface-formats-by-preference.patch 0004-wsi-add-vkCmdBlitImage2-to-the-dispatch-table.patch 0005-wsi-wayland-support-rotated-preTransform.patch 0006-wsi-wayland-add-optional-pre-rotated-presents.patch 0007-wsi-wayland-keep-the-modifier-on-feedback-changes-wh.patch 0008-gallium-add-rotation-to-pipe_blit_info.patch 0009-util-blitter-support-rotated-blits.patch 0010-freedreno-support-rotated-blits.patch 0011-dri-pass-rotation-through-dri2_blit_image.patch 0012-egl-wayland-add-optional-pre-rotated-presents.patch 0013-wsi-wayland-resend-a-rotated-buffer-transform-with-e.patch 0014-freedreno-a610-registers-from-the-stock-blob.patch 0017-tu-autotune-Estimate-GMEM-and-sysmem-time-from-per-G.patch 0018-tu-autotune-Correct-the-estimates-with-measured-rend.patch 0019-tu-autotune-Add-a-probe-that-measures-the-costs-on-t.patch 0020-Revert-mesa-don-t-advertise-APIs-that-are-not-built.patch

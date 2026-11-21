@@ -1,4 +1,4 @@
-From 94d4cc86899452a5dcb798baf4b30808d302863d Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sunshineinabox <aqemail@gmail.com>
 Date: Mon, 21 Sep 2026 20:18:05 -0700
 Subject: [PATCH] wsi/wayland: sort surface formats by preference
@@ -14,10 +14,10 @@ UNORM and float last. The compositor's order is kept within each group.
  1 file changed, 50 insertions(+)
 
 diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
-index 33a4059617c..20050922a1b 100644
+index 8a1e86f4..c06c74fb 100644
 --- a/src/vulkan/wsi/wsi_common_wayland.c
 +++ b/src/vulkan/wsi/wsi_common_wayland.c
-@@ -2157,6 +2157,54 @@ wsi_wl_surface_get_capabilities2(VkIcdSurfaceBase *surface,
+@@ -2223,6 +2223,54 @@ wsi_wl_surface_get_capabilities2(VkIcdSurfaceBase *surface,
     return result;
  }
  
@@ -72,7 +72,7 @@ index 33a4059617c..20050922a1b 100644
  static VkResult
  wsi_wl_surface_get_formats(VkIcdSurfaceBase *icd_surface,
                             struct wsi_device *wsi_device,
-@@ -2173,6 +2221,7 @@ wsi_wl_surface_get_formats(VkIcdSurfaceBase *icd_surface,
+@@ -2239,6 +2287,7 @@ wsi_wl_surface_get_formats(VkIcdSurfaceBase *icd_surface,
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
                             wsi_device->sw, "mesa formats query"))
        return VK_ERROR_SURFACE_LOST_KHR;
@@ -80,7 +80,7 @@ index 33a4059617c..20050922a1b 100644
  
     VK_OUTARRAY_MAKE_TYPED(VkSurfaceFormatKHR, out,
                            pSurfaceFormats, pSurfaceFormatCount);
-@@ -2218,6 +2267,7 @@ wsi_wl_surface_get_formats2(VkIcdSurfaceBase *icd_surface,
+@@ -2284,6 +2333,7 @@ wsi_wl_surface_get_formats2(VkIcdSurfaceBase *icd_surface,
     if (wsi_wl_display_init(wsi, &display, surface->display, true,
                             wsi_device->sw, "mesa formats2 query"))
        return VK_ERROR_SURFACE_LOST_KHR;

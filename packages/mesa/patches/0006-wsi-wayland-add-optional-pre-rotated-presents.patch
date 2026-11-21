@@ -1,4 +1,4 @@
-From c16e4ccfc772a94d59e7f23a2b583727ef93468b Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sunshineinabox <aqemail@gmail.com>
 Date: Tue, 22 Sep 2026 15:52:14 -0700
 Subject: [PATCH] wsi/wayland: add optional pre-rotated presents
@@ -24,10 +24,10 @@ extension ignore the option.
  6 files changed, 187 insertions(+), 10 deletions(-)
 
 diff --git a/src/util/drirc_gen.py b/src/util/drirc_gen.py
-index faffd362492..de5883192e7 100644
+index b1d79fc3..1c700f3d 100644
 --- a/src/util/drirc_gen.py
 +++ b/src/util/drirc_gen.py
-@@ -384,6 +384,8 @@ def add_common_vk_wsi_options(debug_options, performance_options, defaults=None)
+@@ -410,6 +410,8 @@ def add_common_vk_wsi_options(debug_options, performance_options, defaults=None)
            "Force the X11 WSI to create at least the number of image specified by the driver in VkSurfaceCapabilitiesKHR::minImageCount"),
          B("vk_google_display_timing", defaults.get("vk_google_display_timing", False),
            "Expose VK_GOOGLE_display_timing even if fully conformant support can't be guaranteed on all enabled surface types, e.g., (X)Wayland"),
@@ -37,7 +37,7 @@ index faffd362492..de5883192e7 100644
  
      debug_options.extend([
 diff --git a/src/vulkan/wsi/wsi_common.c b/src/vulkan/wsi/wsi_common.c
-index 15a1c30d5a2..e88e050b8f5 100644
+index 814424b7..6274faa7 100644
 --- a/src/vulkan/wsi/wsi_common.c
 +++ b/src/vulkan/wsi/wsi_common.c
 @@ -314,6 +314,12 @@ wsi_device_init(struct wsi_device *wsi,
@@ -62,7 +62,7 @@ index 15a1c30d5a2..e88e050b8f5 100644
        return wsi_drm_image_needs_buffer_blit(wsi, drm_params) ?
           WSI_SWAPCHAIN_BUFFER_BLIT : WSI_SWAPCHAIN_NO_BLIT;
     }
-@@ -3316,7 +3324,7 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
+@@ -3315,7 +3323,7 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
                              const struct wsi_image_info *info,
                              struct wsi_image *image)
  {
@@ -71,7 +71,7 @@ index 15a1c30d5a2..e88e050b8f5 100644
  
     VkImageMemoryBarrier img_mem_barriers[2] = {
        {
-@@ -3356,6 +3364,8 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
+@@ -3355,6 +3363,8 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
           },
        },
     };
@@ -80,7 +80,7 @@ index 15a1c30d5a2..e88e050b8f5 100644
     wsi->CmdPipelineBarrier(cmd_buffer,
                             VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                             VK_PIPELINE_STAGE_TRANSFER_BIT,
-@@ -3381,12 +3391,40 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
+@@ -3380,12 +3390,40 @@ wsi_cmd_blit_image_to_image(VkCommandBuffer cmd_buffer,
        .dstOffset = { .x = 0, .y = 0, .z = 0 },
        .extent = info->create.extent,
     };
@@ -128,10 +128,10 @@ index 15a1c30d5a2..e88e050b8f5 100644
     img_mem_barriers[0].srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
     img_mem_barriers[0].dstAccessMask = 0;
 diff --git a/src/vulkan/wsi/wsi_common.h b/src/vulkan/wsi/wsi_common.h
-index 7542cfbfddd..80d71329f6d 100644
+index 5d5dc283..0ab8a384 100644
 --- a/src/vulkan/wsi/wsi_common.h
 +++ b/src/vulkan/wsi/wsi_common.h
-@@ -169,6 +169,11 @@ struct wsi_device {
+@@ -177,6 +177,11 @@ struct wsi_device {
     struct {
        /* Don't use the commit-timing protocol for pacing */
        bool disable_timestamps;
@@ -144,7 +144,7 @@ index 7542cfbfddd..80d71329f6d 100644
  
     /*
 diff --git a/src/vulkan/wsi/wsi_common_drm.c b/src/vulkan/wsi/wsi_common_drm.c
-index dbf65b2d423..af8bf5861ae 100644
+index dbf65b2d..af8bf586 100644
 --- a/src/vulkan/wsi/wsi_common_drm.c
 +++ b/src/vulkan/wsi/wsi_common_drm.c
 @@ -922,6 +922,86 @@ wsi_drm_image_needs_buffer_blit(const struct wsi_device *wsi,
@@ -246,7 +246,7 @@ index dbf65b2d423..af8bf5861ae 100644
                                         params,
                                         info);
 diff --git a/src/vulkan/wsi/wsi_common_private.h b/src/vulkan/wsi/wsi_common_private.h
-index 3d2cd7d2e51..5655a704f92 100644
+index 3d2cd7d2..5655a704 100644
 --- a/src/vulkan/wsi/wsi_common_private.h
 +++ b/src/vulkan/wsi/wsi_common_private.h
 @@ -71,6 +71,11 @@ struct wsi_drm_image_params {
@@ -275,7 +275,7 @@ index 3d2cd7d2e51..5655a704f92 100644
     VkImageUsageFlags2CreateInfoKHR usage2;
     VkExternalMemoryImageCreateInfo ext_mem;
 diff --git a/src/vulkan/wsi/wsi_common_wayland.c b/src/vulkan/wsi/wsi_common_wayland.c
-index a6f67b8ed9a..83f04b73c45 100644
+index 9f27c9b1..dbf63e7b 100644
 --- a/src/vulkan/wsi/wsi_common_wayland.c
 +++ b/src/vulkan/wsi/wsi_common_wayland.c
 @@ -208,6 +208,8 @@ struct wsi_wl_swapchain {
@@ -287,7 +287,7 @@ index a6f67b8ed9a..83f04b73c45 100644
     uint32_t drm_format;
     enum wl_shm_format shm_format;
  
-@@ -3696,10 +3698,11 @@ wsi_wl_image_init(struct wsi_wl_swapchain *chain,
+@@ -3773,10 +3775,11 @@ wsi_wl_image_init(struct wsi_wl_swapchain *chain,
                                          image->base.drm_modifier & 0xffffffff);
        }
  
@@ -301,7 +301,7 @@ index a6f67b8ed9a..83f04b73c45 100644
                                                   chain->drm_format,
                                                   0);
        zwp_linux_buffer_params_v1_destroy(params);
-@@ -4000,6 +4003,42 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
+@@ -4077,6 +4080,42 @@ wsi_wl_surface_create_swapchain(VkIcdSurfaceBase *icd_surface,
        image_params = &drm_image_params.base;
     }
  

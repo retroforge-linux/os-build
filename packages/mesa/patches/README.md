@@ -1,22 +1,26 @@
 # mesa patches
 
-retroforge patches applied on top of the upstream mesa release source (currently `26.2.6`), in
+retroforge patches applied on top of the upstream mesa release source (currently `26.3.1`), in
 the order listed by `patches:` in [`../source.pin`](../source.pin). Each is applied with
 `patch -p1` from the mesa source root (the `mesa-<version>/` tree inside makepkg's `$srcdir`)
 by [`packages/build-overlay.sh`](../../build-overlay.sh), inserted right after the first `cd`
 in the PKGBUILD's `prepare()`.
 
-## Present
-
-```
-0001-add-a830-chip-id.patch                                          # SM8750 / a830 enablement
-```
-
-- **0001** (a830-specific) — register the Adreno 830 (a8xx) `chip_id`s in
-  `src/freedreno/common/freedreno_devices.py` so freedreno/Turnip recognise the SM8750 GPU (adds
-  the msm `0xffff4405…` and KGSL `0x4405…` variants).
+Numbers are not reused: the gaps (0001, 0002, 0015, 0016) are patches upstream took, listed under
+Dropped.
 
 ## Dropped
+
+- **0001-add-a830-chip-id.patch** — dropped at 26.3.1 (2026-11-21). 26.3 registers both msm
+  chip ids it added (`0xffff44050000` and `0xffff44050001`, the latter as "830v1"). The one id
+  upstream still lacks is the KGSL `0x44050000`, and this image runs the msm kernel driver, never
+  KGSL, so nothing here could reach it.
+- **0002-tu-implement-VK_QCOM_rotated_copy_commands.patch** — dropped at 26.3.1 (2026-11-21).
+  26.3 ships Turnip's `VK_QCOM_rotated_copy_commands` (`docs/features.txt`: DONE (tu)); every hunk
+  of the patch was already in the tree. gamescope's rotated blits (`packages/gamescope`) keep using
+  the extension, now upstream's.
+- **0015, 0016** (`tu/autotune: Track binning pass for RP duration`, `Stabilize RP hash for
+  replays`) — dropped at 26.3.1 as planned: they were backports of `79e16e72329` and `af16b1ceb1e`.
 
 - **0002-freedreno-ir3-vulkan-disable-bindless-ubo-const-lowering.patch** — dropped 2026-08-19
   (this file's history has the full write-up). It was a ROCKNIX-origin workaround (added there
@@ -35,13 +39,13 @@ Patches apply `-p1` against the upstream mesa tree, in the order listed in
 [`../source.pin`](../source.pin)'s `patches:` line. If a declared patch is missing or fails to
 apply, `build-overlay.sh` / `makepkg` fails fast before the package is built.
 
-## Pre-rotated presents (0002-0013), added 2026-10-09
+## Pre-rotated presents (0003-0013), added 2026-10-09
 
 The twelve commits sunshineinabox carries on top of upstream Mesa in ROCKNIX
 (`projects/ROCKNIX/packages/graphics/mesa/patches/0001`-`0012` on `next`, which pins the same
 26.2.4 tarball we do; also the fork at gitlab.freedesktop.org/sunshineinabox/mesa, `89ba0269`).
-In order: `tu` implements `VK_QCOM_rotated_copy_commands`; the Wayland WSI sorts surface
-formats, gets `vkCmdBlitImage2` in its dispatch table, supports a rotated `preTransform`, and
+In order (the first, `tu` implementing `VK_QCOM_rotated_copy_commands`, is upstream since 26.3):
+the Wayland WSI sorts surface formats, gets `vkCmdBlitImage2` in its dispatch table, supports a rotated `preTransform`, and
 gains OPTIONAL pre-rotated presents (`vk_wsi_wayland_prerotate` driconf / env, 90/180/270: the
 swapchain image is blitted, rotated, into a panel-oriented buffer at present time and committed
 with the matching `wl_surface.set_buffer_transform`, re-sent on every present); it keeps the
@@ -55,8 +59,12 @@ blit, `VK_QCOM_rotated_copy_commands` on Adreno), and a compositor that honours 
 (KWin, sway) scans the buffer out directly. ROCKNIX sets the two variables per board from
 `prerotate_env` in its `001-functions`. Under gamescope the client side is NOT used: gamescope
 rotates layers itself, and its own rotated-blit patches (`packages/gamescope`) use the same
-`VK_QCOM_rotated_copy_commands` from `0002` here. Off unless the variable is set, so every
-other board is unaffected. Applied cleanly on 26.2.4 (checked 2026-10-09).
+`VK_QCOM_rotated_copy_commands`, upstream in Turnip since 26.3. Off unless the variable is set, so every
+other board is unaffected. Applied cleanly on 26.2.4 (checked 2026-10-09). Rebased onto 26.3.1
+(2026-11-21): two doc/caps lines next to new upstream ones (`needs_split_planar_samplers`, a2xx-only
+`depth_clip_disable`), and EGL now calls upstream's merged `dri_create_image` (26.3 folded
+`dri_create_image_with_modifiers` into it) and `dri2_surface_get_dri_drawable()` (26.3 removed the
+display vtbl's `get_dri_drawable`).
 
 ## A610 registers from the stock blob (0014), added 2026-10-23
 
@@ -76,16 +84,29 @@ handler and the blob's 0x4 would clear that. Also left out: values Turnip hardco
 None of the new registers fall in the A610's CP protect list (`a630_protect`, kernel 7.2.11).
 With 0014, Turnip's A610 init stream matches the blob for every register above.
 
+Rebased onto 26.3.1 (2026-11-21): 26.3 dropped the `magic_regs` dict and writes `RB_DBG_ECO_CNTL`
+and `RB_RBP_CNTL` through `raw_magic_regs` instead (`a6xx_gen1_low` ends with them now). The A610
+table gets the same two writes at the values it inherited before (0x04100000, 0x1), and no longer
+passes `magic_regs=`, which 26.3's `A6xxGPUInfo` rejects at build time.
+
 **HW test still owed:** this was checked on drm-shim only. On the Air X, run a Vulkan title and a
 GL one and watch for hangs or corruption.
 
-## Turnip autotune (0015-0019), added 2026-11-08
+## Turnip autotune (0017-0019), added 2026-11-08
 
 The GMEM/sysmem choice from per-GPU costs, split the way it is meant to go upstream.
 
-- **0015, 0016** — backports of upstream `79e16e72329` and `af16b1ceb1e` (Dhruv Mark Collins,
-  July 2026): the RP duration covers the binning pass, and the RP hash is stable across replays.
-  Both are in 26.3, so drop them at that bump.
+Built on upstream `79e16e72329` and `af16b1ceb1e` (the RP duration covers the binning pass, the RP
+hash is stable across replays), which this series carried as 0015/0016 until 26.3 shipped them.
+
+Rebased onto 26.3.1 (2026-11-21). Upstream's autotune now uses `static_cast` throughout and the
+new lines follow it. The shader cache moved to one templated read/write routine
+(`tu_shader_cache_process_blob`), so 0017's `nir_tex_count` is one `io.u32()` there. The msm max-clock
+query sits after upstream's reworked `MSM_PARAM_GMEM_BASE` read. 0019's
+`force_render_mode_reason` is upstream's rename of `gmem_disable_reason`, and its vs-params payload
+count moved into upstream's rewritten `tu6_emit_vs_params`, which now loads `num_vec4` vec4s (2
+with software multiview). That function still built `tu_draw_state` positionally, which would have put
+the iova into the `payload_dwords` field 0017 adds first. It is designated now.
 - **0017** — the bandwidth algorithm predicts both modes in microseconds instead of comparing byte
   counts. Costs come from a table per GPU (A610, A613, A650, A740, A750, A830) built from probe
   reports on retail devices, in cycles at the kernel's max clock and leaning cheap. A GPU without a
@@ -99,3 +120,12 @@ The GMEM/sysmem choice from per-GPU costs, split the way it is meant to go upstr
 - **0019** — developer tool: `TU_AUTOTUNE_CALIB=force` probes the costs on the running GPU
   (0.6 s on A610/A613) and `export=<path>` writes them out, which is how table rows are made.
   Also `dump`, `log`, `payload`, `replay` and `noshade`.
+
+## EGL regression revert (0020), added 2026-11-21
+
+Arch's `0002` from `mesa 1:26.3.1-2` (heftig, 2026-11-20), unchanged: it reverts upstream
+`338afb32f86` ("mesa: don't advertise APIs that are not built"). In 26.3.1 that commit leaves
+Wayland GL clients with "No EGL configuration available" (mesa work item 16934, reported on
+radeonsi with GTK4, `gles1=disabled` as in our build too). The revert puts back 26.2's
+`_mesa_get_version()`, so nothing changes compared to the mesa this image shipped before. Drop it
+when a release fixes 16934 upstream, or when Arch drops it.

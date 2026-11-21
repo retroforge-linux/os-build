@@ -397,7 +397,8 @@ and the "on tilers the fragment pass writes tile-linear" comment went. The swap 
 `0026`-`0029` — **pre-rotation: rotate with a blit instead of compositing** (sunshineinabox and
 kapdon; ROCKNIX fork `next:projects/ROCKNIX/packages/apps/gamescope/patches` 0018/0019/0021/0025 —
 the gamescope half of what ROCKNIX calls `DEVICE_PRE_ROTATION`; the Mesa half is
-`packages/mesa/patches/0002`-`0013`). Our SM8xxx boards rotate at scanout (`0001`) and never reach
+`packages/mesa/patches/0003`-`0013`, plus Turnip's
+`VK_QCOM_rotated_copy_commands`, upstream since Mesa 26.3). Our SM8xxx boards rotate at scanout (`0001`) and never reach
 any of it. It is for a panel the plane cannot rotate — SM6115 (MANGMI Air X), which ROCKNIX runs
 with `--force-composition-rotation` — where stock gamescope composites EVERY frame on the GPU to
 turn it, which on an A610 is most of the frame budget.
@@ -407,7 +408,7 @@ turn it, which on an A610 is most of the frame budget.
     plane under FSR.
   - `0027` adds `--composite-blit` / `GAMESCOPE_COMPOSITE_BLIT=1`: a frame of exactly one
     unscaled, unoffset sRGB layer at output size with no CTM is copied to the output by the
-    transfer engine, rotated with `VK_QCOM_rotated_copy_commands` (Mesa `0002`) when the output
+    transfer engine, rotated with `VK_QCOM_rotated_copy_commands` (upstream Turnip) when the output
     is rotated. Anything else takes the composite shader. Each decline reason is logged once.
   - `0028` is the DRM backend. With `--composite-blit`, layers the plane cannot rotate are blitted
     into panel-oriented copies (`pBlitRotatedTex`) and scanned out unrotated in their old
