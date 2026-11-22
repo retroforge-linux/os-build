@@ -1,3 +1,4 @@
+From f8d52326cc165e40a5fd70853636008f3018f895 Mon Sep 17 00:00:00 2001
 From: sunshineinabox <aqemail@gmail.com>
 Date: Fri, 23 Oct 2026 14:40:00 -0700
 Subject: [PATCH] freedreno: A610 registers from the stock blob
@@ -5,6 +6,8 @@ Subject: [PATCH] freedreno: A610 registers from the stock blob
 Give the A610 its own entry with the init registers the stock Android 14
 driver writes on SM6115, its primitive allocation threshold, and the
 highest bank bit every A610 SoC reports. A605 keeps the shared table.
+
+8bpp UBWC is off, as in the blob, which tiles R8 images without UBWC.
 ---
 diff --git a/src/freedreno/common/freedreno_devices.py b/src/freedreno/common/freedreno_devices.py
 index f28a0b3a..8e94b7ec 100644
@@ -18,7 +21,7 @@ index f28a0b3a..8e94b7ec 100644
      ], A6xxGPUInfo(
          CHIP.A6XX,
          [a6xx_base, a6xx_gen1_low],
-@@ -352,6 +351,69 @@ add_gpus([
+@@ -352,6 +351,72 @@ add_gpus([
          raw_magic_regs = a6xx_gen1_low_raw_magic_regs,
      ))
  
@@ -69,7 +72,10 @@ index f28a0b3a..8e94b7ec 100644
 +        GPUId(610),
 +    ], A6xxGPUInfo(
 +        CHIP.A6XX,
-+        [a6xx_base, a6xx_gen1_low, GPUProps(prim_alloc_threshold = 0x3)],
++        # The blob tiles R8 without UBWC, and 8bpp UBWC
++        # garbled textures in GL.
++        [a6xx_base, a6xx_gen1_low,
++         GPUProps(prim_alloc_threshold = 0x3, has_8bpp_ubwc = False)],
 +        num_ccu = 1,
 +        tile_align_w = 32,
 +        tile_align_h = 16,
