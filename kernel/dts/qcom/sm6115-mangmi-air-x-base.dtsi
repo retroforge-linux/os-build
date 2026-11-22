@@ -38,29 +38,11 @@
 		charge-term-current-microamp = <200000>;
 	};
 
-	/*
-	 * The fan's supply switch hangs on TLMM GPIO 92, which has no PWM function of its own
-	 * (no gcc_gp/pdm mux on that pin), so ROCKNIX ran it as a two-state gpio-fan: off or full.
-	 * RetroForge pulses it with the kernel's hrtimer GPIO PWM and drives it as a normal pwm-fan (hwmon
-	 * pwm1 0-255). The fan has no speed input: pulsing its supply is the only lever. The trade-off:
-	 * the lower the rate, the wider the usable duty range (the fan coasts through longer gaps),
-	 * until it becomes audible stop-and-go. Listening tests on the Air Y (2026-10-11, Quick bar >
-	 * Fan test): 5-10 Hz is stop-and-go and usable only from ~50%; 15 Hz was the best there, smooth
-	 * at 40% (sm6115-mangmi-air-y.dts keeps it). On the Air X (2026-11-22) 15 Hz stayed jittery
-	 * at 40-80% and 30 and 60 Hz too, while 120 Hz ran smooth from 70% (period 8.33 ms below;
-	 * the devices/mangmi-air-x-*.conf floor is 179).
-	 */
-	fan_pwm: fan-pwm {
-		compatible = "pwm-gpio";
-		#pwm-cells = <3>;
+	/* Supply switch on GPIO 92 (no PWM mux): off or full, switched by retroforge-powerd */
+	fan: gpio-fan {
+		compatible = "gpio-fan";
 		gpios = <&tlmm 92 GPIO_ACTIVE_HIGH>;
-	};
-
-	fan: pwm-fan {
-		compatible = "pwm-fan";
-		pwms = <&fan_pwm 0 8333333 0>;	/* 120 Hz */
-		/* not in any cooling map: retroforge-powerd owns the fan (see the thermal note below) */
-		cooling-levels = <0 179 204 230 255>;
+		gpio-fan,speed-map = <0 0>, <1 1>;
 		#cooling-cells = <2>;
 	};
 
@@ -657,20 +639,12 @@
 	};
 };
 
-/*
- * No QCE driver: 7.3 makes CRYPTO_DEV_QCE depend on BROKEN. The sm6115 node lists no
- * interconnects, but it is still a consumer (rpmcc, cryptobam, apps_smmu) that never binds,
- * so it goes off like the other SoCs' do.
- */
+/* No QCE driver (CRYPTO_DEV_QCE depends on BROKEN in 7.3): off, as on the other SoCs */
 &crypto {
 	status = "disabled";
 };
 
-/*
- * The active-only XO. clk-pwm (the vibrator) keeps GCC_GP1_CLK prepared for
- * good, and on the two-set XO that is an XO vote in the APSS sleep set that
- * never goes away: the RPM would not shut XO down in suspend.
- */
+/* Active-only XO: clk-pwm holds GCC_GP1_CLK, which would block XO shutdown in suspend */
 &gcc {
 	clocks = <&rpmcc RPM_SMD_XO_A_CLK_SRC>, <&sleep_clk>;
 };
@@ -1735,17 +1709,8 @@
 };
 
 /*
- * Thermal: the kernel throttles, retroforge-powerd runs the fan.
- *
- * ROCKNIX bound only the fan to these zones -- the CPU zones' passive trips (alert0/alert1,
- * 90/95 C) named the fan and nothing else, so the cpufreq cooling devices existed but were bound
- * to no zone and a hot CPU was never throttled (an all-core load sat at 93-95 C on the Air Y,
- * 2026-10-11). Its 70 C "active" fan trips and the battery zone's bang-bang fan also fought
- * retroforge-powerd over pwm1 once the fan became a real PWM fan (duty jumping 204/122/158/255 within
- * seconds). Now the passive trips throttle the cluster they measure (cpu0123: the A53s, cpu0's
- * policy; cpu45/cpu67: the A73s, cpu4's policy) and the GPU, and the fan belongs to powerd alone
- * (its curve, its fail-safe 50% on exit; pwm-fan runs the fan at full speed from probe until
- * powerd takes over).
+ * Thermal: passive trips throttle the cluster they measure (cpu0123: A53s; cpu45/cpu67: A73s) and
+ * the GPU. The fan is in no cooling map: retroforge-powerd alone switches it.
  */
 &{/thermal-zones/gpu-thermal} {
 	cooling-maps {

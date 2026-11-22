@@ -264,7 +264,8 @@ def board_cpu_schedulers():
 
 # Profile fields that set [fan] keys for this board (what its fan needs, e.g. a duty it does not
 # stall at). They sit between the factory config and the operator's: /etc and drop-ins win.
-BOARD_FAN_KEYS = {"RETROFORGE_FAN_MIN_PWM": "min_pwm", "RETROFORGE_FAN_OFF_BELOW": "off_below"}
+BOARD_FAN_KEYS = {"RETROFORGE_FAN_MIN_PWM": "min_pwm", "RETROFORGE_FAN_OFF_BELOW": "off_below",
+                  "RETROFORGE_FAN_ON_ABOVE": "on_above"}
 
 
 def board_fan_config(profile):
@@ -344,6 +345,16 @@ def binary_fan_on(curve, temp, was_on, on_pwm, hysteresis):
     if was_on:
         return exact(temp + hysteresis) >= on_pwm
     return exact(temp) >= on_pwm
+
+
+def binary_fan_on_between(temp, was_on, on_above, off_below):
+    """On/off for a two-speed fan by fixed temperatures, as MANGMI's stock Android switches the
+    Air X's: on above on_above (C), off below off_below, and in between it stays as it was."""
+    if temp > on_above:
+        return True
+    if temp < off_below:
+        return False
+    return was_on
 
 
 def fan_stopped(off_below, temp, is_stopped, restart_margin=3):
@@ -663,6 +674,9 @@ class RetroForgePower:
         # below that it turns off again.
         fan_config["switch_on_pwm"] = clamp(parser.getint("fan", "switch_on_pwm", fallback=77), 1, 255)
         fan_config["switch_hysteresis"] = clamp(parser.getint("fan", "switch_hysteresis", fallback=6), 0, 30)
+        # Two-speed fans: on_above (C) with off_below switches by fixed temperatures instead of
+        # the curve (on above on_above, off below off_below); 0 = follow the curve.
+        fan_config["on_above"] = clamp(parser.getint("fan", "on_above", fallback=0), 0, 120)
         # PWM fans: below off_below (C) the fan stops instead of idling at min_pwm; 0 = never.
         # It restarts off_below + 3, and with a kick (fan_kick_pwm) so it spins up from standstill.
         fan_config["off_below"] = clamp(parser.getint("fan", "off_below", fallback=0), 0, 120)
@@ -1161,7 +1175,11 @@ class RetroForgePower:
                 else:
                     target = FAN_SAFE_PWM
                 if self.fan_binary:
-                    if temp:
+                    if temp and self.fan_config["on_above"] and self.fan_config["off_below"]:
+                        self.fan_on = binary_fan_on_between(
+                            int(self.smoothed_temp), self.fan_on,
+                            self.fan_config["on_above"], self.fan_config["off_below"])
+                    elif temp:
                         self.fan_on = binary_fan_on(
                             self.fan_curve_points, int(self.smoothed_temp), self.fan_on,
                             self.fan_config["switch_on_pwm"], self.fan_config["switch_hysteresis"])

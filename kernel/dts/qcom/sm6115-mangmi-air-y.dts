@@ -80,12 +80,6 @@
 	charge-term-current-microamp = <100000>;
 };
 
-/* 15 Hz, the Air Y's listening-test pick (see the fan note in the base dtsi); the Air X runs 120 Hz */
-&fan {
-	pwms = <&fan_pwm 0 66666667 0>;
-	cooling-levels = <0 102 153 204 255>;
-};
-
 &fuel_gauge {
 	cellwise,battery-profile = /bits/ 8 <
 		0x5a 0x00 0x00 0x00 0x00 0x00 0x00 0x00

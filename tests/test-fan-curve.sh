@@ -314,7 +314,7 @@ balanced = re.search(r'name: "balanced",\n\+\s*cpu_governor: "([a-z_]+)"', patch
 check("the boot governor is PowerStation's balanced profile",
       balanced and balanced.group(1), named)
 
-# --- two-speed fans (gpio-fan: off or full; MANGMI Air X / Air Y) --------------------------
+# --- two-speed fans (gpio-fan: off or full; the SM6115 MANGMI boards) ------------------------
 moderate = pd.parse_fan_curve("96:255,90:204,84:153,78:102,72:77,0:51")
 check("2-speed: off at 60 C", pd.binary_fan_on(moderate, 60, False, 77, 6), False)
 check("2-speed: off just below the knee", pd.binary_fan_on(moderate, 71, False, 77, 6), False)
@@ -322,6 +322,13 @@ check("2-speed: on at the knee (72 C, curve 77)", pd.binary_fan_on(moderate, 72,
 check("2-speed: stays on inside the hysteresis", pd.binary_fan_on(moderate, 67, True, 77, 6), True)
 check("2-speed: off below knee - hysteresis", pd.binary_fan_on(moderate, 65, True, 77, 6), False)
 check("2-speed: no curve keeps the state", pd.binary_fan_on([], 90, True, 77, 6), True)
+# By fixed temperatures (RETROFORGE_FAN_ON_ABOVE / _OFF_BELOW), as the Air X's stock Android: 60 / 50
+check("2-speed fixed: off at 60 C (not above 60)", pd.binary_fan_on_between(60, False, 60, 50), False)
+check("2-speed fixed: on at 61 C", pd.binary_fan_on_between(61, False, 60, 50), True)
+check("2-speed fixed: stays on at 55 C", pd.binary_fan_on_between(55, True, 60, 50), True)
+check("2-speed fixed: stays on at 50 C (not below 50)", pd.binary_fan_on_between(50, True, 60, 50), True)
+check("2-speed fixed: off at 49 C", pd.binary_fan_on_between(49, True, 60, 50), False)
+check("2-speed fixed: stays off at 55 C", pd.binary_fan_on_between(55, False, 60, 50), False)
 
 def fake_fan(name, cdev_type, max_state):
     base = tmp / f"sys-{name}-{cdev_type}-{max_state}"
@@ -435,6 +442,9 @@ check("no temperature never stops the fan", pd.fan_stopped(60, 0, False), False)
 check("board fan keys: digits only, mapped to [fan] keys",
       pd.board_fan_config({"RETROFORGE_FAN_MIN_PWM": "80", "RETROFORGE_FAN_OFF_BELOW": "", "RETROFORGE_X": "1"}),
       {"min_pwm": "80"})
+check("board fan keys: the two-speed on/off temperatures",
+      pd.board_fan_config({"RETROFORGE_FAN_ON_ABOVE": "60", "RETROFORGE_FAN_OFF_BELOW": "50"}),
+      {"on_above": "60", "off_below": "50"})
 for status, name in results:
     print(f"{status} {name}")
 sys.exit(1 if any(s.startswith("FAIL") for s, _ in results) else 0)

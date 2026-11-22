@@ -98,6 +98,17 @@ busctl call org.retroforge.Power /org/retroforge/Power org.retroforge.Power1 Res
 Editing the files directly is equally supported; `busctl call ... Reload` re-reads all
 three layers without restarting the daemon.
 
+## Two-speed fans
+
+A gpio-fan with one speed above off (`is_two_speed_fan`; the MANGMI Air X and Air Y) has no PWM to follow the
+curve with: any value above 0 is full. `retroforge-powerd` switches it on where the curve reaches
+`[fan] switch_on_pwm` and off once the curve at the temperature plus `switch_hysteresis` is below
+that again. A board profile can instead pin the switch to fixed temperatures with
+`RETROFORGE_FAN_ON_ABOVE` and `RETROFORGE_FAN_OFF_BELOW` (`[fan] on_above` / `off_below`): on
+above the first, off below the second, unchanged in between. The Air X and Air Y use 60 / 50 °C,
+the Air X's stock Android default fan mode (MANGMI's SystemService switches the same GPIO every 10 s).
+The curve then does not affect that fan.
+
 ## Tests
 
 `tests/test-fan-curve.sh` (part of `make test`) drives the real parse, resample, write and

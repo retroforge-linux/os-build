@@ -133,7 +133,7 @@ Known gaps, from the source:
   over `hardware_info.gd`) shows battery, charger, temperatures, fan, clocks, backlight and LED
   groups from this tree, hiding whatever the board lacks. No board-specific code.
 - **retroforge-powerd** drives the `fan` link's hwmon (a two-speed gpio-fan is switched on/off at
-  the curve's first step) and every LED in `leds/<group>/` (colour on multicolor LEDs; a
+  the curve's first step, or at the board's `RETROFORGE_FAN_ON_ABOVE`/`_OFF_BELOW` temperatures) and every LED in `leds/<group>/` (colour on multicolor LEDs; a
   `red:`/`green:`/`blue:` channel LED at its component of the colour; of on/off coloured LEDs
   (`max_brightness` 1, e.g. the RG 55G1's red/green/amber lamps) only the one nearest the colour,
   lit whenever the brightness is above 0; brightness on all; off for
