@@ -42,11 +42,13 @@
 	 * The fan's supply switch hangs on TLMM GPIO 92, which has no PWM function of its own
 	 * (no gcc_gp/pdm mux on that pin), so ROCKNIX ran it as a two-state gpio-fan: off or full.
 	 * RetroForge pulses it with the kernel's hrtimer GPIO PWM and drives it as a normal pwm-fan (hwmon
-	 * pwm1 0-255). The fan has no speed input: pulsing its supply is the only lever. Listening tests
-	 * on the Air Y (2026-10-11, Quick bar > Fan test): 5-10 Hz is stop-and-go and usable only from
-	 * ~50%; 15 Hz was the best, smooth at 40% duty (period 66.67 ms below). The trade-off: the
-	 * lower the rate, the wider the usable duty range (the fan coasts through longer gaps), until
-	 * it becomes audible stop-and-go; 15 Hz is the lowest rate that stays smooth.
+	 * pwm1 0-255). The fan has no speed input: pulsing its supply is the only lever. The trade-off:
+	 * the lower the rate, the wider the usable duty range (the fan coasts through longer gaps),
+	 * until it becomes audible stop-and-go. Listening tests on the Air Y (2026-10-11, Quick bar >
+	 * Fan test): 5-10 Hz is stop-and-go and usable only from ~50%; 15 Hz was the best there, smooth
+	 * at 40% (sm6115-mangmi-air-y.dts keeps it). On the Air X (2026-11-22) 15 Hz stayed jittery
+	 * at 40-80% and 30 and 60 Hz too, while 120 Hz ran smooth from 70% (period 8.33 ms below;
+	 * the devices/mangmi-air-x-*.conf floor is 179).
 	 */
 	fan_pwm: fan-pwm {
 		compatible = "pwm-gpio";
@@ -56,9 +58,9 @@
 
 	fan: pwm-fan {
 		compatible = "pwm-fan";
-		pwms = <&fan_pwm 0 66666667 0>;	/* 15 Hz */
+		pwms = <&fan_pwm 0 8333333 0>;	/* 120 Hz */
 		/* not in any cooling map: retroforge-powerd owns the fan (see the thermal note below) */
-		cooling-levels = <0 102 153 204 255>;
+		cooling-levels = <0 179 204 230 255>;
 		#cooling-cells = <2>;
 	};
 
