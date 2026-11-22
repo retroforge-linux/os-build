@@ -117,6 +117,23 @@
 #   - new in lavd: futex/SysV-sem lock-waiter tracing prefers fentry (CONFIG_FUNCTION_TRACER=y
 #     here) and falls back to tracepoints, so it needs nothing new.
 #
+# Bump to Valve's v1.1.4.linux.steamos.2 (2026-11-22, issue #50), checked against the tree itself:
+#   - tag -> 9ffc8c74: upstream main as of 2026-10-30 (past the 1.1.4 version bump, 71713c70) +
+#     Valve's services/scx commit + the vendoring commit. Not a descendant of 09f66735: Valve
+#     re-based its tree, and the ~10 lavd commits it had carried on top are now upstream.
+#     ~600 upstream commits, 60 of them in scx_lavd, 8 in bpfland/rusty.
+#   - services/scx.service, kernel.config, .cargo/config.toml and rust-toolchain.toml are
+#     BYTE-IDENTICAL to the 1.1.3.linux.steamos.2 tree's. Nothing to do in kernel/kernel.config.
+#   - services/scx: same SCX_SCHEDULER and SCX_FLAGS, new comment layout. package()'s rewrite now
+#     keys on "# Available schedulers and documentation:" and asserts it took.
+#   - scx_cargo still uses the `disable_rustfmt` sentinel at three call sites. bpf_builder.rs gains
+#     a clang >= 22 refusal, but only for objects registering struct sched_ext_ops_cid; lavd,
+#     bpfland and rusty do not (cid appears only in shared headers), so clang 21 still builds them.
+#   - Valve's own recipe now adds `bpf` to depends, with a comment about kernel upgrades. Not
+#     taken: the reasoning under depends= in our PKGBUILD stands, re-checked on the built binaries.
+#   - lavd b9da99a0 "Use setters for the remaining slice and dsq_vtime writes": the deprecated
+#     p->scx.dsq_vtime warning described above may be gone; check at the HW re-gate.
+#
 # One new runtime dependency that upstream's kernel.config already covers but our fragment does
 # not name, so it was traced rather than assumed. 1.1.3's scx_lavd drops ops.cpu_acquire/release
 # on kernels >= 6.19 and attaches `SEC("?tp_btf/sched_switch")` instead — ours is 7.2, so that

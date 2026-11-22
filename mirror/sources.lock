@@ -26,7 +26,7 @@ a3850c34e48f23b7bc360d70f1e91700de2f8c60af003eda93e14182f8cf6af1 file https://gi
 efda3dfc781cc3582e218a7b7d9618be599eb3b484c167e17873255ddf9ae527 file https://gitlab.com/flamingradian/make-dynpart-mappings/-/archive/10.2.4/make-dynpart-mappings-10.2.4.tar.gz sources/make-dynpart-mappings-10.2.4.tar.gz msm-firmware-loader
 af66adb4f1bb6c1d4d7a7a5e96ccd9e8561dc897803aed58166492f0fd857e56 file https://gitlab.postmarketos.org/postmarketOS/msm-firmware-loader/-/archive/1.9.0/msm-firmware-loader-1.9.0.tar.gz sources/msm-firmware-loader-1.9.0.tar.gz msm-firmware-loader
 5d0c1a38590c68e5c2597c2c8a26d2f80170b1b738c857d63e1cdadada5f5f2a file https://rootfs.fex-emu.gg/ArchLinux/2026-08-11/ArchLinux.sqsh fex-rootfs/ArchLinux-2026-08-11.sqsh packages/mesa-x86/guest.pin
-dc96077dd20d811554b47c4dff1d64232e01e80b669bc1ce7757f72b39152f90 file https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/holo-main/scx-scheds-1.1.3.linux.steamos.2-1.src.tar.gz sources/scx-scheds-1.1.3.linux.steamos.2-1.src.tar.gz scx-scheds
+4231b94c06b903c2aa2540326367524f28af3cca588d0cda15a99a318fb39837 file https://steamdeck-packages.steamos.cloud/archlinux-mirror/sources/holo-main/scx-scheds-1.1.4.linux.steamos.2-1.src.tar.gz sources/scx-scheds-1.1.4.linux.steamos.2-1.src.tar.gz scx-scheds
 696b14cd6006ae9ca174e6164450619ace043283 git https://github.com/Joshua-Ashton/reshade.git git/reshade-696b14cd6006.bundle reshade - gamescope
 20733b938267dcac60f6ac105dbb757f9cc8df9c git https://github.com/Joshua-Ashton/vkroots.git git/vkroots-20733b938267.bundle vkroots - gamescope
 d790ced752b5bfc06b6988baadef6eb2d16bdf96 git https://github.com/KhronosGroup/SPIRV-Headers.git git/SPIRV-Headers-d790ced752b5.bundle SPIRV-Headers - gamescope
