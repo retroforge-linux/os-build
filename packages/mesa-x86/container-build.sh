@@ -33,7 +33,7 @@ log() { printf '[mesa-x86] %s\n' "$*" >&2; }
 # Deliberately NOT installed, because meson links whatever it finds: libdisplay-info and
 # xcb-util-keysyms (the x11 WSI's optional capture hotkey), which the 2026-08-11 guest does not
 # ship at all; and spirv-tools, lm_sensors, valgrind, libunwind, which it does ship but which
-# Turnip and zink do not need (the meson options below also turn them off). An ICD with an
+# Turnip and freedreno do not need (the meson options below also turn them off). An ICD with an
 # unresolvable NEEDED is dropped silently by the Vulkan loader and pressure-vessel; compose.sh
 # re-checks the whole closure against the real guest.
 deps=(
@@ -87,21 +87,21 @@ EOF
 #
 #   vulkan-drivers=freedreno  Turnip, the point of the exercise: x86 Vulkan games and DXVK/VKD3D
 #                             run on it, with the host's patches (packages/mesa/patches).
-#   gallium-drivers=freedreno,zink
-#                             GL for x86 titles: freedreno, which the msm kernel driver's name maps
-#                             to (as in FEX's own Arch guest Mesa, which ran them), and zink over
-#                             that same Turnip on request (MESA_LOADER_DRIVER_OVERRIDE=zink). zink
-#                             alone, as Valve's deckard-mesa-linux-x86_64 ships it, left native x86
-#                             GL titles with no driver inside Steam's Linux Runtime: the msm name
-#                             found none, the zink retry (src/glx/glxext.c GLX_DRIVER_ZINK_INFER)
-#                             failed in the container though it works under FEX outside it, and
-#                             GLX fell back to indirect and died on BadValue (Megabonk on the
-#                             MANGMI Air X, 2026-11-22).
+#   gallium-drivers=freedreno GL for x86 titles on freedreno, which the msm kernel driver's name
+#                             maps to (as in FEX's own Arch guest Mesa, which ran them). No zink:
+#                             Valve's deckard-mesa-linux-x86_64 ships zink alone, and that left
+#                             native x86 GL titles with no driver inside Steam's Linux Runtime: the
+#                             msm name found none, the zink retry (src/glx/glxext.c
+#                             GLX_DRIVER_ZINK_INFER) failed in the container (VK_ERROR_LAYER_NOT_PRESENT)
+#                             though it works under FEX outside it, and GLX fell back to indirect
+#                             and died on BadValue (Megabonk on the MANGMI Air X, 2026-11-22). A
+#                             zink beside freedreno would serve only games launched outside the
+#                             container, by MESA_LOADER_DRIVER_OVERRIDE=zink.
 #   glvnd, glx=dri, egl, gbm  the guest's GL stack is libglvnd + libGLX_mesa/libEGL_mesa, and
 #                             ours replace FEX's copies of those.
 #   vulkan-layers             vram-report-limit only: the host builds it, and Valve's guest
 #                             carries it. The host's other layers are for the arm64 session.
-#   llvm=disabled             freedreno, zink and Turnip do not use it, nor does the host. There
+#   llvm=disabled             freedreno and Turnip do not use it, nor does the host. There
 #                             is no llvmpipe in our libgallium; the guest's own llvmpipe stays in
 #                             FEX's libgallium-26.2.0.so, which ours do not load.
 #
@@ -114,7 +114,7 @@ common=(
   -Dplatforms=x11,wayland
   -Dvulkan-drivers=freedreno
   -Dfreedreno-kmds=msm
-  -Dgallium-drivers=freedreno,zink
+  -Dgallium-drivers=freedreno
   -Dvulkan-layers=vram-report-limit
   -Dglvnd=enabled -Dglx=dri -Degl=enabled -Dgbm=enabled -Dgles1=disabled -Dgles2=enabled
   -Dllvm=disabled -Dshared-llvm=disabled

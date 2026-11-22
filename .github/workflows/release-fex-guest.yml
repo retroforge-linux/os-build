@@ -1,5 +1,5 @@
 # retroforge FEX GUEST — the x86 graphics provider Valve's FEX tool runs native x86 Linux games
-# against: FEX's ArchLinux RootFS with our x86_64 + i686 Mesa (Turnip, zink GL) laid over it, so x86
+# against: FEX's ArchLinux RootFS with our x86_64 + i686 Mesa (Turnip, freedreno GL) laid over it, so x86
 # games get the same Mesa pin and Adreno patches as the host. packages/mesa-x86/README.md has the
 # why and the recipe.
 #
@@ -162,7 +162,7 @@ jobs:
           {
             echo "## retroforge FEX guest \`$VERSION\`"
             echo
-            echo "FEX's ArchLinux RootFS with RetroForge's x86_64 + i686 Mesa (Turnip, zink GL)."
+            echo "FEX's ArchLinux RootFS with RetroForge's x86_64 + i686 Mesa (Turnip, freedreno GL)."
             echo
             echo '```'
             cat "upload/$ASSET.release"

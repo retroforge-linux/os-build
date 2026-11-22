@@ -457,7 +457,7 @@ from that tree into another one reportedly do not work, so it has to be a real t
 whatever FEX publishes there now. Two matching entries are refused rather than guessed between.
 
 **Our Mesa over it.** FEX's RootFS carries upstream Arch Mesa. The image carries our own, built for
-x86_64 and i686 from `packages/mesa`'s pin and patches by `packages/mesa-x86` (Turnip, zink, the
+x86_64 and i686 from `packages/mesa`'s pin and patches by `packages/mesa-x86` (Turnip, freedreno, the
 GL front ends, the VRAM layer; `make mesa-x86`, in an x86_64 Arch container locked to the guest's
 Arch snapshot), at `/usr/lib/retroforge/x86-mesa/root`, with `payload.conf` naming that snapshot.
 It is the image's one x86 payload and nothing on the host runs it. `steam-x86-guest` mounts the
@@ -581,8 +581,8 @@ FEX's own ArchLinux RootFS (2026-08-11), whose Mesa is FEX's build of upstream 2
 Adreno patches.
 
 `packages/mesa-x86` builds the replacement: the same Mesa tarball and patches as the host driver,
-for x86_64 and i686 (Turnip, and GL as zink over it, which is what Valve's own FEX guest Mesa
-ships), laid over that same FEX RootFS as `retroforge-fex-guest-<mesa version>-<revision>.sqsh`.
+for x86_64 and i686 (Turnip, and GL on freedreno; Valve's own FEX guest Mesa ships zink over
+Turnip instead, which fails inside Steam's runtime container), laid over that same FEX RootFS as `retroforge-fex-guest-<mesa version>-<revision>.sqsh`.
 Composing it checks that both arches' ICDs and GL libraries resolve to our build and that every
 library we add loads in the guest. `.github/workflows/release-fex-guest.yml` publishes it as a
 Release asset (manual dispatch only, tag `fex-guest/v<version>`).
@@ -594,8 +594,8 @@ login, could not download it. A Mesa bump in `packages/mesa` carries into the gu
 there; it needs a new dispatch and a pin bump. Details and the bump steps:
 [`packages/mesa-x86/README.md`](../packages/mesa-x86/README.md).
 
-Not yet seen: our guest (or FEX's) mounted by a device and driving a game, zink GL on Adreno under
-FEX, and whether Valve's tool enables thunks.
+Not yet seen: our guest (or FEX's) mounted by a device and driving a game, and whether Valve's tool
+enables thunks.
 
 ## Proton-CachyOS arm64, and DXVK-Sarek for the Adreno 610/613 (downloaded, not shipped)
 

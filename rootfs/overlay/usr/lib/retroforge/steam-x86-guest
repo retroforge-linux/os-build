@@ -47,7 +47,7 @@
 # images happen under fex-guest/.mount.lock, so they never race; fex-guest/.mounted says which image is
 # mounted.
 #
-# OUR x86 MESA: the image carries an x86_64 + i686 build of our own Mesa (Turnip, zink, the GL front
+# OUR x86 MESA: the image carries an x86_64 + i686 build of our own Mesa (Turnip, freedreno, the GL front
 # ends; packages/mesa-x86) at /usr/lib/retroforge/x86-mesa/root, built against the Arch snapshot named
 # in x86-mesa/payload.conf. When it is there, the image is mounted on fex-guest/base instead, and
 # fex-guest/root is fuse-overlayfs with the payload over it (lower layers only, so read-only): every

@@ -7,7 +7,7 @@
 #
 # Reads the assembler's globals rather than taking arguments -- $stage (the staged tree), $ROOT
 # (repo root), $OUT (build outputs).
-# STAGE x86-mesa — /usr/lib/retroforge/x86-mesa/{root/,payload.conf}: our Mesa (Turnip, zink, the GL
+# STAGE x86-mesa — /usr/lib/retroforge/x86-mesa/{root/,payload.conf}: our Mesa (Turnip, freedreno, the GL
 # front ends, the VRAM layer) built for x86_64 and i686 by packages/mesa-x86 from packages/mesa's own
 # pin and patches. It is the image's one x86 payload, and it runs nothing on the host: steam-x86-guest
 # lays root/ over the x86 guest it downloads for Valve's FEX tool (fuse-overlayfs, read-only), so x86
