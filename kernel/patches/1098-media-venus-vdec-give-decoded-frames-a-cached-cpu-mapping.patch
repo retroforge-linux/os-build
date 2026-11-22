@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 22 Nov 2026 05:45:00 -0800
+Subject: [PATCH] media: venus: vdec: give decoded frames a cached CPU mapping
+
+venus is not cache-coherent, so its MMAP CAPTURE buffers are mapped
+uncached, and a client that reads a decoded frame on the CPU reads DRAM
+without the cache. Chromium's V4L2 decoder does, for every frame: on
+SM6115 (Cortex-A73) a 1080p30 VP9 stream showed 180-188 of 300 frames,
+dropped 55-62 and used 167-175% CPU, worse than its software decoder
+(300 frames at 161-170%). ffmpeg reading the same frames out cost
+~20 ms of CPU per 1080p NV12 frame.
+
+Let the CAPTURE queue take cache hints and ask for non-coherent memory
+for its MMAP buffers, so vb2 allocates them cached and cleans and
+invalidates them at QBUF and DQBUF. The same stream then showed 297-298
+of 300 frames with none dropped at 106-112% CPU, and the ffmpeg read
+cost fell to ~5 ms per frame.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/venus/vdec.c | 33 +++++++++++++++++++++++++++++++--
+ 1 file changed, 31 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/venus/vdec.c b/drivers/media/platform/qcom/venus/vdec.c
+index df91fa5..77856a6 100644
+--- a/drivers/media/platform/qcom/venus/vdec.c
++++ b/drivers/media/platform/qcom/venus/vdec.c
+@@ -535,6 +535,34 @@ static int vdec_enum_framesizes(struct file *file, void *fh,
+ 	return 0;
+ }
+ 
++/*
++ * Decoded frames get a cached CPU mapping. venus is not cache-coherent, so
++ * MMAP buffers are otherwise mapped uncached, and a client that reads a frame
++ * on the CPU (to copy or convert it, as Chromium's V4L2 decoder does) reads
++ * DRAM uncached: ~20 ms per 1080p NV12 frame on a Cortex-A73, enough to drop
++ * a 30 fps stream to ~20 fps. Cached buffers cost a cache clean at QBUF and an
++ * invalidate at DQBUF instead, which vb2 does for non-coherent memory.
++ */
++static int vdec_reqbufs(struct file *file, void *fh,
++			struct v4l2_requestbuffers *rb)
++{
++	if (rb->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
++	    rb->memory == V4L2_MEMORY_MMAP)
++		rb->flags |= V4L2_MEMORY_FLAG_NON_COHERENT;
++
++	return v4l2_m2m_ioctl_reqbufs(file, fh, rb);
++}
++
++static int vdec_create_bufs(struct file *file, void *fh,
++			    struct v4l2_create_buffers *cb)
++{
++	if (cb->format.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
++	    cb->memory == V4L2_MEMORY_MMAP)
++		cb->flags |= V4L2_MEMORY_FLAG_NON_COHERENT;
++
++	return v4l2_m2m_ioctl_create_bufs(file, fh, cb);
++}
++
+ static int vdec_subscribe_event(struct v4l2_fh *fh,
+ 				const struct v4l2_event_subscription *sub)
+ {
+@@ -623,9 +651,9 @@ static const struct v4l2_ioctl_ops vdec_ioctl_ops = {
+ 	.vidioc_try_fmt_vid_cap_mplane = vdec_try_fmt,
+ 	.vidioc_try_fmt_vid_out_mplane = vdec_try_fmt,
+ 	.vidioc_g_selection = vdec_g_selection,
+-	.vidioc_reqbufs = v4l2_m2m_ioctl_reqbufs,
++	.vidioc_reqbufs = vdec_reqbufs,
+ 	.vidioc_querybuf = v4l2_m2m_ioctl_querybuf,
+-	.vidioc_create_bufs = v4l2_m2m_ioctl_create_bufs,
++	.vidioc_create_bufs = vdec_create_bufs,
+ 	.vidioc_prepare_buf = v4l2_m2m_ioctl_prepare_buf,
+ 	.vidioc_qbuf = v4l2_m2m_ioctl_qbuf,
+ 	.vidioc_expbuf = v4l2_m2m_ioctl_expbuf,
+@@ -1684,6 +1712,7 @@ static int m2m_queue_init(void *priv, struct vb2_queue *src_vq,
+ 	dst_vq->drv_priv = inst;
+ 	dst_vq->buf_struct_size = sizeof(struct venus_buffer);
+ 	dst_vq->allow_zero_bytesused = 1;
++	dst_vq->allow_cache_hints = 1;
+ 	dst_vq->min_queued_buffers = 0;
+ 	dst_vq->dev = inst->core->dev;
+ 	dst_vq->lock = &inst->ctx_q_lock;
+-- 
+2.47.0
+

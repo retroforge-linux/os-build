@@ -13,7 +13,8 @@
 #   - Valve's rules must stay verbatim below their header (the header names the upstream blob), or a
 #     hand edit hides behind "Valve's file".
 #   - the codec links must name both drivers' encoder (iris on SM8250/8550/8650, venus on SM6115), and
-#     no decoder: /dev/video-dec0 puts the Steam UI's video on iris, slower and hotter than the CPU.
+#     a decoder on venus only: /dev/video-dec0 puts the Steam UI's video on iris, slower and hotter
+#     than the CPU, but on venus it spares the SM6115's weak cores.
 #   - udev syntax is checked with `udevadm verify` where the host has it (systemd >= 255).
 set -uo pipefail
 
@@ -67,10 +68,13 @@ grants="$(tail -n +"$((start + 1))" "$INPUT" | grep -vE '^\s*(#|$)' | grep -c 'T
   || bad "$grants of $rules rules grant uaccess"
 
 CASE="codec links"
-# No /dev/video-dec0: with it the Steam UI's Chromium decodes on iris, slower and hotter than its CPU
-# decode (four cores at 95 C on the Pocket FIT, 2026-10-29).
-! grep -qE 'SYMLINK\+="video-dec' "$CODEC" && ok "no decoder link (the Steam UI decodes on the CPU)" \
-  || bad "a /dev/video-dec* link: the Steam UI decodes on iris again"
+# No /dev/video-dec0 on iris: with it the Steam UI's Chromium decodes there, slower and hotter than
+# its CPU decode (four cores at 95 C on the Pocket FIT, 2026-10-29). Venus has one.
+! grep -E 'SYMLINK\+="video-dec' "$CODEC" | grep -qv 'ATTR{name}=="qcom-venus-decoder"' \
+  && ok "no decoder link on iris (its Steam UI decodes on the CPU)" \
+  || bad "a /dev/video-dec* link for iris: the Steam UI decodes on iris again"
+grep -qE 'ATTR\{name\}=="qcom-venus-decoder".*SYMLINK\+="video-dec0"' "$CODEC" \
+  && ok "qcom-venus-decoder -> /dev/video-dec0 (the Steam UI decodes on venus)" || bad "no decoder link for venus"
 for n in qcom-iris-encoder qcom-venus-encoder; do
   grep -qE "ATTR\{name\}==\"$n\".*SYMLINK\+=\"video-enc0\"" "$CODEC" && ok "$n -> /dev/video-enc0" || bad "no rule for $n"
 done
