@@ -1,6 +1,14 @@
-# Use BFQ (fairer interactive latency under game+shader load) with a deep 4MB
-# read-ahead on the SD/eMMC boot device. Kernel builds CONFIG_IOSCHED_BFQ=y.
+# Use BFQ (fairer interactive latency under game+shader load) on the SD/eMMC boot device. Kernel
+# builds CONFIG_IOSCHED_BFQ=y.
+# Read-ahead 256 KB on an SD card (its mmc device's type is "SD"): a page fault in a mapped file
+# reads up to read_ahead_kb around it, so with the 4 MB this rule set before, 300 random faults in a
+# 655 MB game file (Hades' VO.fsb) read 500 MB and took 5.9 s from a cold cache; 26 MB and 0.37 s
+# at 256 KB (128 KB: 0.23 s). Sequential reads gain nothing past 256 KB, where the card reaches its
+# ~80 MB/s (128 KB: 77, 4 MB: 74 in 4 KB steps). MANGMI Air X, Samsung SDXC at SDR104, 2026-11-22.
+# An eMMC (type "MMC") keeps the 4 MB: it was not measured.
 # NOTE: scoped to mmcblk (the SD card retroforge boots from today). A future
 # install-to-UFS target enumerates as scsi/sd*, not mmcblk, so it won't match
 # this rule — revisit when the UFS install path lands.
-ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/scheduler}="bfq", ATTR{queue/read_ahead_kb}="4096"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/scheduler}="bfq"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTRS{type}=="SD", ATTR{queue/read_ahead_kb}="256"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTRS{type}=="MMC", ATTR{queue/read_ahead_kb}="4096"
