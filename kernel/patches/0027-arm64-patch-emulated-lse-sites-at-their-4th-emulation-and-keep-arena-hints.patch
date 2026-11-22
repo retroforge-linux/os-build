@@ -9,16 +9,24 @@ text and stub pages ~17%. And of the 2,637 sites it emulated (3.83M
 emulations counted, none lost), 37% ran once, 57% at most four times.
 
 Patch a site at its abi.lse_patch_after-th emulation (default 4; 1 is the
-old behaviour). A lossy, lock-free table of 4096 words counts emulations per
-(mm, pc): a 56-bit hash tag over an 8-bit count. A collision or a race
-changes only when a site is patched. By the counts above this halves the
-time spent patching and takes the private text copies from 5.0 to 2.0 MiB,
-for ~2 ms of extra traps.
+old behaviour), counted per (mm, pc) in a lock-free table of 1024 sets of 4
+words, each a 56-bit hash tag over an 8-bit count. A due site frees its way.
+A site that finds its set full is due at once, as with 1, and the set ages,
+so no site keeps trapping for want of a count: with one word per hash, two
+LDADDAL that ran in turn in ucrtbase.dll and shared a word reset each other,
+84,000 traps each in one wineboot. A race changes only when a site is
+patched, never whether it can be.
 
 Each mm keeps the four arenas its stubs went into last, newest first, with
 the slot to try next in each (mm->context.lse_arenas), so a site near one
 skips the walk. They are hints: checked before use (still that arena, the
 slot still free), copied by fork along with the arenas, cleared by exec.
+
+Same wineboot, ftrace on lse_patch alone: 0026 spent 85.7 ms patching; the
+hints alone (lse_patch_after 1) 47.4 ms, a patch 17.7 us instead of 32.2;
+both 38.5 ms, with 1,253 sites patched instead of 2,621, half the
+copy-on-write faults, and the walk run 42 times instead of 2,629. tools/lse
+lsetest passes with either setting.
 
 Applies after 0026.
 
@@ -71,63 +79,92 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
   * free address space is in reach (FEX reserves all of it around its own
   * binary), the arena goes into the PROT_NONE padding between two segments
   * of the site's own ELF file, which lives and dies with that object. Sites
-@@ -34,6 +36,12 @@
+@@ -34,6 +36,13 @@
   * with neither keep trapping. abi.lse_patch turns patching off;
   * abi.lse_patched counts patched sites, abi.lse_patch_failed attempts that
   * found no way to patch.
 + *
 + * Why the 4th: a patch costs ~32 us (median 19) in Proton's processes and a
 + * private copy of the site's text page, and 37% of the sites Proton's wineboot
-+ * emulated ran once, 57% at most four times (MANGMI Air X, 2026-11-21). By
-+ * those counts, patching at the 4th emulation halves the time spent patching
-+ * and takes the text copies from 5.0 to 2.0 MiB, for ~2 ms of extra traps.
++ * emulated ran once, 57% at most four times (MANGMI Air X, 2026-11-21). With
++ * the 4th and the arena hints, the same wineboot spent 38.5 ms patching
++ * instead of 85.7 ms: 1,253 sites instead of 2,621, half the copy-on-write
++ * faults, and the search for a slot ran 42 times instead of 2,629.
   */
  
  #include <linux/fs.h>
-@@ -308,8 +316,10 @@
+@@ -308,8 +317,11 @@
  /* Room left above the heap when an arena has to go above a site. */
  #define LSE_BRK_ROOM		SZ_32M
  #define LSE_FAILED_BITS		10
-+#define LSE_SEEN_BITS		12
++#define LSE_SEEN_SET_BITS	10
++#define LSE_SEEN_WAYS		4
  
  static int lse_patch_enabled = 1;
 +static int lse_patch_after = 4, lse_patch_after_max = 255;
  static unsigned long lse_patched, lse_patch_failed;
  static DEFINE_MUTEX(lse_patch_lock);
  static struct page *lse_arena_pages[LSE_ARENA_SIZE / PAGE_SIZE + 1];
-@@ -320,6 +330,31 @@
+@@ -320,6 +332,58 @@
  	unsigned long pc;
  } lse_failed[1 << LSE_FAILED_BITS];
  
 +/*
 + * How often each site has been emulated, so it is patched at its
-+ * lse_patch_after-th: one word per entry, the top 56 bits of a hash of
-+ * (mm, pc) over a count in the low 8. Lossy and lock-free: a collision or a
-+ * race changes only when a site is patched, never whether it can be.
++ * lse_patch_after-th: sets of 4 words, each the top 56 bits of a hash of
++ * (mm, pc) over a count in the low 8 (0: a free way). A site that is due
++ * frees its way, and a new one takes a free way. When the set has none, the
++ * new site is due at once, as with lse_patch_after 1, and every way of the
++ * set ages by one, so the ways of sites that stopped running free up. So no
++ * site keeps trapping for want of a count: one word per site, as at first,
++ * left two sites that ran in turn and shared it resetting each other
++ * (ucrtbase.dll's two LDADDAL in a loop trapped 84,000 times each in one
++ * wineboot), and ageing alone did the same to five sharing a set. Lock-free:
++ * a race changes only when a site is patched, never whether it can be.
 + */
-+static u64 lse_seen[1 << LSE_SEEN_BITS];
++static u64 lse_seen[1 << LSE_SEEN_SET_BITS][LSE_SEEN_WAYS];
 +
 +static bool lse_due(struct mm_struct *mm, unsigned long pc)
 +{
-+	int after = READ_ONCE(lse_patch_after);
-+	u64 key, tag, e, *slot;
++	int after = READ_ONCE(lse_patch_after), i, way = -1;
++	u64 key, tag, e, *set;
 +	unsigned int n;
 +
 +	if (after <= 1)
 +		return true;
 +	key = ((u64)(unsigned long)mm ^ ((u64)pc * GOLDEN_RATIO_64)) * GOLDEN_RATIO_64;
-+	slot = &lse_seen[key >> (64 - LSE_SEEN_BITS)];
++	set = lse_seen[key >> (64 - LSE_SEEN_SET_BITS)];
 +	tag = key & ~0xffULL;
-+	e = READ_ONCE(*slot);
-+	n = (e & ~0xffULL) == tag ? (e & 0xff) + 1 : 1;
-+	WRITE_ONCE(*slot, tag | min(n, 0xffU));
-+	return n >= after;
++	for (i = 0; i < LSE_SEEN_WAYS; i++) {
++		e = READ_ONCE(set[i]);
++		if (e & 0xff && (e & ~0xffULL) == tag) {
++			n = (e & 0xff) + 1;
++			if (n >= after) {
++				WRITE_ONCE(set[i], 0);
++				return true;
++			}
++			WRITE_ONCE(set[i], tag | n);
++			return false;
++		}
++		if (!(e & 0xff) && way < 0)
++			way = i;
++	}
++	if (way >= 0) {
++		WRITE_ONCE(set[way], tag | 1);
++		return false;
++	}
++	for (i = 0; i < LSE_SEEN_WAYS; i++) {
++		e = READ_ONCE(set[i]);
++		if (e & 0xff)			/* a way freed meanwhile stays free */
++			WRITE_ONCE(set[i], e - 1);
++	}
++	return true;
 +}
 +
  static int lse_arena_mremap(const struct vm_special_mapping *sm,
  			    struct vm_area_struct *new_vma)
  {
-@@ -350,9 +385,10 @@
+@@ -350,9 +414,10 @@
  	return lo < slots ? arena + lo * LSE_SLOT_SIZE : 0;
  }
  
@@ -140,7 +177,7 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
  {
  	unsigned long arenas[8], sizes[8], slot;
  	struct vm_area_struct *vma;
-@@ -375,13 +411,74 @@
+@@ -375,13 +440,74 @@
  
  	for (i = 0; i < nr; i++) {
  		slot = lse_free_slot(arenas[i], sizes[i]);
@@ -216,7 +253,7 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
   * A PROT_NONE gap between two mappings of the same ELF file as the site's
   * (the padding the loader leaves between 64 KiB-aligned segments), lying in
   * [lo, hi): up to LSE_ARENA_SIZE of it in *start and *len. The loader never maps
-@@ -415,10 +512,11 @@
+@@ -415,10 +541,11 @@
   * Map a new arena within [lo, hi) for the site at pc: in free space below
   * the site's mapping first, where nothing grows, else above it but clear of
   * the heap and of the stack's gap above mmap_base, else in a padding gap of
@@ -230,7 +267,7 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
  {
  	struct vm_unmapped_area_info info = { .length = LSE_ARENA_SIZE };
  	unsigned long addr = -ENOMEM, heap_end, vm_start, vm_end, len = LSE_ARENA_SIZE;
-@@ -466,7 +564,10 @@
+@@ -466,7 +593,10 @@
  			addr = -ENOMEM;
  	}
  	mmap_write_unlock(mm);
@@ -242,7 +279,7 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
  }
  
  /* Write into the task's own code, as ptrace does: copy-on-write, I-cache synced. */
-@@ -480,7 +581,7 @@
+@@ -480,7 +610,7 @@
  {
  	struct mm_struct *mm = current->mm;
  	struct vm_area_struct *vma;
@@ -251,7 +288,7 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
  	u32 words[LSE_STUB_WORDS], cur, b;
  	unsigned int h;
  	int n;
-@@ -490,6 +591,8 @@
+@@ -490,6 +620,8 @@
  	b = lse_stub_inplace(insn);
  	if (!b && !lse_stub_gen(insn, 0, 0, words))
  		return;				/* a form that stays on the trap path */
@@ -260,7 +297,7 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
  	if (!mutex_trylock(&lse_patch_lock))
  		return;				/* busy: this site traps once more */
  
-@@ -519,9 +622,13 @@
+@@ -519,9 +651,13 @@
  	lo = pc > LSE_REACH ? pc - LSE_REACH : 0;
  	lo = PAGE_ALIGN(max3(lo, PAGE_ALIGN(mmap_min_addr), PAGE_SIZE));
  	hi = min(pc + LSE_REACH, DEFAULT_MAP_WINDOW) & PAGE_MASK;
@@ -276,7 +313,7 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
  	if (!slot)
  		goto fail;
  
-@@ -531,6 +638,7 @@
+@@ -531,6 +667,7 @@
  		goto fail;
  	if (!lse_poke(mm, slot, words, 4 * n))
  		goto fail;
@@ -284,7 +321,7 @@ diff -ruN a/arch/arm64/kernel/lse_emulate.c b/arch/arm64/kernel/lse_emulate.c
  	b = lse_i_b(pc, slot);
  	if (!lse_poke(mm, pc, &b, 4))
  		goto fail;
-@@ -617,6 +725,15 @@
+@@ -617,6 +754,15 @@
  		.proc_handler	= proc_dointvec_minmax,
  		.extra1		= SYSCTL_ZERO,
  		.extra2		= SYSCTL_ONE,
