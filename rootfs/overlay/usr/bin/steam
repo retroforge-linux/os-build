@@ -395,10 +395,24 @@ fi
 export LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # Nova-Deck starts it from steamrtarm64, and that is what has run on hardware.
 cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" || exit 1
+# Valve's steamwebhelper.sh pins the client's UI with `taskset 0x7c`, the Steam Frame's middle cores;
+# this taskset, first on the client's PATH, makes that choice from this device's cores instead
+# (/usr/lib/retroforge/steam-bin/taskset says how).
+steam_bin="${RETROFORGE_STEAM_BIN:-/usr/lib/retroforge/steam-bin}"
+case ":$PATH:" in *":$steam_bin:"*) ;; *) [ -d "$steam_bin" ] && export PATH="$steam_bin:$PATH" ;; esac
+# Every start of the client checksums all of its executables first ("Verifying all executable
+# checksums"): 24 s of a cold start on the MANGMI Air X (SD card, Cortex-A73/A53), 2026-11-21.
+# -noverifyfiles skips it (the bootstrapper logs "Verification skipped"; the web helper was up 2.7 s
+# after the start instead of ~25 s). Steam Client's install (`-exitsteam`, steam-install) still
+# verifies what it has just installed, and so does a run asked to (-verifyfiles).
+noverify=(-noverifyfiles)
+for arg in "$@"; do
+  case "$arg" in -exitsteam|-verifyfiles) noverify=() ;; esac
+done
 child=""; stopping=""
 trap 'stopping=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM INT HUP
 while :; do
-  "$client" "$@" &
+  "$client" "${noverify[@]}" "$@" &
   child=$!
   # A trapped signal ends `wait` early; keep waiting until the client has really exited.
   while :; do

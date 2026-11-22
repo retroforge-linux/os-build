@@ -511,6 +511,7 @@ test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-coredump-limit.sh
 	bash $(TESTS_DIR)/test-cpu-affinity.sh
 	bash $(TESTS_DIR)/test-gpu-worker-cpus.sh
+	bash $(TESTS_DIR)/test-steam-taskset.sh
 	bash $(TESTS_DIR)/test-fan-curve.sh
 	bash $(TESTS_DIR)/test-hw-map.sh
 	bash $(TESTS_DIR)/test-hw-dtb.sh

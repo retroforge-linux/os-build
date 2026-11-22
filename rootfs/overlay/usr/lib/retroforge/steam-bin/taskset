@@ -1,0 +1,78 @@
+#!/bin/bash
+# taskset as the Steam client finds it: /usr/bin/steam puts this folder first on the client's PATH.
+#
+# Valve's steamrtarm64/steamwebhelper.sh starts the client's UI as `taskset 0x7c ./steamwebhelper`:
+# CPUs 2-6, which on the Steam Frame (SM8650) are its five Cortex-A720s. That keeps the UI off the
+# two A520 little cores (too slow for it) and off the X4 prime core (the game's heaviest thread
+# runs there). The mask is the Frame's layout, though, and on other SoCs CPUs 2-6 are other cores:
+# on the SM6115 two A53 littles and three of its four A73s, so the UI never ran on CPU 7. So that one
+# call gets the same choice made from this device's cpu_capacity, and every other call goes to the
+# real taskset unchanged.
+#
+# The UI's cores: with three or more capacity levels, every CPU above the lowest level and below
+# the highest (SM8250 4-6, SM8550 3-6, SM8650 2-6, which is Valve's own mask). With two, the lower
+# level is a little cluster when its capacity is at most 70% of the top's, and the UI takes the top
+# level (SM6115 4-7, SM4450 6-7); else the top level is a prime cluster, and the UI takes the lower
+# one (SM8750 0-5). With one level, no cpu_capacity, or none of those CPUs online (PowerStation's
+# core-count slider), the UI is not pinned at all. CPUs that are offline now stay in the list, so the
+# UI uses them once they are back. When every one of them goes offline (a suspend), the kernel moves
+# the UI to the rest and the pin is gone until Steam starts its UI again, as with Valve's mask.
+#
+# TEST SEAMS (tests/test-steam-taskset.sh): RETROFORGE_SYS_CPU, RETROFORGE_TASKSET.
+set -u
+
+SYS=${RETROFORGE_SYS_CPU:-/sys/devices/system/cpu}
+REAL=${RETROFORGE_TASKSET:-/usr/bin/taskset}
+
+# "0-3,5" -> one CPU number per line
+expand() {
+  echo "$1" | tr ',' '\n' | while IFS=- read -r a b; do
+    [ -n "$a" ] || continue
+    [ -n "$b" ] || b=$a
+    for ((i = a; i <= b; i++)); do echo "$i"; done
+  done
+}
+
+# one CPU per line, sorted -> "2-5,7"
+compress() {
+  awk 'NR == 1 { s = p = $1; next }
+       $1 == p + 1 { p = $1; next }
+       { printf "%s%s,", s, (s == p ? "" : "-" p); s = p = $1 }
+       END { if (NR) printf "%s%s", s, (s == p ? "" : "-" p) }'
+}
+
+# The UI's CPU list, or empty to leave it unpinned.
+ui_cpus() {
+  local d caps="" levels n lo hi pick online
+  for d in "$SYS"/cpu[0-9]*; do
+    [ -r "$d/cpu_capacity" ] || return 0
+    caps+="${d##*/cpu} $(cat "$d/cpu_capacity")"$'\n'
+  done
+  [ -n "$caps" ] || return 0
+  levels=$(printf '%s' "$caps" | awk '{print $2}' | sort -nu)
+  n=$(echo "$levels" | wc -l)
+  lo=$(echo "$levels" | head -1); hi=$(echo "$levels" | tail -1)
+  if [ "$n" -ge 3 ]; then
+    pick=$(printf '%s' "$caps" | awk -v lo="$lo" -v hi="$hi" '$2 != lo && $2 != hi {print $1}')
+  elif [ "$n" -eq 2 ] && [ $((lo * 10)) -le $((hi * 7)) ]; then
+    pick=$(printf '%s' "$caps" | awk -v hi="$hi" '$2 == hi {print $1}')
+  elif [ "$n" -eq 2 ]; then
+    pick=$(printf '%s' "$caps" | awk -v lo="$lo" '$2 == lo {print $1}')
+  else
+    return 0
+  fi
+  online=$(expand "$(cat "$SYS/online" 2>/dev/null)")
+  [ -n "$(comm -12 <(echo "$pick" | sort) <(echo "$online" | sort))" ] || return 0
+  echo "$pick" | sort -n | compress
+}
+
+# Valve's call: a mask (no option), then a steamwebhelper.
+if [ "$#" -ge 2 ] && [[ $1 =~ ^(0x)?[0-9a-fA-F]+$ ]] && [ "${2##*/}" = steamwebhelper ]; then
+  cpus=$(ui_cpus)
+  shift
+  if [ -z "$cpus" ]; then
+    exec "$@"
+  fi
+  exec "$REAL" -c "$cpus" "$@"
+fi
+exec "$REAL" "$@"

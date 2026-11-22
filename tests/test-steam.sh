@@ -336,8 +336,9 @@ WROOT="$W/home/.local/share/Steam"
 CASE="wrapper: launch"
 touch "$W/mybus"
 DBUS_SESSION_BUS_ADDRESS="unix:path=$W/mybus" STEAM_RUNTIME=1 wrap 0 -gamepadui -silent steam://rungameid/42
-[ "$WRC" = 0 ] && grep -qx "args: -gamepadui -silent steam://rungameid/42" "$W/call1" \
-  && ok "runs steamrtarm64/steam itself, no runtime container, with the plugin's arguments" || bad "rc=$WRC $(cat "$W/call1" 2>&1) $WERR"
+[ "$WRC" = 0 ] && grep -qx "args: -noverifyfiles -gamepadui -silent steam://rungameid/42" "$W/call1" \
+  && ok "runs steamrtarm64/steam itself, no runtime container, with the plugin's arguments and -noverifyfiles" \
+  || bad "rc=$WRC $(cat "$W/call1" 2>&1) $WERR"
 grep -qx "cwd: $WROOT/steamrtarm64" "$W/call1" && ok "from steamrtarm64 in the Steam folder (XDG default)" || bad "$(grep cwd "$W/call1")"
 grep -qx "ld: $WROOT/steamrtarm64:$WROOT/steamrtarm64/video" "$W/call1" \
   && ok "LD_LIBRARY_PATH is the client's own libraries (libav*, libvpx)" || bad "$(grep ld: "$W/call1")"
@@ -370,10 +371,19 @@ CASE="wrapper: foreign D-Bus"
 DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/0/bus" wrap 0
 grep -qx "dbus: unset" "$W/call1" && ok "a bus socket that is not ours is dropped" || bad "$(grep dbus "$W/call1")"
 
+CASE="wrapper: client checksums"
+wrap 0 -steamdeck -exitsteam
+grep -qx "args: -steamdeck -exitsteam" "$W/call1" \
+  && ok "Steam Client's install (-exitsteam) still verifies the files it installed: no -noverifyfiles" \
+  || bad "$(cat "$W/call1" 2>&1)"
+wrap 0 -verifyfiles steam://rungameid/1
+grep -qx "args: -verifyfiles steam://rungameid/1" "$W/call1" && ok "nor a run asked to verify (-verifyfiles)" \
+  || bad "$(cat "$W/call1" 2>&1)"
+
 CASE="wrapper: update restart"
 wrap "42 42 7" steam://rungameid/1
 [ "$(cat "$W/count")" = 3 ] && [ "$WRC" = 7 ] && ok "exit 42 starts the client again; the final status is returned" || bad "runs=$(cat "$W/count") rc=$WRC"
-grep -qx "args: steam://rungameid/1" "$W/call3" && ok "with the same arguments" || bad "$(cat "$W/call3")"
+grep -qx "args: -noverifyfiles steam://rungameid/1" "$W/call3" && ok "with the same arguments" || bad "$(cat "$W/call3")"
 
 CASE="wrapper: stopped by a signal"
 echo S >"$W/codes"; rm -f "$W/count" "$W"/call* "$W/term" "$W/runpid"
@@ -630,7 +640,7 @@ kill -TERM "$wpid"; wait "$wpid"; WRC=$?
 CASE="keep: no user manager"
 reset_keep; touch "$W/sdrun-fails"
 RETROFORGE_STEAM_KEEP=on wrap 0 -silent steam://rungameid/42
-[ "$WRC" = 0 ] && [ "$(cat "$W/count")" = 1 ] && grep -qx "args: -silent steam://rungameid/42" "$W/call1" \
+[ "$WRC" = 0 ] && [ "$(cat "$W/count")" = 1 ] && grep -qx "args: -noverifyfiles -silent steam://rungameid/42" "$W/call1" \
   && grep -q "could not start Steam as the user unit" <<<"$WERR" && ok "the client runs with the launch, and it is said" || bad "rc=$WRC $WERR"
 
 CASE="keep: inside the unit"
