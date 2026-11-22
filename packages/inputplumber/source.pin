@@ -31,7 +31,19 @@
 #         ui_r2, the raw value went out on every change, and OGUI reads only 1.0 as pressed: the
 #         stick did not move focus and the analog triggers missed the on-screen keyboard's shift
 #         (L2) and enter (R2) nearly always. Goes by the event's source capability now.
+#   0005  ours, for upstream: sources and targets wait for input instead of polling. Each evdev
+#         source slept out a 2.5 ms poll and each target a 1-16 ms interval, input or not: on the
+#         Air X (two evdev sources, five targets) 1,544 wakeups/s and ~24 ms/s CPU at rest, in
+#         games as well. The evdev gamepad, keyboard and touchscreen sources now wait on their
+#         device and on an eventfd every command signals; the xpad target waits on its uinput
+#         device for force feedback; keyboard and DBus never need the interval, the mouse only
+#         while it moves, the touchpad only while touched. Air X, 2026-11-22, A/B against stock:
+#         idle 6 wakeups/s and under 1 ms/s; injected stick input is read in 0.14 ms (stock 1.33,
+#         max 2.52) and out in 0.24 ms (1.38); rumble upload 0.85 ms (9.45), play 0.26 ms (6.54).
+#         Every SourceDeviceClient send must wake its source: an unwoken upload_effect misses its
+#         200 ms reply window and the game's EVIOCSFF fails with EPERM. Other sources (hidraw,
+#         iio) and targets (Deck, DualSense, ...) keep polling. Drop once upstream carries it.
 name: inputplumber
 pkgbuild_local: PKGBUILD
-patches: 0001-feat-Input-Layers-add-input-layers-to-map-button-com.patch 0002-feat-Input-Layers-emit-events-when-a-layer-activatio.patch 0003-fix-Input-Layers-release-layer-outputs-before-loadin.patch 0004-fix-DBus-threshold-axis-and-trigger-input-a-profile-translated.patch
+patches: 0001-feat-Input-Layers-add-input-layers-to-map-button-com.patch 0002-feat-Input-Layers-emit-events-when-a-layer-activatio.patch 0003-fix-Input-Layers-release-layer-outputs-before-loadin.patch 0004-fix-DBus-threshold-axis-and-trigger-input-a-profile-translated.patch 0005-perf-wait-for-input-instead-of-polling-source-and-target-devices.patch
 pkgrel_suffix: 1

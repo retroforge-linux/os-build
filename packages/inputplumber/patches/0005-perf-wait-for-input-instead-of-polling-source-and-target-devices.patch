@@ -1,0 +1,591 @@
+From c62c98ab5f944ecb243bc5367fdb81a2b713d2ed Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 21 Nov 2026 18:13:12 -0800
+Subject: [PATCH] perf: wait for input instead of polling source and target
+ devices
+
+Every source device polled its device every 2.5 ms and every target
+device ran on a 1-16 ms interval, whether or not anything happened. On
+a handheld with one gamepad (a MANGMI Air X: two evdev sources, an
+X-Box Elite, keyboard, mouse, touchpad and DBus target) that is about
+1,550 wakeups a second with no input at all.
+
+Sources: a SourceInputDevice can name a file descriptor that becomes
+readable when poll() has events (wake_fd()). The evdev gamepad,
+keyboard and touchscreen sources name their device. Their SourceDriver
+then waits on that fd and on an eventfd the SourceDeviceClient signals
+after each command (output events such as rumble included), instead of
+sleeping out the poll rate. While the translator has scheduled events
+(has_scheduled_events()) it polls at the poll rate as before. Sources
+without a wake fd (hidraw, iio, ...) are unchanged.
+
+Targets: a TargetOutputDevice says whether it needs the periodic poll
+now (needs_periodic_poll(), true by default) and can name a file
+descriptor that becomes readable when poll() has output events
+(output_fd()). The xpad target names its uinput device, so force
+feedback uploads and plays are read when they arrive, and needs the
+interval only while it has queued events; keyboard and DBus never need
+it, the mouse only while it moves and the touchpad only while touched.
+A target that needs neither waits only for commands, its output fd and
+scheduled events. The others keep their interval.
+
+The mouse resets its time delta when it starts moving, since poll() no
+longer runs while it rests.
+---
+ Cargo.toml                            |  2 +-
+ src/input/event/evdev/translator.rs   |  5 ++
+ src/input/source/client.rs            | 24 +++++++-
+ src/input/source/evdev/gamepad.rs     | 11 ++++
+ src/input/source/evdev/keyboard.rs    | 11 ++++
+ src/input/source/evdev/touchscreen.rs | 11 ++++
+ src/input/source/mod.rs               | 67 +++++++++++++++++++++-
+ src/input/target/dbus.rs              |  4 ++
+ src/input/target/keyboard.rs          |  6 +-
+ src/input/target/mod.rs               | 82 ++++++++++++++++++++++++++-
+ src/input/target/mouse.rs             | 10 ++++
+ src/input/target/touchpad.rs          |  4 ++
+ src/input/target/xpad.rs              |  9 +++
+ 13 files changed, 239 insertions(+), 7 deletions(-)
+
+diff --git a/Cargo.toml b/Cargo.toml
+index 9e41931..5de9d1d 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -128,7 +128,7 @@ log = { version = "0.4.29", features = [
+   "release_max_level_debug",
+ ] }
+ mio = { version = "1.1.1", features = ["os-poll", "os-ext", "net"] }
+-nix = { version = "0.30.1", features = ["fs"] }
++nix = { version = "0.30.1", features = ["fs", "poll", "event"] }
+ packed_struct = "0.10.1"
+ procfs = "0.18.0"
+ ratatui = "0.30.0"
+diff --git a/src/input/event/evdev/translator.rs b/src/input/event/evdev/translator.rs
+index dc70e6b..9af5a64 100644
+--- a/src/input/event/evdev/translator.rs
++++ b/src/input/event/evdev/translator.rs
+@@ -154,6 +154,11 @@ impl EventTranslator {
+         self.translatable_events.contains(&event_signature)
+     }
+ 
++    /// Whether any events are scheduled for a later poll
++    pub fn has_scheduled_events(&self) -> bool {
++        !self.scheduled_events.is_empty()
++    }
++
+     /// Poll for scheduled events
+     pub fn poll(&mut self) -> Vec<NativeEvent> {
+         let mut ready_events = vec![];
+diff --git a/src/input/source/client.rs b/src/input/source/client.rs
+index f75c31e..b1458d9 100644
+--- a/src/input/source/client.rs
++++ b/src/input/source/client.rs
+@@ -1,6 +1,8 @@
+ use std::{sync::mpsc::channel, time::Duration};
+ 
+ use evdev::FFEffectData;
++use nix::sys::eventfd::EventFd;
++use std::sync::Arc;
+ use thiserror::Error;
+ use tokio::sync::mpsc::{
+     error::{SendError, SendTimeoutError, TrySendError},
+@@ -44,6 +46,8 @@ impl From<TrySendError<SourceCommand>> for ClientError {
+ #[derive(Debug, Clone)]
+ pub struct SourceDeviceClient {
+     tx: Sender<SourceCommand>,
++    /// Woken after each command, for a source device waiting on its input.
++    waker: Option<Arc<EventFd>>,
+ }
+ 
+ impl From<Sender<SourceCommand>> for SourceDeviceClient {
+@@ -54,7 +58,18 @@ impl From<Sender<SourceCommand>> for SourceDeviceClient {
+ 
+ impl SourceDeviceClient {
+     pub fn new(tx: Sender<SourceCommand>) -> Self {
+-        Self { tx }
++        Self { tx, waker: None }
++    }
++
++    pub fn with_waker(tx: Sender<SourceCommand>, waker: Option<Arc<EventFd>>) -> Self {
++        Self { tx, waker }
++    }
++
++    /// Wake the source device, which may be waiting for input instead of polling.
++    fn wake(&self) {
++        if let Some(waker) = self.waker.as_ref() {
++            let _ = waker.write(1);
++        }
+     }
+ 
+     /// Send the given command to the source device. This method uses a timeout
+@@ -62,6 +77,7 @@ impl SourceDeviceClient {
+     async fn send(&self, cmd: SourceCommand) -> Result<(), ClientError> {
+         let result = self.tx.send_timeout(cmd, DEFAULT_TIMEOUT).await;
+         let Err(err) = result else {
++            self.wake();
+             return Ok(());
+         };
+         match err {
+@@ -86,6 +102,7 @@ impl SourceDeviceClient {
+     pub async fn upload_effect(&self, effect: FFEffectData) -> Result<i16, ClientError> {
+         let (tx, rx) = channel();
+         self.tx.try_send(SourceCommand::UploadEffect(effect, tx))?;
++        self.wake();
+         match rx.recv_timeout(Duration::from_millis(200)) {
+             Ok(result) => match result {
+                 Ok(id) => Ok(id),
+@@ -104,6 +121,7 @@ impl SourceDeviceClient {
+         self.tx
+             .send(SourceCommand::UpdateEffect(effect_id, effect))
+             .await?;
++        self.wake();
+         Ok(())
+     }
+ 
+@@ -112,6 +130,7 @@ impl SourceDeviceClient {
+         let (tx, rx) = channel();
+         self.tx
+             .try_send(SourceCommand::EraseEffect(effect_id, tx))?;
++        self.wake();
+         match rx.recv_timeout(Duration::from_secs(1)) {
+             Ok(result) => match result {
+                 Ok(_) => Ok(()),
+@@ -125,6 +144,7 @@ impl SourceDeviceClient {
+     pub async fn get_filtered_events(&self) -> Result<Vec<Capability>, ClientError> {
+         let (tx, rx) = channel();
+         self.tx.send(SourceCommand::GetEventFilter(tx)).await?;
++        self.wake();
+         match rx.recv_timeout(Duration::from_secs(1)) {
+             Ok(result) => Ok(result),
+             Err(_err) => Err(ClientError::ChannelClosed),
+@@ -134,12 +154,14 @@ impl SourceDeviceClient {
+     /// Update the event filter for this source device.
+     pub async fn set_filtered_events(&self, events: Vec<Capability>) -> Result<(), ClientError> {
+         self.tx.send(SourceCommand::SetEventFilter(events)).await?;
++        self.wake();
+         Ok(())
+     }
+ 
+     /// Stop the source device.
+     pub async fn stop(&self) -> Result<(), ClientError> {
+         self.tx.send(SourceCommand::Stop).await?;
++        self.wake();
+         Ok(())
+     }
+ }
+diff --git a/src/input/source/evdev/gamepad.rs b/src/input/source/evdev/gamepad.rs
+index 5f5b0e6..4efd626 100644
+--- a/src/input/source/evdev/gamepad.rs
++++ b/src/input/source/evdev/gamepad.rs
+@@ -488,6 +488,17 @@ impl GamepadEventDevice {
+ }
+ 
+ impl SourceInputDevice for GamepadEventDevice {
++    fn wake_fd(&self) -> Option<std::os::fd::RawFd> {
++        use std::os::fd::AsRawFd;
++        Some(self.device.as_raw_fd())
++    }
++
++    fn has_scheduled_events(&self) -> bool {
++        self.translator
++            .as_ref()
++            .is_some_and(|t| t.has_scheduled_events())
++    }
++
+     /// Poll the given input device for input events
+     fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
+         let mut native_events = vec![];
+diff --git a/src/input/source/evdev/keyboard.rs b/src/input/source/evdev/keyboard.rs
+index abf9de5..62f020b 100644
+--- a/src/input/source/evdev/keyboard.rs
++++ b/src/input/source/evdev/keyboard.rs
+@@ -72,6 +72,17 @@ impl KeyboardEventDevice {
+ }
+ 
+ impl SourceInputDevice for KeyboardEventDevice {
++    fn wake_fd(&self) -> Option<std::os::fd::RawFd> {
++        use std::os::fd::AsRawFd;
++        Some(self.device.as_raw_fd())
++    }
++
++    fn has_scheduled_events(&self) -> bool {
++        self.translator
++            .as_ref()
++            .is_some_and(|t| t.has_scheduled_events())
++    }
++
+     /// Poll the given input device for input events
+     fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
+         let mut native_events = vec![];
+diff --git a/src/input/source/evdev/touchscreen.rs b/src/input/source/evdev/touchscreen.rs
+index ae8d8b5..dd75b11 100644
+--- a/src/input/source/evdev/touchscreen.rs
++++ b/src/input/source/evdev/touchscreen.rs
+@@ -304,6 +304,17 @@ impl TouchscreenEventDevice {
+ }
+ 
+ impl SourceInputDevice for TouchscreenEventDevice {
++    fn wake_fd(&self) -> Option<std::os::fd::RawFd> {
++        use std::os::fd::AsRawFd;
++        Some(self.device.as_raw_fd())
++    }
++
++    fn has_scheduled_events(&self) -> bool {
++        self.translator
++            .as_ref()
++            .is_some_and(|t| t.has_scheduled_events())
++    }
++
+     /// Poll the given input device for input events
+     fn poll(&mut self) -> Result<Vec<NativeEvent>, InputError> {
+         let mut native_events = vec![];
+diff --git a/src/input/source/mod.rs b/src/input/source/mod.rs
+index 5844fce..418e90e 100644
+--- a/src/input/source/mod.rs
++++ b/src/input/source/mod.rs
+@@ -10,6 +10,10 @@ use std::{
+ 
+ use ::evdev::FFEffectData;
+ use led::LedDevice;
++use nix::errno::Errno;
++use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
++use nix::sys::eventfd::{EfdFlags, EventFd};
++use std::os::fd::{AsFd, BorrowedFd, RawFd};
+ use thiserror::Error;
+ use tokio::sync::mpsc::{self, error::TryRecvError};
+ 
+@@ -41,6 +45,8 @@ pub mod tty;
+ const BUFFER_SIZE: usize = 2048;
+ /// Default poll rate (2.5ms/400Hz)
+ const POLL_RATE: Duration = Duration::from_micros(2500);
++/// The longest an event-driven source device waits for input or a command.
++const IDLE_WAIT_MS: u16 = 1000;
+ 
+ /// Possible errors for a source device client
+ #[derive(Error, Debug)]
+@@ -126,6 +132,19 @@ pub trait SourceInputDevice {
+     fn get_default_event_filter(&self) -> Result<HashSet<Capability>, InputError> {
+         Ok(HashSet::new())
+     }
++
++    /// A file descriptor that becomes readable when [SourceInputDevice::poll]
++    /// has events to read. With one, the [SourceDriver] waits on it (and on
++    /// commands) instead of polling at its poll rate.
++    fn wake_fd(&self) -> Option<RawFd> {
++        None
++    }
++
++    /// Whether events are scheduled for a later poll: while they are, the
++    /// [SourceDriver] polls at its poll rate even with a [Self::wake_fd].
++    fn has_scheduled_events(&self) -> bool {
++        false
++    }
+ }
+ 
+ /// A [SourceOutputDevice] is a device implementation that can handle output events
+@@ -204,6 +223,9 @@ pub struct SourceDriver<T: SourceInputDevice + SourceOutputDevice> {
+     composite_device: CompositeDeviceClient,
+     tx: mpsc::Sender<SourceCommand>,
+     rx: mpsc::Receiver<SourceCommand>,
++    /// Signalled by [SourceDeviceClient] after each command, so that a driver
++    /// waiting on its device's [SourceInputDevice::wake_fd] also wakes for it.
++    waker: Option<Arc<EventFd>>,
+ }
+ 
+ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T> {
+@@ -227,6 +249,11 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+         config: Option<config::SourceDevice>,
+     ) -> Self {
+         let (tx, rx) = mpsc::channel(options.buffer_size);
++        let waker =
++            EventFd::from_value_and_flags(0, EfdFlags::EFD_NONBLOCK | EfdFlags::EFD_CLOEXEC)
++                .map(Arc::new)
++                .map_err(|e| log::warn!("No eventfd, the source device is polled: {e}"))
++                .ok();
+ 
+         // Check to see if the device configuration calls for event filtering
+         let mut events_exclude_all = false;
+@@ -279,6 +306,7 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+             composite_device,
+             tx,
+             rx,
++            waker,
+         }
+     }
+ 
+@@ -354,7 +382,7 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+ 
+     /// Returns a transmitter channel that can be used to send events to this device
+     pub fn client(&self) -> SourceDeviceClient {
+-        self.tx.clone().into()
++        SourceDeviceClient::with_waker(self.tx.clone(), self.waker.clone())
+     }
+ 
+     /// Returns udev device information about the device as a reference
+@@ -458,6 +486,17 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+                     }
+ 
+                     let poll_time = poll_time_start.elapsed();
++                    // Event-driven: wait until the device has input or a command
++                    // arrives, unless events are scheduled for a later poll.
++                    let wake_fd = implementation.wake_fd();
++                    if let (Some(fd), Some(waker), false) = (
++                        wake_fd,
++                        self.waker.as_ref(),
++                        implementation.has_scheduled_events(),
++                    ) {
++                        SourceDriver::<T>::wait_for_input(fd, waker);
++                        continue;
++                    }
+                     // Sleep up to the configured duration after polling timeout
+                     if let Some(remaining) = self.options.poll_rate.checked_sub(poll_time) {
+                         log::trace!("{:?}: Sleep time remaining: {remaining:?}", device_id);
+@@ -478,6 +517,32 @@ impl<T: SourceInputDevice + SourceOutputDevice + Send + 'static> SourceDriver<T>
+         Ok(())
+     }
+ 
++    /// Wait until fd (the device) or waker (a command was sent) is readable, or
++    /// IDLE_WAIT_MS has passed.
++    fn wait_for_input(fd: RawFd, waker: &EventFd) {
++        // SAFETY: the device owning fd outlives this call (it is borrowed by the
++        // run loop for as long as the loop runs).
++        let device = unsafe { BorrowedFd::borrow_raw(fd) };
++        let mut fds = [
++            PollFd::new(device, PollFlags::POLLIN),
++            PollFd::new(waker.as_fd(), PollFlags::POLLIN),
++        ];
++        let timeout = PollTimeout::from(IDLE_WAIT_MS);
++        if let Err(e) = poll(&mut fds, timeout) {
++            if e != Errno::EINTR {
++                log::debug!("Failed to wait for input: {e}");
++                thread::sleep(POLL_RATE);
++            }
++            return;
++        }
++        if fds[1]
++            .revents()
++            .is_some_and(|r| r.contains(PollFlags::POLLIN))
++        {
++            let _ = waker.read();
++        }
++    }
++
+     /// Read commands sent to this device from the channel until it is
+     /// empty.
+     fn receive_commands(
+diff --git a/src/input/target/dbus.rs b/src/input/target/dbus.rs
+index 2116a51..d08e30b 100644
+--- a/src/input/target/dbus.rs
++++ b/src/input/target/dbus.rs
+@@ -498,4 +498,8 @@ impl TargetOutputDevice for DBusDevice {
+ 
+         Ok(())
+     }
++
++    fn needs_periodic_poll(&self) -> bool {
++        false
++    }
+ }
+diff --git a/src/input/target/keyboard.rs b/src/input/target/keyboard.rs
+index 0c5d686..00e9d38 100644
+--- a/src/input/target/keyboard.rs
++++ b/src/input/target/keyboard.rs
+@@ -431,4 +431,8 @@ impl TargetInputDevice for KeyboardDevice {
+     }
+ }
+ 
+-impl TargetOutputDevice for KeyboardDevice {}
++impl TargetOutputDevice for KeyboardDevice {
++    fn needs_periodic_poll(&self) -> bool {
++        false
++    }
++}
+diff --git a/src/input/target/mod.rs b/src/input/target/mod.rs
+index 5f04c15..2fa283c 100644
+--- a/src/input/target/mod.rs
++++ b/src/input/target/mod.rs
+@@ -14,6 +14,8 @@ pub mod ultimate_2;
+ pub mod unified_gamepad;
+ pub mod xpad;
+ 
++use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
++use std::os::fd::{AsRawFd, BorrowedFd, RawFd};
+ use std::{
+     collections::HashSet,
+     env,
+@@ -22,6 +24,8 @@ use std::{
+     sync::{Arc, Mutex, MutexGuard},
+     time::Duration,
+ };
++use tokio::io::unix::{AsyncFd, AsyncFdReadyGuard};
++use tokio::io::Interest;
+ 
+ use debug::DebugDevice;
+ use horipad_steam::HoripadSteamDevice;
+@@ -427,6 +431,46 @@ pub trait TargetOutputDevice {
+     ) -> Result<(), OutputError> {
+         Ok(())
+     }
++
++    /// A file descriptor that becomes readable when [TargetOutputDevice::poll]
++    /// has output events to read (a uinput device's force feedback).
++    fn output_fd(&self) -> Option<RawFd> {
++        None
++    }
++
++    /// Whether [TargetOutputDevice::poll] or scheduled events need the
++    /// [TargetDriver] to run at its poll rate now. A device that returns false
++    /// is woken only by commands, input events and its [Self::output_fd].
++    fn needs_periodic_poll(&self) -> bool {
++        true
++    }
++}
++
++/// A target's [TargetOutputDevice::output_fd], for [AsyncFd]
++struct OutputFd(RawFd);
++
++impl AsRawFd for OutputFd {
++    fn as_raw_fd(&self) -> RawFd {
++        self.0
++    }
++}
++
++/// Whether fd has input to read now.
++fn has_input(fd: RawFd) -> bool {
++    // SAFETY: fd is a target device's, open for as long as the target runs.
++    let fd = unsafe { BorrowedFd::borrow_raw(fd) };
++    let mut fds = [PollFd::new(fd, PollFlags::POLLIN)];
++    matches!(poll(&mut fds, PollTimeout::ZERO), Ok(n) if n > 0)
++}
++
++/// Resolves when fd is readable; never without one.
++async fn output_readable(
++    fd: &Option<AsyncFd<OutputFd>>,
++) -> io::Result<AsyncFdReadyGuard<'_, OutputFd>> {
++    match fd {
++        Some(fd) => fd.readable().await,
++        None => std::future::pending().await,
++    }
+ }
+ 
+ /// Options for running a target device
+@@ -524,6 +568,16 @@ impl<T: TargetInputDevice + TargetOutputDevice + Send + 'static> TargetDriver<T>
+ 
+                 log::debug!("Target device running: {}", self.dbus.path());
+                 let mut interval = tokio::time::interval(self.options.poll_rate);
++                // Event-driven: devices that need no periodic poll wait for a
++                // command or their output fd instead of the interval.
++                let wanted_fd = self.implementation.lock().unwrap().output_fd();
++                let output_fd = wanted_fd.and_then(|fd| {
++                    AsyncFd::with_interest(OutputFd(fd), Interest::READABLE)
++                        .map_err(|e| log::warn!("Polling output of {}: {e}", self.dbus.path()))
++                        .ok()
++                });
++                let always_periodic = wanted_fd.is_some() && output_fd.is_none();
++                let mut was_periodic = true;
+                 loop {
+                     // Find any scheduled events that are ready to be sent
+                     let mut ready_events = vec![];
+@@ -592,10 +646,31 @@ impl<T: TargetInputDevice + TargetOutputDevice + Send + 'static> TargetDriver<T>
+                         }
+                     }
+ 
+-                    // Sleep for the configured duration or until a command is sent
++                    // Sleep for the configured duration, until a command is sent
++                    // or until the device has output to read
++                    let periodic = always_periodic
++                        || !self.scheduled_events.is_empty()
++                        || self.implementation.lock().unwrap().needs_periodic_poll();
++                    if periodic && !was_periodic {
++                        // Skip the ticks missed while waiting without the interval
++                        interval.reset();
++                    }
++                    was_periodic = periodic;
+                     tokio::select! {
+-                        _ = interval.tick() => (),
+-                        Some(cmd) = rx.recv() => {
++                        _ = interval.tick(), if periodic => (),
++                        ready = output_readable(&output_fd) => {
++                            // Wait for the next edge only once poll() has read it all
++                            if let Ok(mut guard) = ready {
++                                if !has_input(guard.get_inner().0) {
++                                    guard.clear_ready();
++                                }
++                            }
++                        }
++                        cmd = rx.recv() => {
++                            let Some(cmd) = cmd else {
++                                log::debug!("Receive channel disconnected");
++                                break;
++                            };
+                             let mut implementation = self.implementation.lock().unwrap();
+                             let result = Self::process_command(&self.type_id, &mut composite_device, &metrics_tx, &mut implementation, cmd);
+                             if let Err(e) = result {
+@@ -605,6 +680,7 @@ impl<T: TargetInputDevice + TargetOutputDevice + Send + 'static> TargetDriver<T>
+                         }
+                     }
+                 }
++                drop(output_fd);
+ 
+                 // Stop the device
+                 log::debug!("Target device stopping: {}", self.dbus.path());
+diff --git a/src/input/target/mouse.rs b/src/input/target/mouse.rs
+index d562931..05a20d5 100644
+--- a/src/input/target/mouse.rs
++++ b/src/input/target/mouse.rs
+@@ -129,6 +129,12 @@ impl MouseDevice {
+             }
+         };
+ 
++        // Moving again after a rest: poll() was not called while it rested
++        // (needs_periodic_poll), so start its time delta from now
++        if self.state.mouse_velocity == (0.0, 0.0) {
++            self.last_poll = Instant::now();
++        }
++
+         // Update the mouse velocity
+         if let Some(x) = x {
+             self.state.mouse_velocity.0 = x;
+@@ -255,4 +261,8 @@ impl TargetOutputDevice for MouseDevice {
+ 
+         Ok(vec![])
+     }
++
++    fn needs_periodic_poll(&self) -> bool {
++        self.state.mouse_velocity != (0.0, 0.0)
++    }
+ }
+diff --git a/src/input/target/touchpad.rs b/src/input/target/touchpad.rs
+index feff970..d661a87 100644
+--- a/src/input/target/touchpad.rs
++++ b/src/input/target/touchpad.rs
+@@ -394,4 +394,8 @@ impl TargetOutputDevice for TouchpadDevice {
+ 
+         Ok(vec![])
+     }
++
++    fn needs_periodic_poll(&self) -> bool {
++        self.is_touching
++    }
+ }
+diff --git a/src/input/target/xpad.rs b/src/input/target/xpad.rs
+index 2d7dd96..0b89432 100644
+--- a/src/input/target/xpad.rs
++++ b/src/input/target/xpad.rs
+@@ -413,4 +413,13 @@ impl TargetOutputDevice for XBoxController {
+     fn get_output_capabilities(&self) -> Result<Vec<OutputCapability>, OutputError> {
+         Ok(vec![OutputCapability::ForceFeedback])
+     }
++
++    fn output_fd(&self) -> Option<std::os::fd::RawFd> {
++        use std::os::fd::{AsFd, AsRawFd};
++        Some(self.device.as_fd().as_raw_fd())
++    }
++
++    fn needs_periodic_poll(&self) -> bool {
++        !self.queued_events.is_empty()
++    }
+ }
+-- 
+2.55.0
+
