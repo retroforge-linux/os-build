@@ -10,17 +10,21 @@
 #   - 0032 CardArtWindow: a card's art loads within a screen of the visible part and goes past three
 #     screens or after the container has been hidden a while. Loading too little shows empty cards;
 #     dropping too little keeps a whole library's art in GPU memory (872 MiB, 1,000 games, Air X).
+#   - 0053 OguiIdCache: check_running() learns each process's OGUI_ID without reading every
+#     environment every second. Reading too little misses a game's processes (OGUI loses the game);
+#     reading too much is the 24-40 ms of main thread a second it replaces (Air X).
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PATCHES="$ROOT/packages/opengamepadui/patches"
 P0032="$PATCHES/0032-card-art-only-near-the-screen.patch"
+P0053="$PATCHES/0053-launch-manager-reads-a-process-environment-only-while-it-is-new.patch"
 
 PASS=0; FAIL=0; CASE=""
 ok()  { PASS=$((PASS+1)); printf '  ok   %s -- %s\n' "$CASE" "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s -- %s\n' "$CASE" "$1"; }
 
-[ -f "$P0032" ] || { echo "missing input: $P0032" >&2; exit 1; }
+for f in "$P0032" "$P0053"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
 T="$(mktemp -d)" && [ -d "$T" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
@@ -160,6 +164,84 @@ func run() -> void:
 	quit(1 if failed else 0)
 GD
   out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$T" --script res://card_art_test.gd 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+  n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+  PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+  if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+    bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+  fi
+fi
+
+CASE="OGUI_ID cache (0053)"
+if [ -z "$GODOT" ]; then
+  printf '  skip %s -- no Godot (set RETROFORGE_GODOT to a Godot 4 binary)\n' "$CASE"
+else
+  P53="$T/p53"; mkdir -p "$P53"
+  added_file "$P0053" core/systems/launcher/ogui_id_cache.gd > "$P53/ogui_id_cache.gd"
+  grep -q '^func sweep(pids: PackedInt64Array)' "$P53/ogui_id_cache.gd" \
+    && ok "the patch adds core/systems/launcher/ogui_id_cache.gd" || bad "ogui_id_cache.gd not found in the patch"
+  grep -q '_ogui_ids.sweep(all_pids)' "$P0053" && ! grep -q '^-.*_ogui_ids' "$P0053" \
+    && ok "and check_running() takes its OGUI_ID -> pids map from it" || bad "check_running() does not use the cache"
+  printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P53/project.godot"
+  cat > "$P53/ogui_id_test.gd" <<GD
+extends SceneTree
+# A fake /proc: pid -> its environment. read_env() records what is read.
+
+const OguiIdCache := preload("res://ogui_id_cache.gd")
+var failed := 0
+var envs := {}
+
+
+func check(what: String, got, want) -> void:
+	if str(got) == str(want):
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+
+func read_env(pid: int) -> Dictionary:
+	return envs.get(pid, {})
+
+
+func _initialize() -> void:
+	for pid in range(1000, 1300):
+		envs[pid] = {"HOME": "/home/player"}
+	envs[1100] = {"OGUI_ID": "Hades"}
+	envs[1101] = {"OGUI_ID": "Hades", "SteamGameId": "1145360"}
+	envs.erase(1102)   # a root process: its environment cannot be read
+	var pids := PackedInt64Array(range(1000, 1300))
+	var cache = OguiIdCache.new(read_env)
+	var got: Dictionary = cache.sweep(pids)
+	check("first check: every environment read, the app's processes found by OGUI_ID",
+		[cache.reads, got], [300, {"Hades": PackedInt64Array([1100, 1101])}])
+	cache.sweep(pids)
+	cache.sweep(pids)
+	check("a pid is read again in its first 3 checks (a fork that execs with its own environment)", cache.reads, 900)
+	var before: int = cache.reads
+	for i in 30:
+		got = cache.sweep(pids)
+	check("then once every 30 checks: 300 reads over 30 checks instead of 9,000, the same map",
+		[cache.reads - before, got], [300, {"Hades": PackedInt64Array([1100, 1101])}])
+	envs[2000] = {}   # forked, not exec'd yet
+	pids.push_back(2000)
+	cache.sweep(pids)
+	envs[2000] = {"OGUI_ID": "Steam"}   # exec'd as the kept Steam unit
+	got = cache.sweep(pids)
+	check("a new process that execs with OGUI_ID set by its next check is found", got.get("Steam"), PackedInt64Array([2000]))
+	envs[1200] = {"OGUI_ID": "Late"}
+	var seen := -1
+	for i in 30:
+		got = cache.sweep(pids)
+		if "Late" in got and seen < 0:
+			seen = i
+	check("an old process whose environment changes is found within 30 checks", seen >= 0, true)
+	got = cache.sweep(PackedInt64Array([1100, 2000]))
+	check("processes that have gone are forgotten; the rest keep their OGUI_ID",
+		[cache.size(), got], [2, {"Hades": PackedInt64Array([1100]), "Steam": PackedInt64Array([2000])}])
+	quit(1 if failed else 0)
+GD
+  out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P53" --script res://ogui_id_test.gd 2>&1)"; rc=$?
   printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
   n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
   PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))

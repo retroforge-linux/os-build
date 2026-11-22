@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: retroforge <retroforge@invalid>
+Date: Sun, 22 Nov 2026 12:00:00 +0000
+Subject: [PATCH] perf(LaunchManager): read a process's environment only while it is new
+
+check_running() runs every second, in menus and during games, and read
+every process's /proc/<pid>/environ into a Dictionary to find OGUI_ID.
+On a MANGMI Air X that was 332 environments per check, 24-40 ms of the
+main thread every second (2026-11-22, Megabonk running).
+
+A process's environment changes only when it execs, which a new process
+does at once. OguiIdCache (core/systems/launcher/ogui_id_cache.gd) reads
+a pid's environment in its first 3 checks, then once every 30 checks
+(staggered by pid, so ~11 reads a check), and forgets pids that have
+gone. check_running() gets the same OGUI_ID -> pids map from it.
+
+---
+  core/global/launch_manager.gd          | 19 ++++--------
+  core/systems/launcher/ogui_id_cache.gd | 56 ++++++++++++++++++++++++++++++++++
+  2 files changed, 62 insertions(+), 13 deletions(-)
+
+index 670bb00..0933110 100644
+--- a/core/global/launch_manager.gd
++++ b/core/global/launch_manager.gd
+@@ -71,6 +71,9 @@ var _focused_app_id := 0
+ ## every second.
+ var _orphan_windows := PackedInt64Array()
+ var _input_manager: InputManager
++const OguiIdCache := preload("res://core/systems/launcher/ogui_id_cache.gd")
++## Every running process's OGUI_ID, read from its environment only while it is new (ogui_id_cache.gd).
++var _ogui_ids := OguiIdCache.new(func(pid: int) -> Dictionary: return Reaper.get_pid_environment(pid))
+ 
+ ## OpenGamepadUI does not use InputPlumber's intercept mode. While it has focus every gamepad gets
+ ## FOCUS_PROFILE, which sends each input to DBus as the UI action the intercept used to produce and
+@@ -880,19 +883,9 @@ func check_running() -> void:
+ 	# Get a list of all running processes
+ 	var all_pids := Reaper.get_pids()
+ 
+-	# All OGUI processes should have an OGUI_ID environment variable set. Look
+-	# at every running process and sort them by OGUI_ID.
+-	var ogui_id_to_pids: Dictionary[String, PackedInt64Array] = {}
+-	for pid in all_pids:
+-		var env := Reaper.get_pid_environment(pid)
+-		if not env.is_empty():
+-			logger.trace("Found environment for pid", pid, ":", env)
+-		if not "OGUI_ID" in env:
+-			continue
+-		var id := env["OGUI_ID"] as String
+-		if not id in ogui_id_to_pids:
+-			ogui_id_to_pids[id] = PackedInt64Array()
+-		ogui_id_to_pids[id].push_back(pid)
++	# All OGUI processes should have an OGUI_ID environment variable set. Sort
++	# every running process by OGUI_ID (reading only new processes' environments).
++	var ogui_id_to_pids := _ogui_ids.sweep(all_pids)
+ 	if !ogui_id_to_pids.is_empty():
+ 		logger.debug("Running processes:", ogui_id_to_pids)
+ 
+new file mode 100644
+index 0000000..236e4ed
+--- /dev/null
++++ b/core/systems/launcher/ogui_id_cache.gd
+@@ -0,0 +1,56 @@
++extends RefCounted
++
++## The OGUI_ID of every running process, for LaunchManager.check_running(), which runs every second.
++## Reading every process's environment each time is mostly repeat work: on a MANGMI Air X it parsed
++## 332 environments per check, 24-40 ms of the main thread every second, during games too. A
++## process's environment only changes when it execs, which a new process does at once (a fork
++## that execs with an environment of its own), so a new pid is read in its first YOUNG_SWEEPS
++## checks, every other one once every RECHECK_SWEEPS checks (staggered by pid), and a pid that has
++## gone is forgotten.
++
++const YOUNG_SWEEPS := 3
++const RECHECK_SWEEPS := 30
++
++## Environments read so far.
++var reads := 0
++var _read_env: Callable
++var _sweep := 0
++## pid -> [its OGUI_ID ("" for none), the sweep that first read it]
++var _ids := {}
++
++
++## read_env(pid) returns the process's environment as a Dictionary ({} when it cannot be read).
++func _init(read_env: Callable) -> void:
++	_read_env = read_env
++
++
++## The pids among pids that have an OGUI_ID, by OGUI_ID.
++func sweep(pids: PackedInt64Array) -> Dictionary[String, PackedInt64Array]:
++	_sweep += 1
++	var by_id: Dictionary[String, PackedInt64Array] = {}
++	var running := {}
++	for pid in pids:
++		running[pid] = true
++		var known = _ids.get(pid)
++		var id: String
++		if known != null and _sweep - known[1] >= YOUNG_SWEEPS and (pid + _sweep) % RECHECK_SWEEPS != 0:
++			id = known[0]
++		else:
++			var env: Dictionary = _read_env.call(pid)
++			reads += 1
++			id = env.get("OGUI_ID", "")
++			_ids[pid] = [id, known[1] if known != null else _sweep]
++		if id.is_empty():
++			continue
++		if not id in by_id:
++			by_id[id] = PackedInt64Array()
++		by_id[id].push_back(pid)
++	for pid in _ids.keys():
++		if not pid in running:
++			_ids.erase(pid)
++	return by_id
++
++
++## How many pids it remembers.
++func size() -> int:
++	return _ids.size()
