@@ -38,3 +38,15 @@ trapping.
   ```sh
   gcc -O2 -march=armv8-a -fPIC -shared -o lse_shim.so lse_shim.c -ldl
   ```
+
+- **`stubtest.c`** — checks 0026's stubs against the real instructions, so it runs on a CPU that
+  HAS LSE (an Apple Silicon Mac's arm64 Docker will do). Each case runs a random LSE form natively
+  and through its stub on the same registers, flags and memory and compares all of them; register
+  overlaps, XZR operands and the stubs' x9-x17 scratch range are covered. Then 4 threads hammer
+  LDADDAL, CASAL and CASPAL stubs, and objdump must decode sample stubs. `stubtest.sh` takes
+  `lse_stub.h` out of the 0026 patch, so it always tests what the kernel builds.
+  300,000 cases, 0 mismatches (2026-11-21).
+
+  ```sh
+  docker run --rm -v "$PWD":/repo:ro rf-kbuild:trixie sh /repo/tools/lse/stubtest.sh 300000
+  ```
