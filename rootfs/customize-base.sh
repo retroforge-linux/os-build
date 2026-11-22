@@ -215,7 +215,11 @@ BOOTSTRAP_PKGS=(base)
 #                       2x, crc32 6-10x, adler32 2-6x, on A73 and A53 alike; no LSE atomics; level-1
 #                       output ~25% bigger. It speeds what uses the system libz (our Python tools, OGUI,
 #                       PortMaster ports); emulators and Steam's runtime carry their own zlib.
-PKGS=(wpa_supplicant wireless-regdb openssh vulkan-icd-loader vulkan-freedreno vulkan-mesa-layers vulkan-tools retroforge-gpu-priority mesa gamescope seatd mangohud bluez bluez-utils networkmanager alsa-ucm-conf pipewire wireplumber pipewire-pulse pipewire-alsa rtkit e2fsprogs xorg-xwayland noto-fonts noto-fonts-emoji python python-gobject scx-scheds rauc btrfs-progs rsync gptfdisk dosfstools mtools parted earlyoom zram-generator udisks2 f3 upower libinput-tools brightnessctl opengamepadui powerstation inputplumber which fuse3 ksmbd-tools avahi sdl2_ttf sdl2_image sdl2_mixer squashfuse mesa-utils unzip openal libtheora rmtfs msm-firmware-loader hexagonrpcd xxhash fuse-overlayfs gtk2 libibus lsof tailscale zlib-ng-compat)
+#   upterm              terminal sharing over an SSH relay (`upterm host`, uptermd.upterm.dev by
+#                       default): someone remote attaches to a shell on the device through an
+#                       outbound connection, no port forward. Overlay (packages/upterm): not in the
+#                       snapshot. One static Go binary, client only; nothing starts it.
+PKGS=(wpa_supplicant wireless-regdb openssh vulkan-icd-loader vulkan-freedreno vulkan-mesa-layers vulkan-tools retroforge-gpu-priority mesa gamescope seatd mangohud bluez bluez-utils networkmanager alsa-ucm-conf pipewire wireplumber pipewire-pulse pipewire-alsa rtkit e2fsprogs xorg-xwayland noto-fonts noto-fonts-emoji python python-gobject scx-scheds rauc btrfs-progs rsync gptfdisk dosfstools mtools parted earlyoom zram-generator udisks2 f3 upower libinput-tools brightnessctl opengamepadui powerstation inputplumber which fuse3 ksmbd-tools avahi sdl2_ttf sdl2_image sdl2_mixer squashfuse mesa-utils unzip openal libtheora rmtfs msm-firmware-loader hexagonrpcd xxhash fuse-overlayfs gtk2 libibus lsof tailscale zlib-ng-compat upterm)
 
 # Dev-only packages — installed ONLY under RETROFORGE_DEV=1, NEVER in a release base.
 # On-device bring-up tools: evtest reads raw /dev/input events; usbutils provides lsusb.

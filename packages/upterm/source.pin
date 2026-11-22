@@ -1,0 +1,10 @@
+# upterm — built FROM SOURCE via a retroforge-owned PKGBUILD (packages/upterm/PKGBUILD), NOT fetched
+# from the holo monorepo: upterm is absent from holo (AUR-only on Arch), so there is no repo row to
+# resolve and no holo PKGBUILD to pull. Same "local PKGBUILD" form as packages/tailscale/source.pin.
+#
+# In PKGS (rootfs/customize-base.sh), so on every image and in rootfs/manifest.lock.
+#
+# Version: 0.41.1, upstream's latest release (2026-11-05). See the PKGBUILD header to bump.
+name: upterm
+pkgbuild_local: PKGBUILD
+pkgrel_suffix: 1
