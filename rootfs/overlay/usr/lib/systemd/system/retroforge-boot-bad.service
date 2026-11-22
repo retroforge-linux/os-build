@@ -1,6 +1,6 @@
 # Demote the RUNNING A/B image. Triggered ONLY by retroforge-boot-good.service's OnFailure= --
-# hence no [Install] -- when the boot could not be confirmed: the session marker vanished under
-# the 30s re-check, or the confirmation itself could not be written.
+# hence no [Install] -- when the boot could not be confirmed: the session (the gamescope its marker
+# names) was gone after the 10s re-check, or the confirmation itself could not be written.
 #
 # `set-state self bad` is `rauc status mark-bad booted` (the booted slot's _OK=0 in the ESP's
 # grubenv), so the NEXT boot goes to the other slot. It is idempotent, and on a degraded boot where

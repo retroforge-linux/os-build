@@ -14,8 +14,8 @@
 #     pam_authenticate.
 #   - Relogin=true. Restart=always: when the shell or gamescope exits, the session is started
 #     again instead of leaving a dead screen. StartLimitIntervalSec=0 keeps that unbounded, exactly
-#     as SDDM's relogin was; retroforge-boot-good.service's 30s re-check is what stops a session that
-#     dies in a loop from marking the slot good.
+#     as SDDM's relogin was; retroforge-boot-good.service's 10s same-session re-check is what stops a
+#     session that dies in a loop from marking the slot good.
 #   - the login shell environment. SDDM ran the session through `$SHELL --login`, so /etc/profile
 #     and /etc/profile.d (LANG from locale.sh, PATH) applied. bash --login keeps that.
 #   - XDG_* session variables. pam_systemd reads XDG_SESSION_TYPE/CLASS from the PAM environment,

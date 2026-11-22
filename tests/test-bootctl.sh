@@ -91,7 +91,7 @@ seed_boot() {  # <slot or ""> -- the initramfs handoff
 
 run() {  # <args...> -- the real bootctl against the sandbox; sets OUT and RC
   OUT="$(env SB="$SB" PATH="$SB/bin:$PATH" \
-            BOOTINFO="$SB/run/boot" SESSION_MARKER="$SB/marker" \
+            BOOTINFO="$SB/run/boot" SESSION_MARKER="$SB/marker" PROC="$SB/proc" \
             RAUC=rauc EDITENV=grub-editenv \
             ESP="$SB/esp" EFI="$SB/efi" BOOTDIR="$SB/boot" \
             bash "$BOOTCTL" "$@" 2>&1)"
@@ -216,6 +216,43 @@ grep -q 'not confirming, not demoting' "$SB/wait.out" && ok "and says it gave no
 [ -z "$(rauc_calls)" ] && ok "and RAUC was never asked" || bad "rauc saw: $(rauc_calls | tr '\n' ';')"
 done_
 
+# --same-session: the marker holds gamescope's PID; $SB/proc/<pid> stands in for a running one.
+bg_mark() {  # <args...> -- mark-good in the background, its output in $SB/bg.out, its rc in $SB/bg.rc
+  ( env SB="$SB" PATH="$SB/bin:$PATH" BOOTINFO="$SB/run/boot" SESSION_MARKER="$SB/marker" PROC="$SB/proc" \
+        RAUC=rauc EDITENV=grub-editenv ESP="$SB/esp" EFI="$SB/efi" BOOTDIR="$SB/boot" \
+        bash "$BOOTCTL" mark-good "$@" >"$SB/bg.out" 2>&1; echo $? >"$SB/bg.rc" ) &
+  BG=$!
+}
+t "mark-good --same-session"
+run mark-good --require-marker --same-session
+[ "$RC" != 0 ] && [ -z "$(rauc_calls)" ] && ok "no marker: refuses, RAUC never asked" || bad "rc=$RC rauc: $(rauc_calls)"
+echo 4242 >"$SB/marker"; run mark-good --require-marker --same-session
+[ "$RC" != 0 ] && [ -z "$(rauc_calls)" ] && ok "a marker whose gamescope is gone: refuses" || bad "rc=$RC rauc: $(rauc_calls)"
+mkdir -p "$SB/proc/4242"; run mark-good --require-marker --same-session --wait 1
+[ "$RC" = 0 ] && [ "$(rauc_calls)" = "status mark-good booted" ] && ok "the same running session after the wait: confirms" \
+  || bad "rc=$RC rauc: $(rauc_calls | tr '\n' ';') $OUT"
+done_
+
+t "mark-good --same-session, a restart during the wait"
+mkdir -p "$SB/proc/4242"; echo 4242 >"$SB/marker"
+bg_mark --require-marker --same-session --wait 1
+sleep 0.4; mkdir -p "$SB/proc/4343"; echo 4343 >"$SB/marker"; rm -r "$SB/proc/4242"
+wait "$BG"
+[ "$(cat "$SB/bg.rc")" = 0 ] && [ "$(rauc_calls)" = "status mark-good booted" ] \
+  && ok "the new session is waited for, then confirmed" || bad "rc=$(cat "$SB/bg.rc") rauc: $(rauc_calls) $(cat "$SB/bg.out")"
+grep -q "restarted during the 1s re-check (gamescope 4242, now 4343)" "$SB/bg.out" && ok "and it says so" || bad "out: $(cat "$SB/bg.out")"
+done_
+
+t "mark-good --same-session, the session gone during the wait"
+mkdir -p "$SB/proc/4242"; echo 4242 >"$SB/marker"
+bg_mark --require-marker --same-session --wait 1
+sleep 0.4; rm -f "$SB/marker"; rm -r "$SB/proc/4242"
+wait "$BG"
+[ "$(cat "$SB/bg.rc")" != 0 ] && [ -z "$(rauc_calls)" ] && ok "refuses (rc=$(cat "$SB/bg.rc")), so OnFailure= demotes" \
+  || bad "rc=$(cat "$SB/bg.rc") rauc: $(rauc_calls)"
+grep -q "ended during the 1s re-check" "$SB/bg.out" && ok "and it says the session ended" || bad "out: $(cat "$SB/bg.out")"
+done_
+
 t "mark-good when RAUC fails"
 touch "$SB/rauc.fail"
 run mark-good
@@ -251,8 +288,8 @@ done_
 # --- the shipped units call what this tool dispatches -------------------------------------------
 CASE="units"
 UNITS="$ROOT/rootfs/overlay/usr/lib/systemd/system"
-grep -qx 'ExecStart=/usr/bin/retroforge-bootctl mark-good --require-marker --wait 30' "$UNITS/retroforge-boot-good.service" \
-  && ok "boot-good runs mark-good --require-marker --wait 30" || bad "boot-good's ExecStart changed"
+grep -qx 'ExecStart=/usr/bin/retroforge-bootctl mark-good --require-marker --same-session --wait 10' "$UNITS/retroforge-boot-good.service" \
+  && ok "boot-good runs mark-good --require-marker --same-session --wait 10" || bad "boot-good's ExecStart changed"
 grep -qx 'ExecStart=/usr/bin/retroforge-bootctl set-state self bad' "$UNITS/retroforge-boot-bad.service" \
   && ok "boot-bad runs set-state self bad" || bad "boot-bad's ExecStart changed"
 

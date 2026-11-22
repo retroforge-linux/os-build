@@ -5,12 +5,15 @@
 # B_OK/B_TRY live in the ESP's grubenv and RAUC writes them with grub-editenv. The ESP GRUB reads
 # them to pick the slot (boot/gen-esp-cfg.sh). This tool never writes them itself; it asks RAUC.
 #
-#   mark-good [--require-marker] [--wait SECONDS]
+#   mark-good [--require-marker] [--same-session] [--wait SECONDS]
 #                    confirm THIS boot (retroforge-boot-good.service): rauc status mark-good booted,
 #                    which ends the trial (TRY=0, OK=1), and record the board as confirmed
 #                    (rf_board_ok) so its retries skip the stage-2 menu. Then finish the ESP from the running root
 #                    where an older root's update hook could not (parts.env, OpenABL's \dtbs\qcom).
 #        --require-marker  re-test the session marker before confirming; without it, exit 1
+#        --same-session    the marker must name the same running gamescope after the wait as before
+#                          it: a session a restart replaced is waited for again, one that is gone
+#                          (no marker, or its gamescope dead) exits 1
 #        --wait SECONDS    hold that long first, and exit 0 WITHOUT a verdict if signalled
 #                          during the wait (a shutdown is not evidence of a bad boot)
 #   set-state <self|A|B> <good|bad>
@@ -40,9 +43,11 @@ set -euo pipefail
 # SESSION_MARKER is the ready marker retroforge-boot-good.path watches. RAUC and EDITENV are the
 # two external tools; GRUBENV is RAUC's grubenv (system.conf `grubenv=`). ESP, EFI and BOOTDIR are
 # where mark-good finishes the ESP from: the shared ESP, the booted slot's efi partition (mounted
-# by the initramfs), and this root's boot payload.
+# by the initramfs), and this root's boot payload. PROC is where --same-session looks for the
+# marker's gamescope.
 BOOTINFO=${BOOTINFO:-/run/retroforge/boot}
 SESSION_MARKER=${SESSION_MARKER:-/run/retroforge/session/ready}
+PROC=${PROC:-/proc}
 RAUC=${RAUC:-rauc}
 EDITENV=${EDITENV:-grub-editenv}
 ESP=${ESP:-/esp}
@@ -84,6 +89,14 @@ resolve_slot() {  # <self|A|B> -> A|B
 
 env_get() {  # <name> -> its value in the grubenv, or "" when unset
   "$EDITENV" "$GRUBENV" list 2>/dev/null | sed -n "s/^$1=//p" | head -1
+}
+
+session_pid() {  # -> the PID of the gamescope the session marker names, while it runs; else 1
+  local pid
+  { read -r pid <"$SESSION_MARKER"; } 2>/dev/null || return 1
+  case $pid in ''|*[!0-9]*) return 1 ;; esac
+  [ -d "$PROC/$pid" ] || return 1
+  echo "$pid"
 }
 
 # --- slot state, through RAUC -------------------------------------------------------------------
@@ -145,11 +158,18 @@ set_primary() {  # <self|A|B>
 # 'signal'` and fires OnFailure=retroforge-boot-bad.service (HW-observed 2026-08-10). Trapping the
 # signal turns "the system went down before we could judge" into no verdict: nothing is confirmed,
 # nothing is demoted, and the next boot runs the whole check again.
+#
+# --same-session makes the re-check about one session, not about the marker file: the marker holds
+# gamescope's PID, and a session that crashed and was restarted (Restart=always, 1 s later) writes a
+# new one. So a short wait still catches a crash loop -- every iteration either finds a new PID and
+# waits again, or lands in a gap with no live session and fails -- where checking for the file alone
+# needed a window longer than a restart cycle to mean anything.
 mark_good() {
-  local require_marker=0 wait_secs=0
+  local require_marker=0 same_session=0 wait_secs=0
   while [ $# -gt 0 ]; do
     case $1 in
       --require-marker) require_marker=1 ;;
+      --same-session) same_session=1 ;;
       --wait) shift; wait_secs=${1:-} ;;
       *) die "mark-good: unknown option '$1'" ;;
     esac
@@ -167,18 +187,29 @@ mark_good() {
     return 0
   fi
 
-  # `sleep` is backgrounded and waited on because bash defers a trap until the current FOREGROUND
-  # command returns -- a foreground sleep would swallow the signal for the rest of the window.
-  if [ "$wait_secs" -gt 0 ]; then
-    local interrupted=0
-    trap 'interrupted=1' TERM INT
-    sleep "$wait_secs" & wait $! || true
-    trap - TERM INT
-    if [ "$interrupted" = 1 ]; then
-      echo "interrupted during the ${wait_secs}s re-check -- not confirming, not demoting"
-      return 0
-    fi
+  local sess="" now
+  if [ "$same_session" = 1 ]; then
+    sess=$(session_pid) || die "no running session behind $SESSION_MARKER -- refusing to confirm this boot"
   fi
+  while :; do
+    # `sleep` is backgrounded and waited on because bash defers a trap until the current FOREGROUND
+    # command returns -- a foreground sleep would swallow the signal for the rest of the window.
+    if [ "$wait_secs" -gt 0 ]; then
+      local interrupted=0
+      trap 'interrupted=1' TERM INT
+      sleep "$wait_secs" & wait $! || true
+      trap - TERM INT
+      if [ "$interrupted" = 1 ]; then
+        echo "interrupted during the ${wait_secs}s re-check -- not confirming, not demoting"
+        return 0
+      fi
+    fi
+    [ "$same_session" = 1 ] || break
+    now=$(session_pid) || die "the session (gamescope $sess) ended during the ${wait_secs}s re-check -- refusing to confirm this boot"
+    [ "$now" = "$sess" ] && break
+    echo "the session was restarted during the ${wait_secs}s re-check (gamescope $sess, now $now) -- waiting for the new one"
+    sess=$now
+  done
 
   if [ "$require_marker" = 1 ] && [ ! -e "$SESSION_MARKER" ]; then
     die "no session marker at $SESSION_MARKER -- refusing to confirm this boot"
