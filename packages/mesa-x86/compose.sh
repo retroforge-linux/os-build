@@ -70,10 +70,9 @@ if [ -z "$GUEST" ]; then
     echo "[fex-guest] $BASE_NAME $BASE_VERSION already present and verified" >&2
   else
     mkdir -p "$(dirname "$GUEST")"
-    echo "[fex-guest] downloading $BASE_URL" >&2
-    curl --fail --location --connect-timeout 20 --retry 3 --retry-connrefused \
-         --output "$GUEST.part" "$BASE_URL"
-    mv "$GUEST.part" "$GUEST"
+    echo "[fex-guest] downloading $BASE_URL (source-mirror first)" >&2
+    "$ROOT/tools/source-mirror/rf-fetch" --sha256 "$BASE_SHA256" "$GUEST" "$BASE_URL" \
+      || { echo "ERROR: could not fetch $BASE_URL" >&2; exit 1; }
   fi
 fi
 verify_guest "$GUEST" || {

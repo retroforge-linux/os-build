@@ -138,6 +138,7 @@ jobs:
     secrets:
       RETROFORGE_SS_DEVID: ${{ secrets.RETROFORGE_SS_DEVID }}
       RETROFORGE_SS_DEVPASSWORD: ${{ secrets.RETROFORGE_SS_DEVPASSWORD }}
+      SOURCE_MIRROR_TOKEN: ${{ secrets.SOURCE_MIRROR_TOKEN }}
 
   # The publish half: the card and its checksums, as one GitHub Release. Split from
   # the build so the reviewer's approval lands on a finished image rather than before a six-hour

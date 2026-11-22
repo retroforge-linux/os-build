@@ -44,9 +44,11 @@ else
   echo "[retroforge] fragments=${FRAGMENTS[*]#"$ROOT"/} kernel=$KVER"
 fi
 
-# Fetch + verify the pinned tarball (idempotent), then extract a clean tree.
+# Fetch + verify the pinned tarball (idempotent), then extract a clean tree. source-mirror first
+# (tools/source-mirror/rf-fetch), cdn.kernel.org second, the pinned sha256 either way.
 mkdir -p "$WORK"
-[ -f "$TARBALL" ] || curl -fSL -o "$TARBALL" "$KURL"
+[ -f "$TARBALL" ] || "$ROOT/tools/source-mirror/rf-fetch" --sha256 "$KSHA" "$TARBALL" "$KURL" \
+  || { echo "could not fetch $KURL" >&2; exit 1; }
 echo "${KSHA}  ${TARBALL}" | sha256sum -c - || { echo "sha256 mismatch — refusing to build" >&2; exit 1; }
 SRCDIR="$WORK/linux-${KVER}"
 rm -rf "$SRCDIR"

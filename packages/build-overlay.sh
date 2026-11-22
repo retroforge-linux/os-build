@@ -207,7 +207,8 @@ for pin in "${PINS[@]}"; do
     : "${repo:?$pin: missing pkgbuild_repo}"
     : "${path:?$pin: missing pkgbuild_path}"; : "${ref:?$pin: missing pkgbuild_ref}"
     echo "[overlay] $name: fetch PKGBUILD ${repo}@${ref:0:12} ($path)" >&2
-    curl -fsSL "$GL/$repo/-/raw/$ref/$path/PKGBUILD" -o "$bd/PKGBUILD"
+    # source-mirror first when mirror/sources.lock pins this URL (tools/source-mirror/rf-fetch)
+    "$ROOT/tools/source-mirror/rf-fetch" "$bd/PKGBUILD" "$GL/$repo/-/raw/$ref/$path/PKGBUILD"
   fi
 
   for p in $patches; do
@@ -231,6 +232,10 @@ for pin in "${PINS[@]}"; do
     echo "[overlay] $name: pre-seeding source via fetch-source.sh" >&2
     "$pdir/fetch-source.sh" "$bd"
   fi
+  # Every other remote source, the same way: tarballs from source-mirror first and checked
+  # against their sha256 (which --skipinteg below would not do), git sources as makepkg's own
+  # bare clones from the mirror's bundles (tools/source-mirror/rf-seed).
+  "$ROOT/tools/source-mirror/rf-seed" "$bd" "$ARCH"
 
   # Edit the PKGBUILD: bump pkgrel, register our patches as local sources (so makepkg copies
   # them into $srcdir), and apply them right after the first `cd <dir>` in prepare().

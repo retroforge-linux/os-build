@@ -10,6 +10,13 @@ SNAPSHOT="${1:?usage: pacman-snapshot.sh <YYYY/MM/DD>}"
 echo "Server=https://archive.archlinux.org/repos/${SNAPSHOT}/\$repo/os/\$arch" >/etc/pacman.d/mirrorlist
 grep -q '^\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >>/etc/pacman.conf
 
+# Every download through tools/source-mirror/rf-fetch: a file mirror/sources.lock pins (its arch
+# rows) comes from source-mirror first and the archive second, checked against the locked sha256
+# either way, so an archive.archlinux.org outage (2026-11-21) no longer stops this build. A file
+# the lock does not name comes from the archive as before.
+grep -q '^XferCommand' /etc/pacman.conf ||
+  sed -i '/^\[options\]/a XferCommand = /repo/tools/source-mirror/rf-fetch %o %u' /etc/pacman.conf
+
 # pacman 7.1 drops to the `alpm` user under seccomp + landlock to download. Neither works in a
 # container under amd64 emulation ("error restricting syscalls via seccomp: 22", then "switching
 # to sandbox user 'alpm' failed"), and the container is thrown away after one build anyway.

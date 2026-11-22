@@ -1,0 +1,52 @@
+name: source-mirror
+
+# Runs before every build (image.yml and overlay.yml call it): uploads to
+# retroforge-linux/source-mirror whatever mirror/sources.lock names and the mirror lacks
+# (tools/source-mirror/sync.sh), so the build's mirror-first fetches find it, and so a lock change
+# is mirrored by the first build that needs it.
+#
+# Needs the SOURCE_MIRROR_TOKEN secret: a token that can write retroforge-linux/source-mirror's
+# releases (fine-grained, that repository only, Contents: read and write). GITHUB_TOKEN cannot
+# write another repository. Without the token, or when the sync fails, the build still runs: it
+# fetches from upstream whatever the mirror does not have yet, as before the mirror existed. The
+# mirror repo's own daily sync workflow fills it as well.
+
+on:
+  workflow_call:
+    secrets:
+      SOURCE_MIRROR_TOKEN:
+        required: false
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    name: fill source-mirror
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    # Two builds at once would upload the same objects; one sync at a time, none cancelled.
+    concurrency:
+      group: source-mirror-sync
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: |
+            tools/source-mirror
+            mirror
+      - name: sync
+        # A failed sync warns and lets the build go on (its fetches fall back to upstream).
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.SOURCE_MIRROR_TOKEN }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::SOURCE_MIRROR_TOKEN is not set: source-mirror was not filled; the build fetches what it lacks from upstream"
+            exit 0
+          fi
+          bash tools/source-mirror/sync.sh || {
+            echo "::warning::source-mirror sync failed (see this job's log); the build fetches what the mirror lacks from upstream"
+            exit 1
+          }

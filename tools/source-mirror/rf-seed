@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Put a staged PKGBUILD's remote sources in its directory before makepkg runs, source-mirror
+# first, so makepkg (which skips a source already there) downloads nothing it can get from us.
+#
+#   rf-seed STAGEDIR [ARCH]      (packages/build-overlay.sh, once per package it builds)
+#
+# Files (http/https/ftp): rf-fetch, checked against the lock row for the URL, else the PKGBUILD's
+# own sha256sums entry. A file that neither the mirror nor upstream serves with that hash stops
+# the build: makepkg runs with --skipinteg (for our patch sources), so it would build whatever
+# upstream sends. A file with no sha256 at all (b2sums or SKIP, and no lock row) is left to
+# makepkg, unchecked as before.
+#
+# Git (git+URL[#frag]): the lock's git row for URL and fragment names the commit and its bundle
+# (git/<dir>-<tag>-<commit12>.bundle on the mirror), which is cloned as makepkg's own bare clone,
+# STAGEDIR/<dir>, with origin set to URL so makepkg takes it as its clone. makepkg then only
+# tries `git fetch`, which it lets fail (offline builds). A bundle that is missing, or lacks the
+# commit, is dropped and makepkg clones upstream as before: git is checked by its commit, not by
+# a file hash.
+#
+#   RF_MIRROR, RF_MIRROR_BASE, RF_MIRROR_LOCK as for rf-fetch.
+set -euo pipefail
+
+STAGE="${1:?usage: rf-seed STAGEDIR [ARCH]}"
+ARCH="${2:-aarch64}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE="${RF_MIRROR_BASE:-https://github.com/retroforge-linux/source-mirror/releases/download}"
+LOCK="${RF_MIRROR_LOCK:-$HERE/../../mirror/sources.lock}"
+MODE="${RF_MIRROR:-on}"
+log() { echo "[rf-seed] $*" >&2; }
+
+[ "$MODE" = off ] && exit 0
+[ -f "$STAGE/PKGBUILD" ] || { log "no PKGBUILD in $STAGE"; exit 1; }
+
+# source[] + source_<arch>[], each with its sha256sums entry. Sourcing a PKGBUILD only defines its
+# functions; this is the read build-overlay.sh and fetch-source.sh already do.
+entries="$(bash -c '
+  source "$1" >/dev/null 2>&1 || exit 1
+  for i in "${!source[@]}"; do printf "%s\t%s\n" "${source[$i]}" "${sha256sums[$i]:-}"; done
+  eval "s=(\"\${source_$2[@]}\"); h=(\"\${sha256sums_$2[@]}\")"
+  for i in "${!s[@]}"; do printf "%s\t%s\n" "${s[$i]}" "${h[$i]:-}"; done
+' _ "$STAGE/PKGBUILD" "$ARCH")" || { log "could not read $STAGE/PKGBUILD"; exit 1; }
+
+seed_git() {  # seed_git DIR URL FRAG
+  local dir="$1" url="$2" frag="${3:--}" commit="" loc="" tmp tag
+  read -r commit loc < <(awk -v u="$url" -v f="$frag" '$1 !~ /^#/ && $2 == "git" && $3 == u && $6 == f { print $1, $4; exit }' "$LOCK" 2>/dev/null) || true
+  [ -n "$commit" ] && [ -n "$loc" ] || return 0
+  [ -e "$STAGE/$dir" ] && return 0
+  tmp="$STAGE/.$dir.bundle"
+  if ! curl --fail --location --silent --connect-timeout 20 --retry 3 --retry-connrefused \
+       --output "$tmp" "$BASE/$loc"; then
+    rm -f "$tmp"; log "$dir: source-mirror has no $loc; makepkg clones $url"; return 0
+  fi
+  if git clone --quiet --mirror "$tmp" "$STAGE/$dir" 2>/dev/null &&
+     git -C "$STAGE/$dir" remote set-url origin "$url" &&
+     git -C "$STAGE/$dir" cat-file -e "$commit^{commit}" 2>/dev/null; then
+    case "$frag" in
+      tag=*|commit=*)
+        tag="${frag#*=}"
+        [ "$(git -C "$STAGE/$dir" rev-parse -q --verify "$tag^{commit}" 2>/dev/null)" = "$commit" ] || {
+          rm -rf "$STAGE/$dir" "$tmp"; log "$dir: the bundle's $tag is not $commit; makepkg clones $url"; return 0; } ;;
+    esac
+    rm -f "$tmp"; log "$dir: $commit from the mirror"
+  else
+    rm -rf "$STAGE/$dir" "$tmp"; log "$dir: the bundle lacks $commit; makepkg clones $url"
+  fi
+}
+
+while IFS=$'\t' read -r src sum; do
+  [ -n "$src" ] || continue
+  name=""; url="$src"
+  case "$src" in *::*) name="${src%%::*}"; url="${src#*::}" ;; esac
+  case "$url" in
+    git+*)
+      plain="${url#git+}"; frag="-"
+      case "$plain" in *#*) frag="${plain#*#}"; plain="${plain%%#*}" ;; esac
+      plain="${plain%%\?*}"
+      dir="${name:-$(basename "${plain%.git}")}"
+      seed_git "$dir" "$plain" "$frag" ;;
+    http://*|https://*|ftp://*|file://*)
+      file="${name:-${url##*/}}"
+      [ -s "$STAGE/$file" ] && continue          # already seeded (e.g. packages/mesa/fetch-source.sh)
+      sha="$(awk -v u="$url" '$1 !~ /^#/ && $3 == u && $2 == "file" { print $1; exit }' "$LOCK" 2>/dev/null)"
+      [ -n "$sha" ] || { [[ "$sum" =~ ^[0-9a-f]{64}$ ]] && sha="$sum"; } || true
+      [ -n "$sha" ] || continue                  # nothing to check it against: makepkg's, as before
+      "$HERE/rf-fetch" --sha256 "$sha" "$STAGE/$file" "$url" ||
+        { log "$file: neither source-mirror nor $url has it with sha256 $sha"; exit 1; } ;;
+  esac
+done <<<"$entries"

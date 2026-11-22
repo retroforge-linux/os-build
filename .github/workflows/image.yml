@@ -103,6 +103,9 @@ on:
         required: false
       RETROFORGE_SS_DEVPASSWORD:
         required: false
+      # source-mirror.yml's token; absent, the build fetches what the mirror lacks from upstream.
+      SOURCE_MIRROR_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -114,7 +117,15 @@ jobs:
   # error" (card/v0.0.5, ota/v0.0.5). Under qemu it would be hours. Built here, the payload goes
   # over as a tarball (an artifact zip follows symlinks and drops the hidden .inputs.sha256
   # marker), and build.sh in the build job finds the marker matching its inputs and does nothing.
+  # Fills retroforge-linux/source-mirror from mirror/sources.lock before anything is built, so
+  # this build's mirror-first fetches find what it needs there (tools/source-mirror/README.md).
+  source-mirror:
+    uses: ./.github/workflows/source-mirror.yml
+    secrets:
+      SOURCE_MIRROR_TOKEN: ${{ secrets.SOURCE_MIRROR_TOKEN }}
+
   mesa-x86:
+    needs: source-mirror
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     steps:

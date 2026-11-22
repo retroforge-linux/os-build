@@ -442,7 +442,8 @@ for pin in "${PREBUILT_PINS[@]}"; do
     continue
   fi
   echo "[retroforge] fetching prebuilt $name $ver ($kind): $url" >&2
-  curl -fsSL "$url" -o "$staged.part"
+  "$ROOT/tools/source-mirror/rf-fetch" --sha256 "$sha" "$staged.part" "$url" \
+    || { echo "could not fetch prebuilt $name ($url)" >&2; exit 1; }
   echo "$sha  $staged.part" | sha256sum -c - \
     || { echo "$name sha256 mismatch — refusing" >&2; rm -f "$staged.part"; exit 1; }
   mv -f "$staged.part" "$staged"

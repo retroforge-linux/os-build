@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Fetch one file, source-mirror first, upstream second, checked against its sha256 either way.
+#
+#   rf-fetch [--sha256 HEX] OUT URL
+#
+# Called by the build wherever it downloads a pinned file: kernel/build.sh, packages/mesa/
+# fetch-source.sh, packages/mesa-x86/compose.sh (the FEX guest), packages/build-overlay.sh (holo
+# PKGBUILDs, and every makepkg source through DLAGENTS), and the x86 Mesa builder's pacman
+# (XferCommand). Argument order is DLAGENTS' and XferCommand's: %o %u.
+#
+# THE ROW of mirror/sources.lock whose URL is URL gives the sha256 and where source-mirror keeps
+# the copy ($RF_MIRROR_BASE/<release>/<asset>, e.g. sources/linux-7.3.5.tar.xz). The copy comes
+# first, URL only on a miss or a mismatch, and whichever host answers, a file that does not hash
+# to the sha256 is refused. --sha256 is the caller's own pin: it is checked the same way, and a
+# lock row that disagrees with it (a lock not yet refreshed after a bump) is ignored, so the file
+# then comes from URL. With neither (a URL no pin or lock row names), URL is fetched as it is,
+# unchecked, as before the mirror existed.
+#
+# A mirror is a copy, so it is checked, not trusted: it can make a build succeed that upstream
+# would have failed, never change what is built.
+#
+#   RF_MIRROR=off       upstream only (the old behaviour)
+#   RF_MIRROR=only      mirror only, no upstream fallback: to test that the mirror has a file
+#   RF_MIRROR_BASE      default https://github.com/retroforge-linux/source-mirror/releases/download
+#   RF_MIRROR_LOCK      default mirror/sources.lock beside this tool's repo
+#   RF_FETCH_RECORD     append "<sha256> <bytes> <url>" for every file fetched (tools/source-mirror/
+#                       record-arch.sh builds the lock's arch rows this way)
+#
+# Exit status: 0 fetched, 1 not fetched (pacman and makepkg read that as a missing file).
+set -uo pipefail
+
+SHA=""
+if [ "${1:-}" = --sha256 ]; then SHA="${2:-}"; shift 2; fi
+OUT="${1:?usage: rf-fetch [--sha256 HEX] OUT URL}"
+URL="${2:?usage: rf-fetch [--sha256 HEX] OUT URL}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BASE="${RF_MIRROR_BASE:-https://github.com/retroforge-linux/source-mirror/releases/download}"
+LOCK="${RF_MIRROR_LOCK:-$HERE/../../mirror/sources.lock}"
+MODE="${RF_MIRROR:-on}"
+
+log() { echo "rf-fetch: $*" >&2; }
+hash_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
+  else shasum -a 256 "$1" | cut -d' ' -f1; fi
+}
+# A connect timeout, so a dead host fails in seconds rather than curl's minutes (see the note in
+# packages/mesa/fetch-source.sh: three retries of ~135 s each cost a build 9 minutes). Three more
+# tries on any other failure than an HTTP error (curl 22, or 37 for a missing file:// file): curl's own --retry skips a connection
+# dropped mid-transfer (curl 56, seen 2026-11-22 on one of ~400 archive files), and an HTTP error is
+# an answer, so a missing file (a .sig the archive lacks) costs no wait.
+get() {  # get URL FILE
+  local try rc
+  for try in 1 2 3 4; do
+    curl --fail --location --silent --show-error --connect-timeout 20 --retry 3 --retry-connrefused \
+         --output "$2" "$1" && return 0
+    rc=$?
+    case "$rc" in 22|37) return "$rc" ;; esac   # an HTTP error; a file:// file that is not there
+    [ "$try" -lt 4 ] && sleep "$try"
+  done
+  return "$rc"
+}
+
+LOC=""
+if [ -f "$LOCK" ]; then
+  read -r ROW_SHA LOC < <(awk -v u="$URL" '$1 !~ /^#/ && $3 == u && ($2 == "file" || $2 == "arch") { print $1, $4; exit }' "$LOCK")
+  if [ -z "$SHA" ]; then SHA="${ROW_SHA:-}"
+  elif [ "${ROW_SHA:-}" != "$SHA" ]; then LOC=""; fi
+fi
+if [ -n "$SHA" ] && ! [[ "$SHA" =~ ^[0-9a-f]{64}$ ]]; then
+  log "not a sha256: $SHA"; exit 1
+fi
+
+TMP="$OUT.rf-part"
+trap 'rm -f "$TMP"' EXIT
+done_ok() {
+  mv -f "$TMP" "$OUT" || exit 1
+  if [ -n "${RF_FETCH_RECORD:-}" ]; then
+    printf '%s %s %s\n' "$(hash_of "$OUT")" "$(wc -c <"$OUT" | tr -d ' ')" "$URL" >>"$RF_FETCH_RECORD"
+  fi
+  exit 0
+}
+
+if [ -n "$LOC" ] && [ "$MODE" != off ]; then
+  if get "$BASE/$LOC" "$TMP" 2>/dev/null; then
+    got="$(hash_of "$TMP")"
+    [ "$got" = "$SHA" ] && done_ok
+    log "mirror copy of ${URL##*/} hashes to $got, not $SHA: refused"
+  elif [ "$MODE" = only ]; then
+    log "${URL##*/}: source-mirror has no $LOC"
+  fi
+fi
+[ "$MODE" = only ] && { [ -n "$LOC" ] || log "${URL##*/}: mirror/sources.lock has no row for it"; exit 1; }
+
+if ! get "$URL" "$TMP"; then
+  log "could not fetch $URL"
+  exit 1
+fi
+if [ -n "$SHA" ]; then
+  got="$(hash_of "$TMP")"
+  [ "$got" = "$SHA" ] || { log "$URL hashes to $got, not the pinned $SHA: refused"; exit 1; }
+fi
+done_ok

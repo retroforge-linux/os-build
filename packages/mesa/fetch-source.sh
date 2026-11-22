@@ -81,7 +81,10 @@ fetch() {  # <url> <label>
        --max-time 1800 --output "$OUT" "$1"
 }
 
-if ! fetch "$URL" "upstream ($URL)"; then
+# source-mirror first, upstream second (tools/source-mirror/rf-fetch checks the sha256 itself);
+# Fedora's lookaside stays the last resort.
+echo "[mesa] source: trying source-mirror, then upstream ($URL)" >&2
+if ! "$PKGDIR/../../tools/source-mirror/rf-fetch" --sha256 "$SHA256" "$OUT" "$URL"; then
   if [ -z "$MIRROR_URL" ]; then
     echo "ERROR: mesa source fetch failed at upstream, and packages/mesa/mirror.pin declares no" >&2
     echo "       sha512, so there is no fallback. Either upstream is down (check" >&2

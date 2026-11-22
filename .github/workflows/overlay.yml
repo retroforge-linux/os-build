@@ -171,9 +171,16 @@ jobs:
           echo "$n package(s) to build — $why" >> "$GITHUB_STEP_SUMMARY"
           printf '%s\n' "$m" >> "$GITHUB_STEP_SUMMARY"
 
+  # Fills retroforge-linux/source-mirror from mirror/sources.lock before the packages are built
+  # (tools/source-mirror/README.md).
+  source-mirror:
+    uses: ./.github/workflows/source-mirror.yml
+    secrets:
+      SOURCE_MIRROR_TOKEN: ${{ secrets.SOURCE_MIRROR_TOKEN }}
+
   build:
     name: build ${{ matrix.pkg }}
-    needs: plan
+    needs: [plan, source-mirror]
     # Not on a push to main: plan has no diff base there and would select everything, which `warm`
     # builds anyway — in one job, into the cache releases actually read.
     if: needs.plan.outputs.any == 'true' && github.event_name != 'push'
@@ -210,6 +217,7 @@ jobs:
   # one package rebuilds one package. A dispatch on main with no package list re-warms by hand.
   warm:
     name: warm the release overlay cache
+    needs: source-mirror
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || inputs.packages == '')
     runs-on: ${{ vars.OVERLAY_RUNNER || 'ubuntu-24.04-arm' }}
     # The whole set cold is ~30 minutes; same headroom reasoning as `build`.

@@ -394,7 +394,7 @@ RETROFORGE_CCACHE ?= $(if $(CI),0,1)
 # Phony orchestration targets
 # ==============================================================================
 .PHONY: help all image toolchain kernel fw-linux fw-qcom base overlay verify-lock check-hw-paths \
-        rootfs relock \
+        rootfs relock mirror-lock mirror-sync \
         initramfs splash plugin gptk-interpose mesa-x86 grub sdcard verify-card test test-disk bundle sign-bundle publish-bundle renew-nightly-cert \
         clean clean-base clean-overlay clean-ccache distclean
 
@@ -459,6 +459,15 @@ verify-card: $(SDCARD) | $(BUILD_STAMP) ## Verify the built A/B card image (in c
 # touching ONLY rootfs/manifest.lock is still checked.
 verify-lock: ## Check the lock's retroforge rows against packages/ (host, seconds, no build)
 	bash packages/verify-lock-rows.sh
+
+# mirror/sources.lock, what tools/source-mirror/rf-fetch and rf-seed take from source-mirror first.
+# Refresh it after a pin, PKGBUILD-source or x86-builder change; record-arch.sh also re-records the
+# Arch Linux Archive files (a container run). Neither is hashed into anything: no rebuild follows.
+mirror-lock: ## Regenerate mirror/sources.lock (host, network; RECORD_ARCH=1 also re-records the archive files)
+	$(if $(RECORD_ARCH),bash tools/source-mirror/record-arch.sh,python3 tools/source-mirror/lock.py)
+
+mirror-sync: ## Upload to retroforge-linux/source-mirror what mirror/sources.lock names and it lacks (host, gh)
+	bash tools/source-mirror/sync.sh
 
 # Every board profile's hardware-map pins (RETROFORGE_HW_*) against what its devicetree makes the
 # kernel register (tools/check-hw-paths.py). Reads the DTBs `make kernel` staged in out/dtbs; with
@@ -529,6 +538,7 @@ test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-lib-container.sh
 	bash $(TESTS_DIR)/test-verify-lock.sh
 	bash $(TESTS_DIR)/test-mesa-source.sh
+	bash $(TESTS_DIR)/test-source-mirror.sh
 	bash $(TESTS_DIR)/test-fex-guest.sh
 	bash $(TESTS_DIR)/test-guard.sh
 	bash $(TESTS_DIR)/test-upstream-name.sh
