@@ -13,6 +13,9 @@ extends RefCounted
 ## running. That runs in the background (it reads /proc twice, ~0.3 s on the MANGMI Air X, too long
 ## to hold OGUI's frame), and so does its resume except before an exit; a pause and a resume started
 ## together end in the state asked for last.
+## Steam's own UI (the Steam Client app) freezes the games started from it the same way, `pause ui`:
+## OGUI counts them as part of that app, and its own freeze stopped only the wrapper that waits on
+## the kept client, so a game started in Big Picture ran on behind the menu.
 ## Stored in OGUI's settings, section "retroforge", key "pause_in_menus" (default on).
 ##
 ## The freeze is OGUI's own pause (RunningApp.suspend, is_suspended), so the running game card's
@@ -43,7 +46,7 @@ var logger := Log.get_logger("RetroForgePause", Log.LEVEL.INFO)
 var tree: SceneTree
 var _toggle: Control  # OGUI Toggle
 var _paused: RunningApp
-var _paused_steam := 0  # the Steam app id of _paused, when it is a Steam game frozen by keep
+var _paused_steam := ""  # what keep froze for _paused: its Steam app id, or "ui" for Steam's own UI
 
 
 func setup(scene_tree: SceneTree) -> RefCounted:
@@ -105,16 +108,17 @@ func _pause() -> void:
 	var app := launch_manager.get_current_app()
 	if not app or app.state in [RunningApp.STATE.STOPPING, RunningApp.STATE.STOPPED]:
 		return
-	if app.is_steam_app():
+	var ui := SteamApps.is_ui_launch(app.launch_item)
+	if app.is_steam_app() or ui:
 		var appid := SteamApps.appid_of(app.launch_item.args) if app.launch_item else 0
-		if appid == 0:
+		if appid == 0 and not ui:
 			return
 		_paused = app
-		_paused_steam = appid
+		_paused_steam = "ui" if ui else str(appid)
 		if not app.app_stopped.is_connected(_on_app_stopped):
 			app.app_stopped.connect(_on_app_stopped.bind(app))
-		OS.create_process(KEEP, ["pause", str(appid)])
-		logger.info("paused Steam app %d (%s)" % [appid, app.launch_item.name])
+		OS.create_process(KEEP, ["pause", _paused_steam])
+		logger.info("paused %s (%s)" % [_steam_what(_paused_steam), app.launch_item.name])
 		return
 	_paused = app
 	if not app.app_stopped.is_connected(_on_app_stopped):
@@ -136,14 +140,14 @@ func resume(sync := false) -> void:
 		return
 	var app := _paused
 	_paused = null
-	if _paused_steam:
-		var args := PackedStringArray(["resume", str(_paused_steam)])
-		_paused_steam = 0
+	if _paused_steam != "":
+		var args := PackedStringArray(["resume", _paused_steam])
+		_paused_steam = ""
 		if sync:
 			OS.execute(KEEP, args)
 		else:
 			OS.create_process(KEEP, args)
-		logger.info("resumed Steam app %s" % args[1])
+		logger.info("resumed " + _steam_what(args[1]))
 		return
 	var pids: Array = Reaper.pstree(app.pid)
 	pids.push_front(app.pid)
@@ -164,8 +168,12 @@ func _on_app_stopped(app: RunningApp) -> void:
 		resume(true)
 	elif app.is_suspended:
 		_paused = app
-		_paused_steam = 0
+		_paused_steam = ""
 		resume(true)
+
+
+func _steam_what(target: String) -> String:
+	return "the games started from Steam's UI" if target == "ui" else "Steam app " + target
 
 
 ## The running game card of `app` labels its Pause entry by is_suspended, as its own press does.

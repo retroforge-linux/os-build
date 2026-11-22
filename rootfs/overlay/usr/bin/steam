@@ -135,7 +135,11 @@ fi
 #     Steam gives them. It gives up when Steam has not picked the launch up within
 #     RETROFORGE_STEAM_LAUNCH_WAIT s (300), when Steam refuses it, or when the unit stops first;
 #   - for Steam's own UI (no game), stays until OGUI stops it or the unit stops;
-#   - on TERM (Exit in OGUI's menu) ends the game's launch, not Steam.
+#   - on TERM (Exit in OGUI's menu) ends the game's launch, not Steam. For Steam's own UI it ends the
+#     games the player started from that UI (`retroforge-steam-keep end ui`): OGUI counts them as part
+#     of its Steam app, so its Exit on one closed only Steam's UI and the game ran on unseen (Megabonk
+#     from Big Picture, MANGMI Air X, 2026-11-22). A game launch records the app id it follows
+#     (`follow`), so a game OGUI started from its own library is not among them.
 # The unit's processes carry OGUI_ID=Steam. OGUI tells which app a process belongs to by that
 # variable, and "Steam" is the name of every launch of Steam's own UI (Main menu > Emulators > Steam
 # Client, an install from the library, the desktop Steam entry), so those find a kept client's
@@ -172,7 +176,11 @@ kept_start() {
     "${env[@]}" --setenv=OGUI_ID=Steam --setenv=RETROFORGE_STEAM_KEPT=1 "$self" "$@" >/dev/null
 }
 kept_stop() {  # TERM, INT or HUP: end the game this launch started, not Steam
-  [ -n "$appid" ] && "$keep_cli" end "$appid"
+  if [ -n "$appid" ]; then
+    "$keep_cli" end "$appid"
+  else
+    "$keep_cli" end ui   # Steam's own UI: the games the player started from it
+  fi
   "$keep_cli" minimal $$
   [ "$("$keep_cli" status 2>/dev/null)" = on ] || "$keep_cli" stop-idle
   exit 143
@@ -187,6 +195,8 @@ kept_launch() {
     case "$arg" in steam://rungameid/*) appid="${arg#steam://rungameid/}" ;; esac
   done
   case "$appid" in *[!0-9]*) appid="" ;; esac
+  # before the hand-off, so Steam's UI launch never takes this game for one started from it
+  [ -z "$appid" ] || "$keep_cli" follow "$appid" $$
   if kept_active && lacks_atomics && [ -x "$proton_cli" ] && "$proton_cli" pending && "$keep_cli" stop-unused; then
     log "stopped the kept Steam: it starts again with Proton-CachyOS ARMv8.0 as its tool"
   fi

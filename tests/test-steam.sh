@@ -431,6 +431,7 @@ STEAM_REAPER="$WROOT/linuxarm64/reaper"
 SLOG="$WROOT/logs/console_log.txt"   # Steam's own log: one line per step of a launch
 reset_keep() {
   rm -f "$W/unit-active" "$W/sdrun.args" "$W/sdrun-fails" "$W/kills" "$W/sysd.log" "$W/count" "$W"/call* "$CONF" "$SLOG"
+  rm -rf "$W/run/retroforge-steam-follow"
   local d; for d in "$P"/*; do [ -d "$d" ] && gone "${d##*/}"; done
   echo 0 >"$W/codes"
 }
@@ -514,6 +515,37 @@ wait "$p1" "$p2"
   && ok "a pause and a resume started together end in the state asked for last, whichever ran first" \
   || bad "kills: $(cat "$W/kills" 2>&1) $(ls "$PQ" 2>&1)"
 
+CASE="keep: games started from Steam's UI"
+reset_keep
+FQ="$W/run/retroforge-steam-follow"
+fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- game
+fakeproc 4244 4242 "game (main)" x
+fakeproc 4343 1 reaper "$STEAM_REAPER" SteamLaunch AppId=43 -- game
+fakeproc 4345 4343 "game (main)" x
+fakeproc 6000 1 bash bash /usr/bin/steam steam://rungameid/42   # OGUI's launch of 42, still running
+"${KENV[@]}" bash "$KEEP" follow 42 6000 2>"$W/kerr" && "${KENV[@]}" bash "$KEEP" follow 43 6999 2>>"$W/kerr"
+[ "$(cat "$FQ/6000" 2>/dev/null)" = 42 ] && ok "follow records the app id under the launch's PID" || bad "$(ls "$FQ" 2>&1) $(cat "$W/kerr")"
+[ "$("${KENV[@]}" bash "$KEEP" games ui | tr '\n' ' ')" = "4343 " ] && [ ! -e "$FQ/6999" ] \
+  && ok "ui: the launches no live launch follows (a record of a gone launch does not count, and goes)" \
+  || bad "games ui: $("${KENV[@]}" bash "$KEEP" games ui | tr '\n' ' ') $(ls "$FQ" 2>&1)"
+"${KENV[@]}" bash "$KEEP" pause ui 2>"$W/kerr"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$W/kills" 2>/dev/null)" = "-STOP 4343 4345" ] && grep -q "paused the games started from Steam's UI (app 43)" "$W/kerr" \
+  && ok "pause ui STOPs those, not the game OGUI follows" || bad "rc=$rc kills: $(cat "$W/kills" 2>&1) $(cat "$W/kerr")"
+rm -f "$W/kills"
+"${KENV[@]}" bash "$KEEP" resume ui 2>"$W/kerr"; rc=$?
+[ "$rc" = 0 ] && [ "$(cat "$W/kills" 2>/dev/null)" = "-CONT 4343 4345" ] && ok "resume ui CONTs them" || bad "rc=$rc kills: $(cat "$W/kills" 2>&1)"
+rm -f "$W/kills"
+"${KENV[@]}" bash "$KEEP" end ui 2>"$W/kerr"
+[ "$(cat "$W/kills" 2>/dev/null)" = "-TERM 4343 4345" ] && [ -d "$P/4242" ] && [ -d "$P/4244" ] \
+  && ok "end ui ends them; the followed game runs on" || bad "kills: $(cat "$W/kills" 2>&1) $(cat "$W/kerr")"
+rm -f "$W/kills"
+"${KENV[@]}" bash "$KEEP" pause ui 2>"$W/kerr"; rc=$?
+[ "$rc" = 1 ] && [ ! -e "$W/kills" ] && [ ! -s "$W/kerr" ] && ok "none left: exit 1, no signal and no line (asked at every menu over Steam's UI)" \
+  || bad "rc=$rc kills: $(cat "$W/kills" 2>&1) err: $(cat "$W/kerr")"
+"${KENV[@]}" bash "$KEEP" follow 42 x >/dev/null 2>&1; rc1=$?
+"${KENV[@]}" bash "$KEEP" end uix >/dev/null 2>&1; rc2=$?
+[ "$rc1" = 2 ] && [ "$rc2" = 2 ] && ok "a bad PID or app id is exit 2" || bad "follow rc=$rc1 end rc=$rc2"
+
 CASE="keep: a launch's steps"
 reset_keep
 since="$(date '+%F %T')"
@@ -578,6 +610,8 @@ grep -qx "args: -gamepadui -silent steam://rungameid/42" "$W/call1" && grep -qx 
   && grep -qx "ld: $WROOT/steamrtarm64:$WROOT/steamrtarm64/video" "$W/call1" && [ ! -e "$W/sdrun.args" ] \
   && ok "the launch's arguments are handed to the kept client (a second client process), no new unit" || bad "$(cat "$W/call1" 2>&1)"
 sleep 0.5
+[ "$(cat "$W/run/retroforge-steam-follow/$wpid" 2>/dev/null)" = 42 ] \
+  && ok "the launch follows app 42, so Steam's UI never takes it for a game started from it" || bad "follow: $(ls "$W/run/retroforge-steam-follow" 2>&1)"
 kill -TERM "$wpid"; wait "$wpid"; WRC=$?
 [ "$WRC" = 143 ] && [ "$(cat "$W/kills" 2>/dev/null)" = "-TERM 4242" ] && [ -e "$W/unit-active" ] \
   && ok "Exit from OGUI's menu (TERM) ends the game's launch, not Steam" || bad "rc=$WRC kills=$(cat "$W/kills" 2>&1) $(cat "$W/sysd.log")"
@@ -636,6 +670,17 @@ bg_wrap RETROFORGE_STEAM_KEEP=on -- -gamepadui
 until_true '[ -e "$W/call1" ]'; sleep 0.3
 kill -TERM "$wpid"; wait "$wpid"; WRC=$?
 [ "$WRC" = 143 ] && [ -e "$W/unit-active" ] && [ ! -e "$W/kills" ] && ok "or OGUI stops it: Steam keeps running" || bad "rc=$WRC $(cat "$W/kills" 2>&1)"
+reset_keep; touch "$W/unit-active"
+fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- game
+fakeproc 4343 1 reaper "$STEAM_REAPER" SteamLaunch AppId=43 -- game
+fakeproc 6000 1 bash bash /usr/bin/steam steam://rungameid/42
+"${KENV[@]}" bash "$KEEP" follow 42 6000
+bg_wrap RETROFORGE_STEAM_KEEP=on -- -gamepadui steam://open/bigpicture
+until_true '[ -e "$W/call1" ]'; sleep 0.3
+kill -TERM "$wpid"; wait "$wpid"; WRC=$?
+[ "$WRC" = 143 ] && [ "$(cat "$W/kills" 2>/dev/null)" = "-TERM 4343" ] && [ -d "$P/4242" ] && [ -e "$W/unit-active" ] \
+  && ok "Exit with a game started from Steam's UI ends that game, not one OGUI follows, nor Steam" \
+  || bad "rc=$WRC kills: $(cat "$W/kills" 2>&1) $(cat "$W/err")"
 
 CASE="keep: no user manager"
 reset_keep; touch "$W/sdrun-fails"

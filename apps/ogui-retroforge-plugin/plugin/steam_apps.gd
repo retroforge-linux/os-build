@@ -123,6 +123,12 @@ static func appid_of(args: PackedStringArray) -> int:
 	return 0
 
 
+## A launch of Steam's own UI (Main menu > Apps > Steam Client, an install or uninstall from the
+## library, the desktop Steam entry): `steam` without a game to start.
+static func is_ui_launch(item: LibraryLaunchItem) -> bool:
+	return item != null and item.command == "steam" and appid_of(item.args) == 0
+
+
 static func launch_args(appid: int) -> PackedStringArray:
 	var args := PackedStringArray(LAUNCH_ARGS)
 	args.append("steam://rungameid/%d" % appid)

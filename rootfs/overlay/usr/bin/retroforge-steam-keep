@@ -15,6 +15,12 @@
 #   retroforge-steam-keep resume APPID   SIGCONT it again. A pause and a resume started together end in
 #                                        the state asked for last, whichever runs first (OGUI's "Pause
 #                                        game in menus" starts both in the background)
+#   retroforge-steam-keep follow APPID PID
+#                                        PID, a launch of /usr/bin/steam, follows Steam's launch of APPID
+#                                        for as long as PID runs
+#   ui in place of APPID (games, end, pause, resume): every launch of Steam's that no live launch of
+#   /usr/bin/steam follows, i.e. the games the player started from Steam's own UI. OGUI counts those
+#   as part of its Steam app, so its Exit and its menu's pause reach them only through `ui`
 #   retroforge-steam-keep launch APPID SINCE
 #                                        print the step Steam's launch of APPID last reached since SINCE
 #                                        ("YYYY-MM-DD HH:MM:SS", local time): Completed once the game's
@@ -74,6 +80,7 @@ KILL="${RETROFORGE_STEAM_KEEP_KILL:-kill}"
 UNIT=retroforge-steam
 HOLDS="${XDG_RUNTIME_DIR:-/tmp}/retroforge-steam-full"   # one empty file per launch, named by its PID
 PAUSES="${XDG_RUNTIME_DIR:-/tmp}/retroforge-steam-pause"  # per app id, what its launch should be: STOP|CONT
+FOLLOWS="${XDG_RUNTIME_DIR:-/tmp}/retroforge-steam-follow"  # one file per following launch, named by its PID: the app id
 PARK_WAIT="${RETROFORGE_STEAM_PARK_WAIT:-30}"
 
 log() { echo "retroforge-steam-keep: $*" >&2; }
@@ -110,7 +117,7 @@ save() {  # save on|off: through a temporary file and a rename
   } >"$tmp" && mv -f "$tmp" "$CONF"
 }
 
-games() {  # games [appid]
+launches() {  # one "PID APPID" line per launch of Steam's: its reaper's PID and its app id
   local d comm a
   local -a argv
   for d in "$PROC"/[0-9]*; do
@@ -122,11 +129,54 @@ games() {  # games [appid]
     case "${argv[0]}" in *opengamepadui*) continue ;; esac
     for a in "${argv[@]:2}"; do
       [ "$a" = -- ] && break
-      case "$a" in
-        AppId=*) { [ -z "${1-}" ] || [ "$a" = "AppId=$1" ]; } && echo "${d##*/}"; break ;;
-      esac
+      case "$a" in AppId=*) echo "${d##*/} ${a#AppId=}"; break ;; esac
     done
   done
+}
+
+follow() {  # follow APPID PID
+  mkdir -p "$FOLLOWS" && printf '%s\n' "$1" >"$FOLLOWS/$2"
+}
+
+ui_ids() {  # the app ids of the launches no live launch of /usr/bin/steam follows (records of gone ones go)
+  local f id pid
+  local -A followed=() seen=()
+  for f in "$FOLLOWS"/*; do
+    [ -e "$f" ] || continue
+    if [ -e "$PROC/${f##*/}" ]; then
+      { read -r id <"$f"; } 2>/dev/null && followed[$id]=1
+    else
+      rm -f "$f"
+    fi
+  done
+  while read -r pid id; do
+    if [ -n "${followed[$id]-}" ] || [ -n "${seen[$id]-}" ]; then continue; fi
+    seen[$id]=1
+    echo "$id"
+  done < <(launches)
+}
+
+games() {  # games [appid|ui]: the reaper PIDs
+  local pid id
+  local -A pick=()
+  if [ "${1-}" = ui ]; then
+    for id in $(ui_ids); do pick[$id]=1; done
+  fi
+  while read -r pid id; do
+    case "${1-}" in
+      '') echo "$pid" ;;
+      ui) [ -z "${pick[$id]-}" ] || echo "$pid" ;;
+      *) [ "$id" != "$1" ] || echo "$pid" ;;
+    esac
+  done < <(launches)
+}
+
+what() {  # what APPID|ui: the launch, for the log
+  if [ "$1" = ui ]; then
+    echo "the games started from Steam's UI (app $(ui_ids | paste -sd, -))"
+  else
+    echo "Steam's launch of app $1"
+  fi
 }
 
 under() {  # under PID...: the PIDs under the given ones, all generations
@@ -150,7 +200,7 @@ end() {
   read -ra pids <<<"$(games "$1" | tr '\n' ' ')"
   [ "${#pids[@]}" -gt 0 ] || return 0
   read -ra pids <<<"${pids[*]} $(under "${pids[@]}" | tr '\n' ' ')"
-  log "ending Steam's launch of app $1 (${#pids[@]} processes)"
+  log "ending $(what "$1") (${#pids[@]} processes)"
   "$KILL" -TERM "${pids[@]}" 2>/dev/null
   for _ in $(seq 20); do
     left=""
@@ -169,7 +219,7 @@ end() {
 # resume takes the lock last applies the request made last. STOP goes round again for a process
 # forked while the others were being stopped; a stopped process cannot fork, so CONT needs one pass.
 pause_set() {
-  local f="$PAUSES/$1" want="" pid n
+  local f="$PAUSES/$1" want="" pid n label
   local -a pids all new
   local -A sent=()
   mkdir -p "$PAUSES" || return 1
@@ -181,9 +231,11 @@ pause_set() {
   read -ra pids <<<"$(games "$1" | tr '\n' ' ')"
   if [ "${#pids[@]}" -eq 0 ]; then
     rm -f "$f"
-    log "app $1 has no launch running"
+    # ui is asked for at every menu over Steam's own UI, mostly with no game: not worth a line
+    [ "$1" = ui ] || log "app $1 has no launch running"
     return 1
   fi
+  label="$(what "$1")"
   for n in 1 2 3; do
     read -ra all <<<"${pids[*]} $(under "${pids[@]}" | tr '\n' ' ')"
     new=()
@@ -196,9 +248,9 @@ pause_set() {
   done
   if [ "$want" = CONT ]; then
     rm -f "$f"
-    log "resumed Steam's launch of app $1 (${#sent[@]} processes)"
+    log "resumed $label (${#sent[@]} processes)"
   else
-    log "paused Steam's launch of app $1 (${#sent[@]} processes, pass $n)"
+    log "paused $label (${#sent[@]} processes, pass $n)"
   fi
   return 0
 }
@@ -319,18 +371,24 @@ case "${1-}:$#" in
     echo "$STATE"
     ;;
   games:1|games:2)
+    case "${2-0}" in ui) ;; ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
     games "${2-}"
     ;;
   end:2)
-    case "$2" in ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
+    case "$2" in ui) ;; ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
     end "$2"
+    ;;
+  follow:3)
+    case "$2" in ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
+    case "$3" in ''|*[!0-9]*) log "not a PID: $3"; exit 2 ;; esac
+    follow "$2" "$3"
     ;;
   launch:3)
     case "$2" in ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
     launch "$2" "$3"
     ;;
   pause:2|resume:2)
-    case "$2" in ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
+    case "$2" in ui) ;; ''|*[!0-9]*) log "not an app id: $2"; exit 2 ;; esac
     if [ "$1" = pause ]; then pause_set "$2" STOP; else pause_set "$2" CONT; fi
     ;;
   stop-idle:1)
@@ -344,7 +402,7 @@ case "${1-}:$#" in
     "$1" "${2-}"
     ;;
   *)
-    log "usage: retroforge-steam-keep status|on|off|games [APPID]|end APPID|pause APPID|resume APPID|launch APPID SINCE|stop-idle|stop-unused|full [PID]|minimal [PID]"
+    log "usage: retroforge-steam-keep status|on|off|games [APPID|ui]|end APPID|end ui|pause APPID|pause ui|resume APPID|resume ui|follow APPID PID|launch APPID SINCE|stop-idle|stop-unused|full [PID]|minimal [PID]"
     exit 2
     ;;
 esac
