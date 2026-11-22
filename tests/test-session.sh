@@ -802,5 +802,26 @@ grep -qx 'LimitMEMLOCK=infinity' "$UNIT" \
   && ok "no locked-memory cap for the session and its games (RPCS3 mlocks emulated memory)" \
   || bad "retroforge-session.service lacks LimitMEMLOCK=infinity: RPCS3 fails to lock memory at 8 MiB"
 
+# Godot 4.7.1's X11 display server asks the accessibility bus whether a screen reader runs every
+# 50 ms, whatever OGUI's accessibility mode; the first ask D-Bus-activated at-spi-bus-launcher,
+# which then cost ~22-26 ms/s answering (Air X). assemble-rootfs.sh deletes at-spi2-core's
+# activation file in every build mode (the overlay cannot delete), and the unit is masked; the mask
+# alone would turn every ask into a failed systemd activation.
+CASE="no accessibility bus"
+ASM="$ROOT/rootfs/assemble-rootfs.sh"
+# The deletion must sit in the overlay stage, which dev and release builds both run, not in the
+# seal or trim lists, which dev builds skip.
+awk '/^# STAGE overlay-payload/ { f = 1 } /^# STAGE / && !/overlay-payload/ { f = 0 }
+     f && /^[[:space:]]*rm -f "\$stage\/usr\/share\/dbus-1\/services\/org\.a11y\.Bus\.service"$/ { found = 1 }
+     END { exit !found }' "$ASM" \
+  && ok "assemble-rootfs.sh deletes org.a11y.Bus.service in the overlay stage (dev and release builds)" \
+  || bad "assemble-rootfs.sh does not delete usr/share/dbus-1/services/org.a11y.Bus.service in the overlay stage"
+! grep -rqx 'Name=org.a11y.Bus' "$ROOT/rootfs/overlay/usr/share/dbus-1" 2>/dev/null \
+  && ok "the overlay ships no activation file for org.a11y.Bus" \
+  || bad "the overlay ships a D-Bus service file for org.a11y.Bus"
+[ "$(readlink "$ROOT/rootfs/overlay/etc/systemd/user/at-spi-dbus-bus.service" 2>/dev/null)" = /dev/null ] \
+  && ok "at-spi-dbus-bus.service is masked for the session user" \
+  || bad "etc/systemd/user/at-spi-dbus-bus.service is not a /dev/null mask"
+
 printf '\ntest-session.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

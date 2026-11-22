@@ -911,6 +911,23 @@ done
 [ "$shell_ok" = 1 ] && echo "    ok  OpenGamepadUI present and executable, its self-updater absent"
 
 # ------------------------------------------------------------------------------------------
+# 9c. The accessibility bus is not activatable.
+#
+# OpenGamepadUI's engine asks org.a11y.Status whether a screen reader runs every 50 ms, whatever
+# its accessibility mode. With at-spi2-core's activation file present, the first ask starts
+# at-spi-bus-launcher, which then answers ~38 calls a second for ~22-26 ms/s of CPU (Air X);
+# rootfs/assemble-rootfs.sh deletes the file. A package bump that moves or renames it would bring
+# that back without a sound, so it is looked for by the name it activates, not by its file name.
+# ------------------------------------------------------------------------------------------
+for f in "$STAGE"/usr/share/dbus-1/services/*.service; do
+  [ -f "$f" ] || continue
+  grep -qx 'Name=org.a11y.Bus' "$f" \
+    && bad "${f#"$STAGE"/} makes org.a11y.Bus activatable: at-spi-bus-launcher would answer OGUI's 50 ms screen-reader poll"
+done
+[ "$(readlink "$STAGE/etc/systemd/user/at-spi-dbus-bus.service" 2>/dev/null)" = /dev/null ] \
+  || bad "etc/systemd/user/at-spi-dbus-bus.service is not masked"
+
+# ------------------------------------------------------------------------------------------
 # 10. Python bytecode is the image's own: no host bytecode rode in, and the stdlib has its own.
 #
 # rootfs/overlay/ is injected with `cp -a` of the WORKING TREE, and the offline suites import its

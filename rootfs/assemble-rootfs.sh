@@ -225,6 +225,12 @@ if [ -d "$OVERLAY" ]; then
   echo "  injecting rootfs/overlay payload -> session + HW-support + InputPlumber + audio"
   cp -a "$OVERLAY"/. "$stage/"
   rm -f "$stage/README.md"   # rootfs/overlay/README.md documents the tree; it is NOT rootfs content
+  # The one package file the overlay takes away, which a filesystem mirror cannot express:
+  # at-spi2-core's D-Bus activation file for the accessibility bus. Godot asks that bus whether a
+  # screen reader runs every 50 ms; without the file org.a11y.Bus is not activatable and each ask
+  # fails at once. A replacement file would have to name another bus, which dbus-broker-launch
+  # warns about at every session start. rootfs/overlay/README.md has the measurements.
+  rm -f "$stage/usr/share/dbus-1/services/org.a11y.Bus.service"
   # Host-side Python bytecode, same class of thing as the README: build-tree litter, not rootfs
   # content. The offline suites import rootfs/overlay's clients as modules (test-fan-curve.sh,
   # -cpu-scheduler, -update), and CPython writes a __pycache__ NEXT TO THE SOURCE — inside rootfs/overlay/, which this

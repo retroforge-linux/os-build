@@ -129,3 +129,15 @@ which its self-updates would overwrite. The overlay-ownership stage resets it to
   maintenance timers with nothing to do on an image OS (users and groups are pinned at build time,
   release images carry no pacman keyring, man-db is not installed), which can otherwise fire in
   the middle of a game. `man-db.timer` is masked ahead of time, in case a dependency pulls man-db in.
+- `etc/systemd/user/at-spi-dbus-bus.service -> /dev/null`, with `rootfs/assemble-rootfs.sh` deleting
+  at-spi2-core's `usr/share/dbus-1/services/org.a11y.Bus.service` (a deletion the mirror cannot
+  express) — no accessibility bus. Godot 4.7.1's X11 display server asks `org.a11y.Status` for
+  `IsEnabled` and `ScreenReaderEnabled` every 50 ms, whatever its accessibility mode
+  (`FreeDesktopAtSPIMonitor`); the first ask D-Bus-activated at-spi-bus-launcher, which then
+  answered ~38 calls a second, ~22-26 ms/s of CPU in menus and games alike (Air X, 2026-11-22).
+  Nothing on the image uses the bus: there is no screen reader, and only at-spi's own registry ever
+  connected. Without the activation file `org.a11y.Bus` is not activatable and each ask fails at
+  once in the session bus. Neither half works alone: a replacement file must name another bus,
+  which dbus-broker-launch warns about at every session start, and the mask alone turns every ask
+  into a failed systemd activation. at-spi2-core stays installed (gtk2 needs it).
+  `rootfs/guard-rootfs.sh` (9c) fails a release root that can still activate the name.
