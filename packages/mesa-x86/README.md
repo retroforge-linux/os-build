@@ -1,6 +1,6 @@
 # mesa-x86: our Mesa for the x86 guest Valve's FEX tool runs x86 games in
 
-An x86_64 + i686 build of **our** Mesa (Turnip, plus zink for GL), from the same tarball and the
+An x86_64 + i686 build of **our** Mesa (Turnip, plus freedreno and zink for GL), from the same tarball and the
 same patches as the host driver in [`../mesa`](../mesa). `make mesa-x86` builds it (`build.sh`), and
 `rootfs/lib-assemble-x86-mesa.sh` puts it in the OS image at `/usr/lib/retroforge/x86-mesa/root`
 with `payload.conf` (the Arch snapshot it was built against, the Mesa version). The guest itself,
@@ -49,9 +49,9 @@ both sides.
 | option | guest | host | why |
 |---|---|---|---|
 | `vulkan-drivers` | `freedreno` | `freedreno` | Turnip, for Vulkan games and DXVK/VKD3D |
-| `gallium-drivers` | `zink` | `freedreno` | GL as zink over the same Turnip, as Valve's own FEX guest Mesa ships it (`deckard-mesa-linux-x86_64`: zink is its only gallium driver). With no `msm` driver in libgallium, GLX and EGL fall back to zink by themselves. |
+| `gallium-drivers` | `freedreno`, `zink` | `freedreno` | GL on freedreno, which the `msm` driver name maps to (FEX's own Arch guest Mesa ran x86 GL titles that way), and zink over the same Turnip with `MESA_LOADER_DRIVER_OVERRIDE=zink`. zink alone, as Valve's `deckard-mesa-linux-x86_64` ships it, left x86 GL titles with no driver inside Steam's Linux Runtime: zink works under FEX outside the container but not in it (Megabonk, MANGMI Air X, 2026-11-22). |
 | `vulkan-layers` | `vram-report-limit` | + device-select, intel-nullhw, overlay, screenshot | the one Valve's guest carries, in its shape: an implicit layer that stays off unless `ENABLE_MESA_VRAM_REPORT_LIMIT=1` (Valve's `steam_launch_wrapper_env_defaults.txt` sets it for games). One manifest with a bare `library_path` serves both arches. |
-| `llvm` | disabled | disabled | zink and Turnip do not use it |
+| `llvm` | disabled | disabled | freedreno, zink and Turnip do not use it |
 | `glvnd`, `glx`, `egl`, `gbm` | enabled (`glx=dri`) | same | the guest's GL is libglvnd + libGLX_mesa/libEGL_mesa |
 | `display-info`, `spirv-tools`, `lmsensors`, `valgrind`, `libunwind` | disabled | various | the guest does not ship these libraries, and an ICD with a missing `NEEDED` is dropped silently |
 | `-march` | `x86-64` | `armv8-a+crc` | the guest's own baseline |
@@ -59,10 +59,9 @@ both sides.
 Each arch is checked in the container: the ELF class and machine of every library, the ICD's
 `library_path`, and a glibc symbol ceiling no newer than the snapshot's glibc.
 
-To make freedreno GL the default instead of zink, add `freedreno` to `gallium-drivers` in
-`container-build.sh`: the `msm` driver name then maps to it, and zink stays reachable with
-`MESA_LOADER_DRIVER_OVERRIDE=zink`. Not done, because it puts a second, unvalidated x86 GPU driver
-in the guest.
+freedreno is the default GL driver because zink alone failed inside Steam's runtime container;
+`MESA_LOADER_DRIVER_OVERRIDE=zink` picks zink per game (Steam's launch options). The payload check
+in `build.sh` requires `dri/msm_dri.so` for both arches, so a build without freedreno fails.
 
 ## Checking it against a real guest (optional)
 

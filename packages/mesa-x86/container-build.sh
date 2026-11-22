@@ -87,20 +87,21 @@ EOF
 #
 #   vulkan-drivers=freedreno  Turnip, the point of the exercise: x86 Vulkan games and DXVK/VKD3D
 #                             run on it, with the host's patches (packages/mesa/patches).
-#   gallium-drivers=zink      GL for x86 titles, as zink over that same Turnip -- what Valve's own
-#                             FEX guest Mesa ships (deckard-mesa-linux-x86_64: zink is its only
-#                             gallium driver). With no msm driver in libgallium, the hardware
-#                             driver fails to load and GLX and EGL retry with zink on their own
-#                             (src/glx/glxext.c GLX_DRIVER_ZINK_INFER; src/egl/main/eglapi.c
-#                             eglInitialize), so every GL title goes through our Turnip too.
-#                             Adding `freedreno`
-#                             here would make freedreno GL the default again (the msm name maps
-#                             to it) and zink an opt-in through MESA_LOADER_DRIVER_OVERRIDE=zink.
+#   gallium-drivers=freedreno,zink
+#                             GL for x86 titles: freedreno, which the msm kernel driver's name maps
+#                             to (as in FEX's own Arch guest Mesa, which ran them), and zink over
+#                             that same Turnip on request (MESA_LOADER_DRIVER_OVERRIDE=zink). zink
+#                             alone, as Valve's deckard-mesa-linux-x86_64 ships it, left native x86
+#                             GL titles with no driver inside Steam's Linux Runtime: the msm name
+#                             found none, the zink retry (src/glx/glxext.c GLX_DRIVER_ZINK_INFER)
+#                             failed in the container though it works under FEX outside it, and
+#                             GLX fell back to indirect and died on BadValue (Megabonk on the
+#                             MANGMI Air X, 2026-11-22).
 #   glvnd, glx=dri, egl, gbm  the guest's GL stack is libglvnd + libGLX_mesa/libEGL_mesa, and
 #                             ours replace FEX's copies of those.
 #   vulkan-layers             vram-report-limit only: the host builds it, and Valve's guest
 #                             carries it. The host's other layers are for the arm64 session.
-#   llvm=disabled             zink and Turnip do not use it, and the host does not either. There
+#   llvm=disabled             freedreno, zink and Turnip do not use it, nor does the host. There
 #                             is no llvmpipe in our libgallium; the guest's own llvmpipe stays in
 #                             FEX's libgallium-26.2.0.so, which ours do not load.
 #
@@ -113,7 +114,7 @@ common=(
   -Dplatforms=x11,wayland
   -Dvulkan-drivers=freedreno
   -Dfreedreno-kmds=msm
-  -Dgallium-drivers=zink
+  -Dgallium-drivers=freedreno,zink
   -Dvulkan-layers=vram-report-limit
   -Dglvnd=enabled -Dglx=dri -Degl=enabled -Dgbm=enabled -Dgles1=disabled -Dgles2=enabled
   -Dllvm=disabled -Dshared-llvm=disabled

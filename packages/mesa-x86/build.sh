@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the x86_64 + i686 Mesa (Turnip + zink GL) for the FEX guest.
+# Build the x86_64 + i686 Mesa (Turnip, freedreno and zink GL) for the FEX guest.
 #
 #   packages/mesa-x86/build.sh                     build, or reuse a build of the same inputs
 #   packages/mesa-x86/build.sh --configure-only    meson setup for both arches, then stop
@@ -76,7 +76,7 @@ HASH="$(sha256sum "${inputs[@]}" | cut -d' ' -f1 | sha256sum | cut -c1-64)"
 complete() {
   local d f
   for d in lib lib32; do
-    for f in libvulkan_freedreno.so libEGL_mesa.so.0 libGLX_mesa.so.0 "libgallium-$MESA_VERSION.so"; do
+    for f in libvulkan_freedreno.so libEGL_mesa.so.0 libGLX_mesa.so.0 "libgallium-$MESA_VERSION.so" dri/msm_dri.so; do
       [ -e "$WORKDIR/payload/usr/$d/$f" ] || return 1
     done
   done
