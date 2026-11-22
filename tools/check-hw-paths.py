@@ -62,6 +62,8 @@ PANELS = {
     "ch13726a,rpminiv2": "dcs",             # 0535
     "ch13726a,thor": "dcs",                 # 0535
     "vtdr6130,rp6": "dcs",                  # 0555
+    "vtdr6130,rp5": "dcs",                  # 0555 driver, 0556 compatible
+    "vtdr6130,rpflip2": "dcs",              # 0555 driver, 0556 compatible
     "il97680a,rpnova": "dcs",               # 0560
     "retroid,pocket-classic-panel": "dcs",  # upstream chipwealth-ch13726a + 0536
     "retroid,pocket-classic-g1392-panel": "dcs",  # upstream chipwealth-ch13726a + 0536
