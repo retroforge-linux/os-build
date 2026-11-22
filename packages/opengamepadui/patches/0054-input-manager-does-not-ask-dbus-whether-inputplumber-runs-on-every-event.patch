@@ -1,0 +1,173 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: retroforge <retroforge@invalid>
+Date: Sun, 22 Nov 2026 12:00:00 +0000
+Subject: [PATCH] perf(InputManager): don't ask DBus whether InputPlumber runs
+ on every input event
+
+InputManager._input() runs for every input event and asked
+InputPlumberInstance.is_running() each time, which builds a DBus proxy
+and makes a blocking NameHasOwner round trip. During a game Godot's
+joypad driver reads InputPlumber's virtual gamepad, so every stick and
+button change cost a round trip and was then dropped: on a MANGMI Air X
+~194 NameHasOwner calls a second from OGUI while playing, about 1 ms of
+OGUI CPU per gamepad event (main thread and the zbus threads) and
+~20 ms/s in dbus-broker (2026-11-22, Megabonk).
+
+InputPlumberRunning (core/systems/input/input_plumber_running.gd) asks
+at most once a second and takes the instance's started / stopped
+signals at once. InputManager and OverlayInputManager drop a joypad
+event first thing, before building its debug message;
+is_action_pressed() and the D-Pad double-input check use the same
+answer.
+
+---
+  core/systems/input/input_manager.gd              | 23 +++++++-----
+  core/systems/input/input_plumber_running.gd      | 48 ++++++++++++++++++++++++
+  core/systems/input/overlay_mode_input_manager.gd | 14 ++++---
+  3 files changed, 70 insertions(+), 15 deletions(-)
+
+diff --git a/core/systems/input/input_manager.gd b/core/systems/input/input_manager.gd
+index d4baecd..1362684 100644
+--- a/core/systems/input/input_manager.gd
++++ b/core/systems/input/input_manager.gd
+@@ -11,6 +11,8 @@ class_name InputManager
+ ## To include this functionality, add this as a node to the root node in the
+ ## scene tree.
+ 
++const InputPlumberRunning := preload("res://core/systems/input/input_plumber_running.gd")
++
+ ## Reference to the on-screen keyboard instance to open when the OSK action is
+ ## pressed.
+ var osk := load("res://core/global/keyboard_instance.tres") as KeyboardInstance
+@@ -19,6 +21,8 @@ var osk := load("res://core/global/keyboard_instance.tres") as KeyboardInstance
+ var audio_manager := load("res://core/global/audio_manager.tres") as AudioManager
+ ## InputPlumber receives and sends DBus input events.
+ var input_plumber := load("res://core/systems/input/input_plumber.tres") as InputPlumberInstance
++## Whether InputPlumber runs, without a DBus round trip for every input event.
++var input_plumber_running := InputPlumberRunning.new(input_plumber)
+ ## LaunchManager provides context on the currently running app so we can switch profiles
+ var launch_manager := load("res://core/global/launch_manager.tres") as LaunchManager
+ ## The Global State Machine
+@@ -100,7 +104,7 @@ static func is_inputplumber_event(event: InputEvent) -> bool:
+ ## not running, then Godot's Input system will be used to check if the action
+ ## is pressed. Otherwise, the input manager will track the state of the action.
+ func is_action_pressed(action: String) -> bool:
+-	if not input_plumber.is_running():
++	if not input_plumber_running.is_running():
+ 		return Input.is_action_pressed(action)
+ 	if not action in self.actions_pressed:
+ 		return false
+@@ -141,6 +145,14 @@ func pointer_recent(window_msec := 500) -> bool:
+ ## _gui_input node methods.
+ ## @tutorial https://docs.godotengine.org/en/latest/tutorials/inputs/inputevent.html#how-does-it-work
+ func _input(event: InputEvent) -> void:
++	# Don't process Godot events if InputPlumber is running. Checked first: during a game this is
++	# every event of InputPlumber's virtual gamepad, which Godot's joypad driver reads too.
++	if (event is InputEventJoypadButton or event is InputEventJoypadMotion) \
++			and input_plumber_running.is_running() and not is_inputplumber_event(event):
++		logger.debug("Skipping Godot event while InputPlumber is running:", event)
++		get_viewport().set_input_as_handled()
++		return
++
+ 	logger.debug("Got input event to handle: " + str(event))
+ 
+ 	# Keep track of the current number of touch inputs
+@@ -153,17 +165,10 @@ func _input(event: InputEvent) -> void:
+ 			or (event is InputEventMouseMotion and (event as InputEventMouseMotion).button_mask != 0):
+ 		last_pointer_msec = Time.get_ticks_msec()
+ 
+-	# Don't process Godot events if InputPlumber is running
+-	if input_plumber.is_running() and not is_inputplumber_event(event):
+-		if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+-			logger.debug("Skipping Godot event while InputPlumber is running:", event)
+-			get_viewport().set_input_as_handled()
+-			return
+-
+ 	var dbus_path := event.get_meta("dbus_path", "") as String
+ 
+ 	# Consume double inputs for controllers with DPads that have TRIGGER_HAPPY events
+-	if not input_plumber.is_running():
++	if not input_plumber_running.is_running():
+ 		const possible_doubles := ["ui_left", "ui_right", "ui_up", "ui_down"]
+ 		for action in possible_doubles:
+ 			if not event.is_action(action):
+diff --git a/core/systems/input/input_plumber_running.gd b/core/systems/input/input_plumber_running.gd
+new file mode 100644
+index 0000000..7935993
+--- /dev/null
++++ b/core/systems/input/input_plumber_running.gd
+@@ -0,0 +1,48 @@
++extends RefCounted
++
++## Whether InputPlumber is running, for InputManager._input(), which runs for every input event.
++## InputPlumberInstance.is_running() asks DBus each time (a new proxy and a blocking NameHasOwner
++## round trip). During a game Godot's joypad driver reads InputPlumber's virtual gamepad, so that
++## was a round trip for every stick and button change, only to drop the event: ~200 a second and
++## about 1 ms of CPU per event on a MANGMI Air X. The answer is reused for RECHECK_MSEC, and the
++## instance's started / stopped signals (from its own watch of the bus) update it at once.
++
++const RECHECK_MSEC := 1000
++
++## DBus checks made so far.
++var checks := 0
++var _instance: Object
++var _clock: Callable
++var _running := false
++var _known := false
++var _known_at := 0
++
++
++## instance is an InputPlumberInstance (or anything with is_running() and, optionally, started /
++## stopped signals); clock returns milliseconds, Time.get_ticks_msec() by default.
++func _init(instance: Object, clock := Callable()) -> void:
++	_instance = instance
++	_clock = clock
++	if instance.has_signal("started"):
++		instance.connect("started", _remember.bind(true))
++	if instance.has_signal("stopped"):
++		instance.connect("stopped", _remember.bind(false))
++
++
++## Whether InputPlumber is running, as of at most RECHECK_MSEC ago.
++func is_running() -> bool:
++	var now := _now()
++	if not _known or now - _known_at >= RECHECK_MSEC:
++		checks += 1
++		_remember(_instance.is_running())
++	return _running
++
++
++func _remember(running: bool) -> void:
++	_running = running
++	_known = true
++	_known_at = _now()
++
++
++func _now() -> int:
++	return _clock.call() if _clock.is_valid() else Time.get_ticks_msec()
+diff --git a/core/systems/input/overlay_mode_input_manager.gd b/core/systems/input/overlay_mode_input_manager.gd
+index aaf1734..b7393b4 100644
+--- a/core/systems/input/overlay_mode_input_manager.gd
++++ b/core/systems/input/overlay_mode_input_manager.gd
+@@ -60,13 +60,15 @@ func _send_input(dbus_path: String, action: String, pressed: bool, strength: flo
+ ## Process all unhandled input, possibly preventing the input from propagating further.
+ ## https://docs.godotengine.org/en/latest/tutorials/inputs/inputevent.html#how-does-it-work
+ func _input(event: InputEvent) -> void:
++	# Don't process Godot events if InputPlumber is running. Checked first, without a DBus round
++	# trip: during a game this is every event of InputPlumber's virtual gamepad.
++	if (event is InputEventJoypadButton or event is InputEventJoypadMotion) \
++			and input_plumber_running.is_running() and not InputManager.is_inputplumber_event(event):
++		logger.debug("Skipping Godot event while InputPlumber is running:", event)
++		get_viewport().set_input_as_handled()
++		return
++
+ 	logger.debug("Got input event to handle: " + str(event))
+-	# Don't process Godot events if InputPlumber is running
+-	if input_plumber.is_running() and not InputManager.is_inputplumber_event(event):
+-		if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+-			logger.debug("Skipping Godot event while InputPlumber is running:", event)
+-			get_viewport().set_input_as_handled()
+-			return
+ 
+ 	var dbus_path := event.get_meta("dbus_path", "") as String
+ 

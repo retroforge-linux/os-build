@@ -13,18 +13,22 @@
 #   - 0053 OguiIdCache: check_running() learns each process's OGUI_ID without reading every
 #     environment every second. Reading too little misses a game's processes (OGUI loses the game);
 #     reading too much is the 24-40 ms of main thread a second it replaces (Air X).
+#   - 0054 InputPlumberRunning: InputManager knows whether InputPlumber runs without a DBus round
+#     trip per input event. Asking too often is ~200 round trips a second during a game (Air X);
+#     too seldom, or missing started / stopped, and OGUI handles a pad's input twice or not at all.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PATCHES="$ROOT/packages/opengamepadui/patches"
 P0032="$PATCHES/0032-card-art-only-near-the-screen.patch"
 P0053="$PATCHES/0053-launch-manager-reads-a-process-environment-only-while-it-is-new.patch"
+P0054="$PATCHES/0054-input-manager-does-not-ask-dbus-whether-inputplumber-runs-on-every-event.patch"
 
 PASS=0; FAIL=0; CASE=""
 ok()  { PASS=$((PASS+1)); printf '  ok   %s -- %s\n' "$CASE" "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s -- %s\n' "$CASE" "$1"; }
 
-for f in "$P0032" "$P0053"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
+for f in "$P0032" "$P0053" "$P0054"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
 T="$(mktemp -d)" && [ -d "$T" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
@@ -242,6 +246,95 @@ func _initialize() -> void:
 	quit(1 if failed else 0)
 GD
   out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P53" --script res://ogui_id_test.gd 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+  n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+  PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+  if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+    bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+  fi
+fi
+
+CASE="InputPlumber running cache (0054)"
+if [ -z "$GODOT" ]; then
+  printf '  skip %s -- no Godot (set RETROFORGE_GODOT to a Godot 4 binary)\n' "$CASE"
+else
+  P54="$T/p54"; mkdir -p "$P54"
+  added_file "$P0054" core/systems/input/input_plumber_running.gd > "$P54/input_plumber_running.gd"
+  grep -q '^func is_running() -> bool:$' "$P54/input_plumber_running.gd" \
+    && ok "the patch adds core/systems/input/input_plumber_running.gd" || bad "input_plumber_running.gd not found in the patch"
+  # Every per-event call goes through the cache: none of the removed lines' direct calls is added back.
+  if grep -q '^-.*input_plumber\.is_running()' "$P0054" && ! grep -q '^+.*input_plumber\.is_running()' "$P0054" \
+      && [ "$(grep -c '^+.*input_plumber_running\.is_running()' "$P0054")" -eq 4 ]; then
+    ok "both input managers' _input(), is_action_pressed() and the D-Pad check use it"
+  else
+    bad "a direct input_plumber.is_running() is left in the patched input managers"
+  fi
+  # The joypad drop comes first in _input(), before the debug message is built.
+  awk '/^\+\+\+ b\/core\/systems\/input\/(input|overlay_mode_input)_manager.gd/ { f = 1 } f && /func _input\(event: InputEvent\)/ { inside = 1; next }
+       inside && /logger\.debug\("Got input event/ { print (seen ? "first" : "late"); inside = 0; seen = 0 }
+       inside && /input_plumber_running\.is_running\(\) and not/ { seen = 1 }' "$P0054" | sort | uniq -c | grep -q '^ *2 first$' \
+    && ok "in both _input()s the joypad drop comes before the debug message" || bad "a joypad event still builds the debug message first"
+  printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P54/project.godot"
+  cat > "$P54/ip_running_test.gd" <<GD
+extends SceneTree
+# A fake InputPlumberInstance that counts its DBus checks, and a fake clock.
+
+const InputPlumberRunning := preload("res://input_plumber_running.gd")
+var failed := 0
+var now_ms := 5000
+
+
+class FakePlumber extends RefCounted:
+	signal started
+	signal stopped
+	var running := true
+	var calls := 0
+
+	func is_running() -> bool:
+		calls += 1
+		return running
+
+
+func clock() -> int:
+	return now_ms
+
+
+func check(what: String, got, want) -> void:
+	if str(got) == str(want):
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+
+func _initialize() -> void:
+	var plumber := FakePlumber.new()
+	var cache = InputPlumberRunning.new(plumber, clock)
+	var answers := []
+	for i in 200:
+		answers.append(cache.is_running())
+		now_ms += 4
+	check("200 events in 0.8 s: one DBus check, the same answer", [plumber.calls, answers.count(true)], [1, 200])
+	plumber.running = false
+	now_ms += 250
+	check("a second after the last check it asks again and sees InputPlumber gone", [cache.is_running(), plumber.calls], [false, 2])
+	plumber.running = true
+	plumber.started.emit()
+	check("started: running at once, without asking", [cache.is_running(), plumber.calls], [true, 2])
+	plumber.running = false
+	plumber.stopped.emit()
+	check("stopped: not running at once, without asking", [cache.is_running(), plumber.calls], [false, 2])
+	now_ms += 999
+	cache.is_running()
+	check("the signal's answer counts as a check (next ask a second after it)", plumber.calls, 2)
+	now_ms += 1
+	cache.is_running()
+	check("and then it asks", plumber.calls, 3)
+	var plain = InputPlumberRunning.new(FakePlumber.new())
+	check("with no clock given it runs on Time.get_ticks_msec()", plain.is_running(), true)
+	quit(1 if failed else 0)
+GD
+  out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P54" --script res://ip_running_test.gd 2>&1)"; rc=$?
   printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
   n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
   PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
