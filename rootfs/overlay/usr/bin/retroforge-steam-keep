@@ -35,6 +35,8 @@
 #                                        Prints `woke` when the UI was frozen: it starts up again (~11 s)
 #   retroforge-steam-keep minimal [PID]  drop PID's hold, then freeze the client's web helper unless
 #                                        another live launch holds it
+#   retroforge-steam-keep sweep          while no client runs: delete the shared memory earlier clients
+#                                        left in /dev/shm (/usr/bin/steam, before it starts one)
 #
 # On (the default): the first launch starts the client as the user unit retroforge-steam.service,
 # outside OGUI's process tree, and later launches hand their steam:// URI to it (/usr/bin/steam says
@@ -43,8 +45,8 @@
 #
 # Minimal: in the background the kept client runs without its UI. Its web helper (Chromium: ~1 GB of
 # RAM, swap and GPU buffers on the MANGMI Air X) cannot be stopped for good: the client starts it
-# again at once (14 times in 2 min). So it is killed, and the one the client starts next is frozen
-# (SIGSTOP, 0.3 s later, at ~7 MB). The client waits for it without starting another and stays
+# again at once (14 times in 2 min). So it is stopped (TERM, KILL if it is still up 5 s later), and
+# the one the client starts next is frozen (SIGSTOP, 0.3 s later, at ~7 MB). The client waits for it without starting another and stays
 # signed in, ~240 MB in all, and games still use it: achievements, stats, playtime, Steam Input and
 # Steam Cloud (2026-10-24/25). SIGCONT (`full`) brings Steam's UI back.
 #
@@ -68,8 +70,9 @@
 # again within RETROFORGE_STEAM_PARK_WAIT s (30); 2 for a bad invocation.
 #
 # TEST SEAMS (tests/test-steam.sh): RETROFORGE_PROC (/proc), RETROFORGE_STEAM_KEEP_KILL (kill),
-# RETROFORGE_STEAM_ROOT (also set by /usr/bin/steam), RETROFORGE_STEAM_PARK_WAIT, XDG_RUNTIME_DIR (the
-# holds and the pauses), and systemctl from PATH.
+# RETROFORGE_STEAM_ROOT (also set by /usr/bin/steam), RETROFORGE_STEAM_PARK_WAIT,
+# RETROFORGE_STEAM_TERM_WAIT, RETROFORGE_SHM (/dev/shm), XDG_RUNTIME_DIR (the holds and the pauses),
+# and systemctl from PATH.
 set -u
 
 export LC_ALL=C
@@ -82,6 +85,8 @@ HOLDS="${XDG_RUNTIME_DIR:-/tmp}/retroforge-steam-full"   # one empty file per la
 PAUSES="${XDG_RUNTIME_DIR:-/tmp}/retroforge-steam-pause"  # per app id, what its launch should be: STOP|CONT
 FOLLOWS="${XDG_RUNTIME_DIR:-/tmp}/retroforge-steam-follow"  # one file per following launch, named by its PID: the app id
 PARK_WAIT="${RETROFORGE_STEAM_PARK_WAIT:-30}"
+TERM_WAIT="${RETROFORGE_STEAM_TERM_WAIT:-5}"
+SHM="${RETROFORGE_SHM:-/dev/shm}"
 
 log() { echo "retroforge-steam-keep: $*" >&2; }
 
@@ -330,7 +335,7 @@ full() {  # full [PID]
 }
 
 minimal() {  # minimal [PID]
-  local c h old="" awake="" kids _
+  local c h old="" awake="" kids left="" _
   [ -z "${1-}" ] || rm -f "$HOLDS/$1"
   held && return 0
   c="$(client)" || return 0
@@ -339,12 +344,29 @@ minimal() {  # minimal [PID]
     { frozen "$h" && [ -z "$(under "$h")" ]; } || awake=1
   done
   [ -n "$old" ] && [ -z "$awake" ] && return 0   # minimal already
-  # shellcheck disable=SC2086
-  [ -z "$old" ] || "$KILL" -KILL $old 2>/dev/null
+  # TERM first, so the helper can shut down itself (it does, in under 5 s on the MANGMI Air X); KILL
+  # only what is still up after TERM_WAIT s. A frozen one is let go on first, or TERM would wait too.
+  if [ -n "$old" ]; then
+    # shellcheck disable=SC2086
+    "$KILL" -CONT $old 2>/dev/null; "$KILL" -TERM $old 2>/dev/null
+    for _ in $(seq $((TERM_WAIT * 10))); do
+      left=""
+      for h in $old; do
+        [ -e "$PROC/$h" ] && ! grep -q '^State:[[:space:]]*Z' "$PROC/$h/status" 2>/dev/null && left="$left $h"
+      done
+      [ -n "$left" ] || break
+      sleep 0.1
+    done
+    if [ -n "$left" ]; then
+      log "web helper$left still up ${TERM_WAIT} s after TERM: killed"
+      # shellcheck disable=SC2086
+      "$KILL" -KILL $left 2>/dev/null
+    fi
+  fi
   for _ in $(seq $((PARK_WAIT * 20))); do
     sleep 0.05   # a restarted helper is past 100 MB within a fraction of a second, its files cached
     for h in $(helpers "$c"); do
-      case "$old " in *" $h "*) continue ;; esac   # a killed one not yet reaped
+      case "$old " in *" $h "*) continue ;; esac   # an old one not yet reaped
       "$KILL" -STOP "$h" 2>/dev/null || continue
       kids="$(under "$h" | tr '\n' ' ')"
       # shellcheck disable=SC2086
@@ -355,6 +377,34 @@ minimal() {  # minimal [PID]
   done
   log "the client did not start its web helper again within $PARK_WAIT s"
   return 1
+}
+
+# The client and its web helper share memory through /dev/shm/u<uid>-Shm_* (0.4-26 MB each). A client
+# that exits, stopped or crashed, removes none of its own: 11 (52 MB) at a stop on the MANGMI Air X,
+# 2026-11-22. A new client never takes them up again, so they pile up in RAM and swap until /dev/shm
+# (half the RAM) is full, and then every game's launch dies of SIGBUS in Steam's overlay
+# (gameoverlayrenderer.so): 126 of them, 1.8 GB, after 120 starts of the web helper that day.
+# Stopping a web helper leaks nothing (its client keeps them). So the sweep runs only while no client
+# does: a live one maps some of its segments again later (12 left unused after a game, taken up again
+# when its UI came back), and a segment some process still maps or holds open stays.
+sweep() {
+  local d comm f held n=0 kb=0 uid
+  client >/dev/null && return 0
+  for d in "$PROC"/[0-9]*; do
+    { read -r comm <"$d/comm"; } 2>/dev/null && [ "$comm" = steam ] && return 0
+  done
+  uid=$(id -u)
+  held="$( { cat "$PROC"/[0-9]*/maps 2>/dev/null | awk '{print $6}'
+             find "$PROC"/[0-9]*/fd -mindepth 1 -maxdepth 1 -type l -printf '%l\n' 2>/dev/null; } |
+           grep -F "$SHM/u$uid-Shm_" | sort -u)"
+  for f in "$SHM/u$uid-Shm_"*; do
+    [ -f "$f" ] || continue
+    grep -qxF -- "$f" <<<"$held" && continue
+    kb=$((kb + $(du -k -- "$f" | cut -f1)))
+    rm -f -- "$f" && n=$((n + 1))
+  done
+  [ "$n" = 0 ] || log "removed $n segment$([ "$n" = 1 ] || echo s) of shared memory ($((kb / 1024)) MB) that earlier Steam clients left in $SHM"
+  return 0
 }
 
 case "${1-}:$#" in
@@ -397,12 +447,15 @@ case "${1-}:$#" in
   stop-unused:1)
     stop_unused
     ;;
+  sweep:1)
+    sweep
+    ;;
   full:1|full:2|minimal:1|minimal:2)
     case "${2-0}" in ''|*[!0-9]*) log "not a PID: $2"; exit 2 ;; esac
     "$1" "${2-}"
     ;;
   *)
-    log "usage: retroforge-steam-keep status|on|off|games [APPID|ui]|end APPID|end ui|pause APPID|pause ui|resume APPID|resume ui|follow APPID PID|launch APPID SINCE|stop-idle|stop-unused|full [PID]|minimal [PID]"
+    log "usage: retroforge-steam-keep status|on|off|games [APPID|ui]|end APPID|end ui|pause APPID|pause ui|resume APPID|resume ui|follow APPID PID|launch APPID SINCE|stop-idle|stop-unused|full [PID]|minimal [PID]|sweep"
     exit 2
     ;;
 esac

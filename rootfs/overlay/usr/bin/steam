@@ -422,6 +422,8 @@ done
 child=""; stopping=""
 trap 'stopping=1; [ -n "$child" ] && kill -TERM "$child" 2>/dev/null' TERM INT HUP
 while :; do
+  # Shared memory that earlier clients left in /dev/shm (retroforge-steam-keep says why)
+  "$keep_cli" sweep
   "$client" "${noverify[@]}" "$@" &
   child=$!
   # A trapped signal ends `wait` early; keep waiting until the client has really exited.
