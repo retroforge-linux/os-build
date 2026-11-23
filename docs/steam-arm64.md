@@ -256,18 +256,32 @@ times in 2 minutes). So `minimal` kills it and freezes (SIGSTOP) the one the cli
 later at ~7 MB, and anything it has started. The client waits for it indefinitely (6 minutes seen)
 without starting another, stays signed in, and costs ~240 MB in all while idle; under a game's memory
 pressure the kernel moves most of that into zram, and at Hades's peak it cost ~75 MB (the table
-below). `full` (SIGCONT) brings Steam's UI back. Refrozen after Steam's UI has run, the helper the
-client starts again is born bigger, its files cached: ~110 MB private (~60 MB anonymous), which the
-kernel moves into zram when a game needs the memory. The launches that need the UI hold it (`full $$`,
+below). `full` brings Steam's UI back: it kills the frozen helper (SIGKILL) and the client starts a
+working one at once, its UI up ~4 s later. It is not let go on (SIGCONT): minimal killed what it had
+started, so a thawed helper failed to launch its GPU process 9 times, exited FATAL ("GPU process
+isn't usable"), and the client waited out systemd-coredump writing that crash (16 s) before it started
+the next: Steam's UI 36 s after the open (Air X, 2026-11-23). The restarted helper has to be caught
+early: with its files cached (after Steam's UI has run) it is past 100 MB within a fraction of a
+second. `minimal` looks for it every 50 ms, through the kernel's list of the client's children, with
+shell builtins only: a `cat` per thread of the client (60) made each look ~0.2 s, and the helper was
+frozen at 170-230 MB, ~110 MB of it anonymous and shared memory, instead of 2-4 MB (Air X, 2026-11-23,
+three times each; Steam's UI still came back whole from it). The launches that need the UI hold it (`full $$`,
 a file per launch in `$XDG_RUNTIME_DIR/retroforge-steam-full/`): Steam's own UI until OGUI closes it,
 and a game the client starts (Steam's launch dialogs, install scripts and shader prompt need the UI)
 until Steam has switched the controller to it (`OnFocusWindowChanged to game window type` in its
 `controller_ui.txt`) and 5 s more (`RETROFORGE_STEAM_MINIMAL_DELAY`). Frozen before that, Steam never
 switched it, and the game had no controls (2026-10-25). Steam's own UI opened from a minimal client
-(Main menu > Emulators > Steam Client) is handed over once the woken UI has made its first calls into
-the client (`SlowJSMethodCall` in `console_log.txt`, ~11 s) and 2 s more: sent at once,
-`steam://open/bigpicture` was lost, Steam's window stayed unmapped and OGUI on its loading screen. So
-Steam's UI takes ~14 s from a minimal client. A game started without the client (below) gets the kept
+(Main menu > Emulators > Steam Client) is handed over once the new helper has created the UI's main
+window (`SP BPM_uid0: STARTUP BrowserCreated`, or `SP Desktop`, in `webhelper.txt`) and 2 s more:
+sent at once, `steam://open/bigpicture` was lost, Steam's window stayed unmapped and OGUI on its
+loading screen (2026-10-25). It waited for `SlowJSMethodCall` in `console_log.txt` until the client
+stopped writing that (2026-11-22), and every open then waited out the 30 s. So Steam's UI takes ~10 s
+from a minimal client (Air X, page cache dropped, 2026-11-23), against ~37 s before. Closed from OGUI, Steam's UI
+first leaves Big Picture (`steam://close/bigpicture`, back to the hidden desktop window a client
+started `-silent` has), then goes minimal: a client keeps Big Picture open while its helper is killed,
+and the next game launch's helper showed it again with the game's id on it, which OGUI took for the
+game's window and kept in front; the game ran hidden behind it, and Steam, never seeing the game
+focused, kept its UI full (2026-11-23). A game started without the client (below) gets the kept
 client beside it, minimal; the client logs it with an empty command, which is not a launch to replay.
 
 A game's Steam API works with the minimal client, whoever started the game. Hades's first room, then
@@ -287,11 +301,27 @@ game was running`, then `Upload OK`). A Steamworks probe as app 480 (Spacewar) s
 (`ISteamRemoteStorage::FileWrite`, uploaded when it let go) and achievements (`SetAchievement` +
 `StoreStats`, stored) work the same way. What only Steam's own launch does is the Cloud download before
 the game (`Starting sync (AC Launch,down,)`): saves changed on another device in between meet Steam's
-cloud-conflict check when the game ends. When the client launches the game, its web helper peaks at
-~2 GB during Steam's launch steps, and what it pushed into swap stays there for the game.
+cloud-conflict check when the game ends. A game the minimal client launches itself (an x86 game,
+through FEX) gets both: Megabonk on the Air X (2026-11-23) logged `Starting sync (AC Launch,down,)`
+and `Download complete` before each launch, and after a run that changed its stats, `Need to upload
+file .../stats.json`, `Upload OK`, `Upload complete, result OK`. When the client launches the game,
+its web helper peaks at ~2 GB during Steam's launch steps, and what it pushed into swap stays there for
+the game.
 
 `systemctl --user status retroforge-steam` and `journalctl --user -u retroforge-steam` (as the
 player) show a kept client; the launches log to OGUI's journal as before.
+
+**Started after boot (2026-11-23).** The first Steam game after a boot started the client first:
+Megabonk's window 57 s after its launch, against 44 s with Steam already kept (Air X, page cache
+warm). So `retroforge-session` runs `steam -gamepadui -steamos3 -steampal -steamdeck -silent` with
+`RETROFORGE_STEAM_PRESTART=1` on the games' Xwayland, `RETROFORGE_STEAM_PRESTART_DELAY` s (30) after
+the shell starts (`off`: not at all), unless the shell has ended by then. In that mode `/usr/bin/steam`
+starts the kept client as a launch would, waits for its sign-in and leaves it minimal (the same steps
+as beside a game started without it), and only with "Keep Steam running" on, a remembered sign-in,
+and no kept client running yet: a game or Steam's UI opened first is left alone. Without Steam Client
+installed, or while its install runs, it stops at the bootstrap and downloads nothing. On the Air X
+the client was kept and minimal 47 s after a session start (17 s of it Steam's own), and the first
+launch's window came at 46 s.
 
 ## Starting games without Steam (Settings > Steam, on by default)
 
@@ -404,7 +434,8 @@ next launch without a library rescan. Keeping Steam running applies to all of th
 without the client gets the kept client beside it, and first launches and Steam's own UI go to it.
 
 **Per game** (Game settings > RetroForge, `game_settings_page.gd`): a Steam game's FEX TSO (on or off),
-launch option and resolution. (Its own Proton, ARMv8.0 stable or experimental, went with the Valve-based
+launch option and resolution, and an x86 game's graphics driver ("The device's own driver", below:
+set before every launch, through the client too). (Its own Proton, ARMv8.0 stable or experimental, went with the Valve-based
 ARMv8.0 builds on 2026-11-01: there is one ARMv8.0 Proton, and Steam's Properties > Compatibility picks
 any other.) `retroforge-steam-direct game APPID [set KEY VALUE]` keeps them in
 `~/.config/retroforge/steam-games.json`. A launch without the client applies them to Steam's logged
@@ -460,10 +491,11 @@ whatever FEX publishes there now. Two matching entries are refused rather than g
 x86_64 and i686 from `packages/mesa`'s pin and patches by `packages/mesa-x86` (Turnip, freedreno, the
 GL front ends, the VRAM layer; `make mesa-x86`, in an x86_64 Arch container locked to the guest's
 Arch snapshot), at `/usr/lib/retroforge/x86-mesa/root`, with `payload.conf` naming that snapshot.
-It is the image's one x86 payload and nothing on the host runs it. `steam-x86-guest` mounts the
-guest on `fex-guest/base` and lays the payload over it with `fuse-overlayfs` on `fex-guest/root`
-(lower layers only, so read-only): our files replace the guest's at the same paths, everything else
-is the guest's, and `graphics_provider.json` is still the guest's. A guest older than the payload's
+It is the image's one x86 payload and nothing on the host runs it. `steam-x86-guest` lays the
+payload over the guest on `fex-guest/root`, read-only (lower layers only): with the kernel's overlayfs
+when root mounts the guest (**The mount**, below), else with `fuse-overlayfs` over a squashfuse mount
+on `fex-guest/base`. Our files replace the guest's at the same paths, everything else is the guest's,
+and `graphics_provider.json` is still the guest's. A guest older than the payload's
 snapshot (it could lack the glibc the payload links against) is mounted as it is, and so is any
 guest on an image built with `RETROFORGE_X86_MESA=0`.
 
@@ -489,7 +521,8 @@ keeps those paths. The pin also takes a **fixed** image (`version`, `url`, `sha2
 downloads when the pin changes.
 
 The squashfs is the smaller build (the EroFS one is ~2.18 GB), and the image already ships
-squashfuse. Thunks stay off, as Steam leaves them (`ThunksDB_GL:0,ThunksDB_Vulkan:0`).
+squashfuse. Steam leaves FEX's thunks off (`ThunksDB_GL:0,ThunksDB_Vulkan:0`); RetroForge turns the GL
+one on per game ("The device's own driver", below).
 
 **How it gets there** (`/usr/lib/retroforge/steam-x86-guest`, separate from `steam-bootstrap`). No
 `steam` waits for the network:
@@ -510,8 +543,34 @@ squashfuse. Thunks stay off, as Steam leaves them (`ThunksDB_GL:0,ThunksDB_Vulka
   installed; the download is kept and checked at the next start.
 - Only one fetch runs at a time, and it refuses to start without ~1.6 GB free.
 
-**The mount.** squashfuse mounts the image on `~/.local/share/retroforge/fex-guest/root`, as the
-player. `steam` exports `STEAM_COMPAT_GRAPHICS_PROVIDER=<that>/graphics_provider.json` only when
+**The mount.** The image is mounted on `~/.local/share/retroforge/fex-guest/root` with the kernel's
+squashfs and overlayfs, by root:
+- `steam-x86-guest` (the player's) writes `fex-guest/.kernel-request` (`image=<file>`, `mesa=0|1`) and
+  runs `systemctl --no-ask-password start retroforge-x86-guest-mount@<user>.service`, a oneshot that
+  runs `/usr/lib/retroforge/steam-x86-guest-kernel mount <user>` as root and waits for it.
+  `50-retroforge-x86-guest.rules` grants exactly that start, and `retroforge-x86-guest-release@<user>`'s,
+  with the subject's own user name, to an active local wheel session. Steam's client runs in the
+  player's user manager (`retroforge-steam.service`), outside the seat0 login, and polkit grants it
+  there too (Air X, 2026-11-23); an SSH login as the player gets no grant.
+- Root puts the image on a read-only loop device made from a descriptor and mounts it as squashfs on
+  `/run/retroforge/x86-guest/<uid>/base`. Then it mounts an overlay with source `rf-x86-guest` on
+  `fex-guest/root`, `lowerdir=<mask>:<our Mesa>:<opaque>:<base>`, read-only, nosuid and nodev. The two
+  small layers in `/run` do the work of our Mesa's `.wh..wh..opq` markers, which the kernel's overlayfs
+  would show as files: `<opaque>` has each marked folder with `trusted.overlay.opaque=y`, under ours;
+  `<mask>` has a whiteout for each marker, over ours.
+- **The image is the player's own file, mounted as it is** (decided 2026-11-23). FEX's channel only
+  checks it with XXH3, which is not a cryptographic hash, so code running as the player (a game) could
+  put a crafted image there and reach the kernel's squashfs driver. What root does not take from the
+  player: the home comes from the password database, every folder below it is opened one at a time
+  without following a symlink (each one the player's, on the home's filesystem), and the mounts go on
+  those descriptors, so a symlink or a rename cannot move them onto `/usr` or `/etc`; the image is a
+  regular file of the player's in `fex-guest` itself; no setuid program, file capability or device
+  node in it works; release takes down only an overlay of its own (mount ids: root cannot even stat the
+  player's FUSE mounts).
+- When the unit is refused or fails, or mounts nothing, `steam-x86-guest` mounts with squashfuse
+  instead, as the player, and logs why; `RETROFORGE_X86_GUEST_KERNEL=0` asks for FUSE only.
+
+`steam` exports `STEAM_COMPAT_GRAPHICS_PROVIDER=<that>/graphics_provider.json` only when
 that file is there, i.e. once the guest is mounted. pressure-vessel reads the variable for every
 container it starts, and a file that does not exist yet aborts it (`opendir(...): No such file or
 directory`): while the client still ran in a container of its own, a client started during the
@@ -526,11 +585,13 @@ games get the guest from the next start of Steam; `steam` says so on stderr.
 - **Released** when the last `steam` exits. `start` leaves a holder process outside steam's process
   tree, so OGUI's Exit cannot reap it, with TERM, INT and HUP ignored. It holds
   `fex-guest/.users.lock` shared, watches steam's PID through a pidfd, and when that PID is gone
-  (SIGKILL included) it lets go and unmounts with `fusermount3 -u -z`. It skips the unmount if
+  (SIGKILL included) it lets go and unmounts: a kernel mount through `retroforge-x86-guest-release@`
+  (lazily, `MNT_DETACH`), a FUSE one with `fusermount3 -u -z`. It skips the unmount if
   another steam still holds the lock. The client does not inherit the lock, so its leftover
   children cannot keep the mount. Mounting, unmounting and removing images run under
   `fex-guest/.mount.lock`.
-- squashfuse starts with TERM and INT ignored, like PortMaster's runtimes.
+- squashfuse starts with TERM and INT ignored, like PortMaster's runtimes. A kernel mount has no
+  process to kill.
 
 `steam` also links `~/.steam/sdk64` to `<Steam root>/linux64` and `~/.steam/sdk32` to
 `<Steam root>/linux32`, which Proton under FEX needs (omarchy-pkgs issue 973).
@@ -566,14 +627,111 @@ Checked on 2026-10-16:
 Not yet seen: the FEX tool using this provider, an x86 game or Proton running, anything on
 hardware, and FEX on ARMv8.0.
 
+### FEX's server, started before the launch
+
+Before an x86 game starts, pressure-vessel (Steam Linux Runtime 2.0, soldier, for Megabonk) runs
+~25 x86 helpers through FEX: the guest's `ld-linux-x86-64.so.2` and its capsule tools, probing the
+libraries it will bring into the container. A FEX with no FEXServer up starts one (`FEXServer
+--wait_pipe 4`), which inherits the helper's stdout and stays ~1 s after it, and pressure-vessel reads
+that pipe to its end: each helper took ~1.25 s, 28 s in all, with the device mostly idle (exec trace,
+MANGMI Air X, 2026-11-23). A FEX that finds the game's server up connects to it: a helper took
+0.1-0.3 s. So `/usr/bin/steam` starts that server itself before handing the launch to Steam, as the
+user unit `retroforge-fexserver-<appid>` (`FEXServer -f -p 60` with `FEX_PORTABLE=1` and the game's
+`STEAM_COMPAT_DATA_PATH`, which put its socket at `compatdata/<appid>/fex-emu/Server/`), for a game
+whose `compatdata/<appid>/fex-emu/Config.json` FEX's tool has written on an earlier launch: never for
+a native or Proton game, or a first launch. It stays 60 s after its last client. Megabonk's window came
+44-48 s after the launch instead of 69-73 s. The server holding the helper's pipe is FEX's
+(FEX-2607-76, Valve's FEX-Emu tool), not ours to change.
+
+### Only our drivers in the guest
+
+Most of those helpers are pressure-vessel's library capture: through the guest's x86 ld.so, for each
+arch, every Vulkan driver the guest lists (`no-dependencies:...:path:/usr/lib/libvulkan_*.so`) and the
+dependencies of every DRI driver (`only-dependencies:...:path:/usr/lib/dri/*_dri.so`). FEX's guest ships
+9 Vulkan drivers and 66 DRI names per arch; four of those captures took 0.9-3.3 s each. The x86 Mesa
+stage (`rootfs/lib-assemble-x86-mesa.sh`) keeps only `msm_dri.so`, `kgsl_dri.so` and `libdril_dri.so` in
+our layer's `usr/lib/dri` and `usr/lib32/dri` (the msm kernel driver's name picks msm; the other names
+Mesa installs with freedreno are display-only kmsro ones) and marks those folders and
+`usr/share/vulkan/icd.d` opaque (`.wh..wh..opq`, which fuse-overlayfs honours in a lower layer), so the
+guest's own entries there are hidden behind ours. Megabonk's window came 38-39 s after a warm launch
+instead of 43-45 s, its capture phase 9 s instead of 14.5 s, and it drew its menu as before (Air X,
+2026-11-23). The payload itself is unchanged: `compose.sh` flattens it into a guest with no overlay.
+
+The kernel's squashfs + overlayfs in place of FUSE (squashfuse + fuse-overlayfs), root's mount (**The
+mount**, above). Per FEX process it costs nothing measurable (x86 `true` 101-105 ms either way; FEX's own
+start is ~20 ms, the rest of a short process is translating its ld.so and libc), but pressure-vessel's
+probes read the guest's libraries through it. Megabonk on the Air X, the two in turn, each after a mount
+and a launch not counted (2026-11-23, the GL thunk on), mounted by hand: the probes took 6.9-7.9 s on the
+kernel's mounts against 11.1 s twice on FUSE, the container 2.4 s against 3.1 s, everything else the
+same: ~4 s of every x86 launch. In the game itself nothing reads the guest after its start. TSO off
+changed nothing; FEX's code cache made launches slower (below).
+
+As built, mounted by `steam-x86-guest` itself (root's unit, or FUSE with `RETROFORGE_X86_GUEST_KERNEL=0`),
+in turn, each after a launch not counted (Air X, 2026-11-23): the probes took 8.1 and 8.7 s against 10.9
+and 11.2 s, the container 2.7 s against 3.0-3.1 s, and Megabonk's window came at 35.8 and 38.3 s against
+38.5 and 40.2 s (Steam's own steps before the compat tool vary by 3 s from launch to launch either way):
+~3 s of every x86 launch. Four more launches on the kernel's mounts: probes 6.8-8.4 s. Mounting takes
+0.55 s (systemctl, polkit, root's helper) against 0.46 s with FUSE, once per start of Steam.
+`tests/test-steam-x86-guest-kernel.sh` (root, real mounts): 37/37 on the Air X, in a mount namespace of
+its own with a throwaway `/etc` and `/home` (OrbStack's kernel has no squashfs); its polkit and unit
+cases also run without root.
+
+Against the guest unpacked into a plain folder on `/home` (no mount at all; a copy of the merged tree,
+4,474 MB and 99,536 files against the 1.36 GB image, 151 s to copy) and FUSE with `squashfuse_ll`
+in place of `squashfuse`, in turn, twice each (Air X, 2026-11-23): probes 7.1 and 8.3 s on the plain
+folder, 8.9 and 10.2 s on the kernel's mounts, 10.1 and 12.1 s on `squashfuse_ll`; Megabonk's window at
+35.9/37.6, 36.0/37.1 and 39.5/43.0 s. With the page cache dropped, the plain folder and the kernel's
+mounts came out the same (window 42.9 and 43.8 s, probes 10.0 and 9.6 s). So the plain folder is as fast
+as the kernel's mounts, with no root and no FUSE; it costs ~3.1 GB more in `/home`. `squashfuse_ll` is
+no faster than `squashfuse` here. No unprivileged kernel mount of an image exists to try: in 7.3 neither
+squashfs nor erofs is `FS_USERNS_MOUNT` (overlayfs and FUSE are), and FEX's own image support runs
+`squashfuse` or `erofsfuse` from FEXServer.
+
+### The runtime's helpers without Multiblock
+
+FEX's Multiblock (on by default) compiles several blocks at once, faster code that costs more to
+compile. That suits a game, not the runtime's own x86 programs: its probes, shell tools and the scout
+layer's scripts, hundreds of short processes that each run their code once. For a game FEX's tool has
+set up, the wrapper's FEX step writes `{"Config": {"Multiblock": "0"}}` as `AppConfig/<program>.json`
+in the game's `compatdata/<appid>/fex-emu` folder for 54 of them (the x86 ld.so, `ldconfig`, `bash`,
+`sh`, coreutils, `capsule-capture-libs`, `detect-*`, `inspect-library`, `check-locale` and the
+`steam-runtime-*` tools), only where no file is, so a player's own stays. The game itself keeps
+Multiblock. Warm launches on the slim guest, with and without the files in turn (Air X, 2026-11-23):
+Megabonk's window came 39.1-40.1 s after the launch instead of 40.9-43.1 s. The scout layer's scripts
+took 4.3-4.4 s instead of 5.5-5.8 every time; the probes ~0.9 s less, but they vary by more than that
+from one launch to the next. Before the guest was slimmed, the slow captures hid this gain.
+
+### FEX's code cache: measured, left off
+
+Valve's FEX (FEX-2607-76, upstream commit 37265b1) has a code cache, `EnableCodeCachingWIP`, off by
+default. With it on, each FEX process records the code it compiled (`codemap/new`, under the game's
+shader cache), and at its start asks FEXServer for caches: the server merges the code maps and runs
+`FEXOfflineCompiler generate` for every program and library with new code, and the process waits
+until it is done. Megabonk with it on (Air X, 2026-11-23, launch option `FEX_ENABLECODECACHINGWIP=1`):
+its window came 67.2 s, 58.8 s and 46.1 s after three launches in a row, against ~40 s without, and
+504 generations failed in 15 minutes, each tried again at the next process start. The server runs
+outside pressure-vessel's container (ours, started before the launch, as does the one a probe starts),
+so the runtime's files resolve to the device's own (`/usr/bin/ln` is the arm64 `ln`); FEX's offline
+compiler has a `TODO: Pressure vessel hits this` there. The tool's other command, `FEXOfflineCompiler
+process-all`, aborts (`std::out_of_range`, `map::at`): it expects an executable marker in every code
+map, which FEX no longer writes there, and the check that would say so is compiled out of release
+builds. Neither has to do with the ARMv8.0 CPU. What a working cache could save is the short FEX
+processes' own translation, ~25 of them per launch, ~9 s summed and partly overlapping: a few seconds
+of the launch, nothing of the game once it runs. That needs FEX to build caches for the files in the
+container without holding every process start.
+
+The ARMv8.0 cost is elsewhere: FEX logs `Host CPU doesn't support atomics. Expect bad performance` on
+the SM6115 (no LSE), and turns every x86 atomic into a load-exclusive/store-exclusive loop.
+
 ## x86 games: the guest and its Mesa
 
 Native x86 Linux games run under FEX, which the arm64 client adds to a game as a dependency. An
 emulated x86 process loads only x86 libraries, so Steam needs an x86_64 + i386 **graphics
 provider**: a root with `/graphics_provider.json` at the top, the x86 dynamic loaders, glibc and an
 x86 Mesa, named by `STEAM_COMPAT_GRAPHICS_PROVIDER`. FEX can forward GL and Vulkan to the arm64
-driver ("thunks"), but its `ThunkConfig` defaults to empty, so by default the guest's x86 Mesa is
-the driver: x86 Turnip, compiled and run under emulation.
+driver ("thunks"); Valve's tool leaves them off, so there the guest's x86 Mesa is the driver, compiled
+and run under emulation. RetroForge turns the GL one on per game, by default ("The device's own
+driver", below); the guest's x86 Mesa then drives Vulkan games and a game the player sets to x86 Mesa.
 
 The guest is downloaded, never shipped: `/usr/share/retroforge/steam/x86-guest.pin` names a
 squashfs image that the device fetches and mounts under `/home` with squashfuse. It starts out on
@@ -594,8 +752,53 @@ login, could not download it. A Mesa bump in `packages/mesa` carries into the gu
 there; it needs a new dispatch and a pin bump. Details and the bump steps:
 [`packages/mesa-x86/README.md`](../packages/mesa-x86/README.md).
 
-Not yet seen: our guest (or FEX's) mounted by a device and driving a game, and whether Valve's tool
-enables thunks.
+Seen on hardware (Air X, 2026-11-23): our guest mounted and driving Megabonk, on its x86 Mesa (GL and
+Vulkan) and on the device's own driver (GL).
+
+### The device's own driver: FEX's GL thunk (Game settings > Graphics driver)
+
+FEX's thunks swap a game's `libGL.so.1` (and `libvulkan.so.1`) for FEX's guest thunk libraries
+(`GuestThunks/libGL-guest.so`), whose calls run the host's own arm64 Mesa natively (`HostThunks/
+libGL-host.so`, which loads the device's `libGL.so.1`; pressure-vessel shows the host's root at
+`/run/host`). Valve's tool ships both sides and a thunk database, `usr/share/fex-emu/ThunksDB.json`,
+and leaves them off (`ThunksDB_GL:0,ThunksDB_Vulkan:0` unless `STEAM_COMPAT_FEX_CONFIG` says
+otherwise). Turned on as FEX documents it, they do nothing here: the database names its paths as
+`@PREFIX_LIB@/libGL.so.1`, FEX expands that from where it finds the guest's libraries, and inside the
+container the root is empty, so it checks the game's working folder, decides the root is not
+multiarch and expands to `lib64` folders. The game opens `libGL.so.1` through pressure-vessel's
+overrides and from the graphics provider at `/run/gfx/main/usr/lib`, which match none of them, and
+keeps the x86 driver.
+
+So `retroforge-steam-direct fex APPID`, which `/usr/bin/steam` runs before every launch of a game,
+writes two kinds of file into the game's FEX folder (`<library>/steamapps/compatdata/<appid>/fex-emu`):
+- `ThunksDB.json`, FEX's local database (it replaces Valve's GL entry), with the literal paths the x86
+  loader opens there: the overrides, `/run/gfx/main/usr/lib{,32}` and the multiarch folders.
+- `AppConfig/Steam_<appid>_<program>.json`, `{"ThunksDB": {"GL": 1}}`, for each x86 program in the
+  game's folder (an x86-64 or i386 ELF with an interpreter, three levels deep). FEX
+  keys these by app id and program, so pressure-vessel's own x86 probes keep the guest's driver.
+
+Each file carries a `RetroForge` key; one without it is the player's own and stays as it is. That
+covers a game's first launch too: an installed game with an x86 program and no Proton prefix in its
+compat data is an x86 game. Game settings > RetroForge > "Graphics driver" (shown for x86 games
+only) offers Default (Native), Native and x86 Mesa; x86 Mesa removes our files, from the next launch.
+It is the `driver` key in `steam-games.json` (`retroforge-steam-direct game APPID set driver
+native|x86|default`).
+
+Megabonk on the Air X, with and without in turn (2026-11-23): the game maps `libGL-host.so` and the
+host's `libgallium-26.3.1-retroforge` (`/run/host/usr/lib`, no x86 Mesa), Unity reports `FD610`, `Mesa 26.3.1-retroforge1.1.1`, GL 4.6, and the
+menu draws as on x86 Mesa (screenshots). Its menu ran at 14-15 frames a second either way, the GPU at
+its top clock (1050 MHz): there the A610 is the limit. The game's CPU time fell from 116-117% of a
+core to 92-99%, and the Unity load from its first log line to its window from 13.0-13.4 s to
+10.5-10.7 s. In a run (Forest, 20 s in): 15 frames a second either way, the game's CPU 137-163% of a
+core against 185-197% on x86 Mesa, its window 38.2-40.5 s after the launch against 40.8-41.5 s.
+
+Vulkan stays on the guest's x86 Turnip. FEX's Vulkan thunk needs two more things here: the host
+side's loader sees only the container's manifests, so it needs the device's own (`VK_DRIVER_FILES`,
+through FEX's `HostEnv`, naming `/run/host/usr/lib/libvulkan_freedreno.so`), and Steam's
+`VK_INSTANCE_LAYERS` (`VK_LAYER_VALVE_rpo:VK_LAYER_VALVE_fdm_injection`) dropped there. With both,
+Megabonk on Vulkan (`-force-vulkan`) found the device's Turnip and opened its window, then died a
+minute in: `Vulkan - Out of memory! (allocating memory for buffer)`, SIGSEGV. On x86 Turnip it ran
+(17 frames a second in its menu, 106% of a core).
 
 ## Proton-CachyOS arm64, and DXVK-Sarek for the Adreno 610/613 (downloaded, not shipped)
 
@@ -629,6 +832,20 @@ ignores it anyway). Until 2026-10-31 there was a `DXVK_SAREK` setting (`retrofor
 "Steam: DXVK-Sarek (low-end GPUs)" toggle, and a per-game DXVK-Sarek row): its toggle said it turned
 Sarek on, but only downloaded a tool nothing selected. A leftover `DXVK_SAREK=` line in `steam.conf`
 is ignored, and a `user_settings.py` that toggle wrote is still recognised as ours.
+
+**Steam's driver query ends at once there (2026-11-23).** At every start the client runs
+`proton run d3ddriverquery64.exe` (and `-d3d12`) with its default tool, inside Steam Linux Runtime 4.0,
+to pick that tool's shader-cache buckets (`CGetCompatToolBucketJob` in `shader_log.txt`). On the SM6115,
+where our ARMv8.0 build is that default, the two Wine starts took ~50 s beside the first game after a
+boot and slowed its start ~10 s (Megabonk's window 69-78 s after a cold launch, 61-65 s without them,
+page cache dropped); the D3D12 one fails on the A610 anyway, so the result is never kept. Nice 19 and
+idle I/O for it changed nothing: it costs the SD card and memory, not CPU time. The caches those
+buckets brought had no shader module in common with what Hades created on the Air X (Steam's own
+recording, `steamapp_pipeline_cache.foz`: 74 modules; the tool's bucket 193, the generic one 155, none
+shared). So our `user_settings.py` ends the query at once (`d3ddriverquery64.exe` in Proton's arguments:
+exit 1). Steam then picks no per-tool bucket for it; the generic Vulkan bucket (`G7:VulkanPipelinesV6`)
+does not depend on the query. A `user_settings.py` with only the Sarek line, which earlier releases
+wrote, is still ours and is rewritten.
 
 **Apps > Proton (2026-10-31).** One entry of the Apps list for the Proton RetroForge keeps for
 Windows games, because Steam, GOG and Epic share it: on a CPU with LSE atomics Proton-CachyOS arm64, on
