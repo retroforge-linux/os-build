@@ -80,6 +80,31 @@ grep -q 'mx86_patches' "$D/build.sh" && grep -q 'patches:\|source.pin' "$D/lib.s
   && ok "the patch list is packages/mesa/source.pin's" \
   || bad "build.sh does not take its patches from packages/mesa/source.pin"
 
+# The stage itself, on a fabricated payload: only our drivers, the guest's hidden behind them.
+A="$T/assemble"; mkdir -p "$A/repo/work/mesa-x86/out" "$A/stage/usr/lib/retroforge"
+P="$A/repo/work/mesa-x86/out/payload"
+for lib in lib lib32; do
+  mkdir -p "$P/usr/$lib/dri" "$P/usr/$lib/gbm"
+  : >"$P/usr/$lib/dri/libdril_dri.so"; : >"$P/usr/$lib/gbm/dri_gbm.so"
+  for n in msm kgsl apple rockchip zynqmp-dpsub; do ln -s libdril_dri.so "$P/usr/$lib/dri/${n}_dri.so"; done
+done
+mkdir -p "$P/usr/share/vulkan/icd.d"
+: >"$P/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json"; : >"$P/usr/share/vulkan/icd.d/freedreno_icd.i686.json"
+echo "mesa: 26.3.1" >"$A/repo/work/mesa-x86/out/payload.conf"
+REPO="$ROOT"
+( ROOT="$A/repo"; stage="$A/stage"; OUT="$A/out"; . "$REPO/rootfs/lib-assemble-x86-mesa.sh" ) >/dev/null 2>&1   # chown to root fails unprivileged
+X="$A/stage/usr/lib/retroforge/x86-mesa/root"
+for lib in lib lib32; do
+  [ "$(cd "$X/usr/$lib/dri" 2>/dev/null && ls -A | LC_ALL=C sort | tr '\n' ' ')" = ".wh..wh..opq kgsl_dri.so libdril_dri.so msm_dri.so " ] \
+    && ok "usr/$lib/dri: msm, kgsl and libdril only, opaque over the guest's own driver names" \
+    || bad "usr/$lib/dri: $(ls -A "$X/usr/$lib/dri" 2>&1 | tr '\n' ' ')"
+  [ -e "$X/usr/$lib/gbm/dri_gbm.so" ] && ok "usr/$lib/gbm untouched" || bad "usr/$lib/gbm lost dri_gbm.so"
+done
+[ -e "$X/usr/share/vulkan/icd.d/.wh..wh..opq" ] && [ -e "$X/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json" ] \
+  && ok "the Vulkan ICD folder: ours, opaque over the guest's other drivers" || bad "icd.d: $(ls -A "$X/usr/share/vulkan/icd.d" 2>&1 | tr '\n' ' ')"
+[ -L "$P/usr/lib/dri/apple_dri.so" ] && [ ! -e "$P/usr/lib/dri/.wh..wh..opq" ] \
+  && ok "the payload itself is unchanged (compose.sh flattens it into a guest that has no overlay)" || bad "the payload was changed"
+
 echo
 echo "the workflow starts only by hand"
 

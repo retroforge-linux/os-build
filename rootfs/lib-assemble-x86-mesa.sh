@@ -29,6 +29,25 @@ else
   rm -rf "$stage/usr/lib/retroforge/x86-mesa"
   mkdir -p "$stage/usr/lib/retroforge/x86-mesa/root"
   cp -a "$x86_mesa/payload/." "$stage/usr/lib/retroforge/x86-mesa/root/"
+  # Only our drivers in the guest's driver folders. Before every x86 game, pressure-vessel resolves
+  # each DRI driver and Vulkan ICD the guest has, through the x86 ld.so under FEX: FEX's guest ships
+  # 66 DRI names and 9 Vulkan drivers per arch, and those probes cost ~5 s of Megabonk's start
+  # (MANGMI Air X, 2026-11-23: its window 38-39 s after the launch instead of 43-45 s with only ours).
+  # The msm kernel driver's name picks msm_dri.so (kgsl_dri.so on a KGSL kernel); the other names
+  # Mesa installs with freedreno are display-only kmsro ones these SoCs never load. An opaque marker
+  # (.wh..wh..opq, which fuse-overlayfs honours in a lower layer; steam-x86-guest-kernel turns each one
+  # into the kernel overlayfs's opaque xattr) hides the guest's own entries in those folders behind
+  # ours; a guest mounted without our layer keeps all of its own.
+  x86_root="$stage/usr/lib/retroforge/x86-mesa/root"
+  for d in usr/lib/dri usr/lib32/dri usr/share/vulkan/icd.d; do
+    [ -d "$x86_root/$d" ] || continue
+    case "$d" in
+      */dri) find "$x86_root/$d" -mindepth 1 -maxdepth 1 ! -name msm_dri.so ! -name kgsl_dri.so \
+               ! -name libdril_dri.so -exec rm -rf {} + ;;
+    esac
+    : >"$x86_root/$d/.wh..wh..opq"
+  done
+  unset x86_root d
   install -m 0644 "$x86_mesa/payload.conf" "$stage/usr/lib/retroforge/x86-mesa/payload.conf"
   chown -R 0:0 "$stage/usr/lib/retroforge/x86-mesa"
   unset x86_mesa
