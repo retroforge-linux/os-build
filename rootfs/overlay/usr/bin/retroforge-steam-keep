@@ -32,7 +32,8 @@
 #                                        retroforge-steam-proton's A RUNNING CLIENT)
 #   retroforge-steam-keep full [PID]     give the kept client its UI back (its web helper running); with
 #                                        PID, keep it so while PID runs (a launch that needs Steam's UI).
-#                                        Prints `woke` when the UI was frozen: it starts up again (~11 s)
+#                                        Prints `woke` when the UI was frozen: the frozen web helper is
+#                                        killed and the client starts a new one at once (its UI ~4 s on)
 #   retroforge-steam-keep minimal [PID]  drop PID's hold, then freeze the client's web helper unless
 #                                        another live launch holds it
 #   retroforge-steam-keep sweep          while no client runs: delete the shared memory earlier clients
@@ -48,7 +49,8 @@
 # again at once (14 times in 2 min). So it is stopped (TERM, KILL if it is still up 5 s later), and
 # the one the client starts next is frozen (SIGSTOP, 0.3 s later, at ~7 MB). The client waits for it without starting another and stays
 # signed in, ~240 MB in all, and games still use it: achievements, stats, playtime, Steam Input and
-# Steam Cloud (2026-10-24/25). SIGCONT (`full`) brings Steam's UI back.
+# Steam Cloud (2026-10-24/25). `full` brings Steam's UI back: it kills the frozen helper, and the
+# client starts a working one at once.
 #
 # A game runs under Steam's own reaper, `<Steam>/.../reaper SteamLaunch AppId=<appid> -- ...`, which
 # exits when the game's last process has. OGUI starts every app under a reaper of its own with the
@@ -295,20 +297,28 @@ client() {  # the client's PID: ~/.steam/steam.pid, while that names a live proc
 }
 
 helpers() {  # helpers CLIENT: the client's web helpers (its children that run steamwebhelper)
-  local d line ppid kids=""
+  local d line ppid have="" kids=() some=() argv=()
   # The kernel's list of the client's children (CONFIG_PROC_CHILDREN) when there is one, else a scan.
+  # Builtins only: minimal looks every 50 ms for the helper the client starts again, and a `cat` per
+  # thread of the client (60) made each look ~0.2 s, so the helper was frozen at 170-230 MB instead of
+  # ~5 MB (MANGMI Air X, 2026-11-23).
   for d in "$PROC/$1"/task/*/children; do
-    [ -r "$d" ] && kids="$kids $(cat "$d" 2>/dev/null)"
+    [ -r "$d" ] || continue
+    have=1; some=()
+    { read -r -a some <"$d"; } 2>/dev/null
+    kids+=("${some[@]}")
   done
-  if [ -z "${kids// /}" ]; then
+  if [ -z "$have" ]; then
     for d in "$PROC"/[0-9]*; do
       { read -r line <"$d/stat"; } 2>/dev/null || continue
       read -r _ ppid _ <<<"${line##*) }"
-      [ "$ppid" = "$1" ] && kids="$kids ${d##*/}"
+      [ "$ppid" = "$1" ] && kids+=("${d##*/}")
     done
   fi
-  for d in $kids; do
-    grep -qaF steamwebhelper "$PROC/$d/cmdline" 2>/dev/null && echo "$d"
+  for d in "${kids[@]}"; do
+    argv=()
+    { mapfile -d '' -t argv <"$PROC/$d/cmdline"; } 2>/dev/null
+    [[ "${argv[*]}" == *steamwebhelper* ]] && echo "$d"
   done
 }
 
@@ -327,8 +337,13 @@ full() {  # full [PID]
   local c h
   [ -z "${1-}" ] || { mkdir -p "$HOLDS" && : >"$HOLDS/$1"; }
   c="$(client)" || return 0
+  # A frozen helper is killed, not let go on (SIGCONT): minimal killed the children it had started, so
+  # a thawed one failed to launch its GPU process 9 times, exited FATAL ("GPU process isn't usable"),
+  # and the client started the next one only once systemd-coredump had written that crash out, 16 s
+  # later: Steam's UI 36 s after the open (MANGMI Air X, 2026-11-23). Killed, it is replaced at once
+  # (0.3 s), and the new helper's UI is up ~4 s later.
   for h in $(helpers "$c"); do
-    frozen "$h" && "$KILL" -CONT "$h" 2>/dev/null && woke=1
+    frozen "$h" && "$KILL" -KILL "$h" 2>/dev/null && woke=1
   done
   [ -z "${woke-}" ] || echo woke
   return 0

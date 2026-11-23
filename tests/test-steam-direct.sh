@@ -576,7 +576,30 @@ reset_beside; touch "$W/sdrun-ok"; echo off >"$W/keep.state"
 wrap -- -silent steam://rungameid/1145360
 [ ! -e "$W/sdrun.calls" ] && ! grep -qx minimal "$W/keep.calls" && [ -f "$T/ran.args" ] \
   && ok "keep-running off: the game alone, as before" || bad "sdrun: $(cat "$W/sdrun.calls" 2>&1) keep: $(cat "$W/keep.calls")"
-reset_beside; rm -f "$S/config/loginusers.vdf"
+reset_beside
+
+CASE="wrapper: started in the background after boot"   # retroforge-session, RETROFORGE_STEAM_PRESTART=1
+reset_beside; touch "$W/sdrun-ok"
+wrap RETROFORGE_STEAM_PRESTART=1 -- -gamepadui -steamos3 -steampal -steamdeck -silent
+[ "$WRC" = 0 ] && grep -q -- "--unit=retroforge-steam" "$W/sdrun.calls" 2>/dev/null \
+  && grep -q -- "$WRAP -gamepadui -steamos3 -steampal -steamdeck -silent$" "$W/sdrun.calls" \
+  && ok "Steam signed in from before: the kept client starts as the user unit, as a launch's would" || bad "rc=$WRC sdrun: $(cat "$W/sdrun.calls" 2>&1) err=$WERR"
+grep -qx minimal "$W/keep.calls" && [ ! -e "$W/client.args" ] && [ ! -e "$T/ran.args" ] \
+  && ok "it signs in and is left minimal; nothing runs here, no game" || bad "keep: $(cat "$W/keep.calls") client: $(cat "$W/client.args" 2>&1)"
+! grep -q -- "--setenv=RETROFORGE_STEAM_PRESTART" "$W/sdrun.calls" && ok "the unit does not carry RETROFORGE_STEAM_PRESTART into Steam" \
+  || bad "sdrun: $(cat "$W/sdrun.calls")"
+grep -q "starting the kept Steam in the background" <<<"$WERR" && ok "and it is said" || bad "err=$WERR"
+reset_beside; touch "$W/sdrun-ok" "$W/unit-active"
+wrap RETROFORGE_STEAM_PRESTART=1 -- -gamepadui -steamos3 -steampal -steamdeck -silent
+[ "$WRC" = 0 ] && [ ! -e "$W/sdrun.calls" ] && ! grep -qx minimal "$W/keep.calls" && [ ! -e "$W/client.args" ] \
+  && ok "the kept client already runs (a game or Steam's UI opened first): left as it is" || bad "rc=$WRC sdrun: $(cat "$W/sdrun.calls" 2>&1) keep: $(cat "$W/keep.calls")"
+reset_beside; touch "$W/sdrun-ok"; echo off >"$W/keep.state"
+wrap RETROFORGE_STEAM_PRESTART=1 -- -gamepadui -steamos3 -steampal -steamdeck -silent
+[ "$WRC" = 0 ] && [ ! -e "$W/sdrun.calls" ] && [ ! -e "$W/client.args" ] && ok "keep-running off: nothing" || bad "rc=$WRC sdrun: $(cat "$W/sdrun.calls" 2>&1)"
+reset_beside; touch "$W/sdrun-ok"; rm -f "$S/config/loginusers.vdf"
+wrap RETROFORGE_STEAM_PRESTART=1 -- -gamepadui -steamos3 -steampal -steamdeck -silent
+[ "$WRC" = 0 ] && [ ! -e "$W/sdrun.calls" ] && [ ! -e "$W/client.args" ] && ok "no remembered sign-in: nothing" || bad "rc=$WRC sdrun: $(cat "$W/sdrun.calls" 2>&1)"
+reset_beside
 
 CASE="wrapper: through Steam"
 wrap -- -gamepadui -steamos3 -steampal -steamdeck -silent steam://rungameid/268910

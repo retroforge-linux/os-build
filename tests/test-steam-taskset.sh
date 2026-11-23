@@ -30,6 +30,7 @@ mkdir -p "$TMP/rt"
 cat >"$TMP/rt/steamwebhelper" <<'EOF'
 #!/bin/sh
 echo "helper $*" >"$CALLS"
+ulimit -c >"$CALLS.core"
 EOF
 chmod +x "$TMP/taskset" "$TMP/rt/steamwebhelper"
 
@@ -79,6 +80,12 @@ check "its CPUs offline (core-count slider): not pinned" "$(ui slider)" "helper 
 topo halfon 0-5 0:611 1:611 2:611 3:611 4:1024 5:1024 6:1024 7:1024
 check "some offline: all of them kept, for when they are back" "$(ui halfon)" "taskset -c 4-7 $H"
 
+rm -f "$TMP/calls.core"; ui uniform >/dev/null
+check "the web helper runs with no core dumps (a crash is not written out for 16 s)" "$(cat "$TMP/calls.core" 2>/dev/null)" "0"
+printf '#!/bin/bash\nulimit -c >"$CALLS.core"\n' >"$TMP/coreprog"; chmod +x "$TMP/coreprog"
+rm -f "$TMP/calls.core"
+(ulimit -S -c 1024; CALLS="$TMP/calls" RETROFORGE_SYS_CPU="$TMP/sm6115" RETROFORGE_TASKSET=/usr/bin/env "$SCRIPT" "$TMP/coreprog")
+check "anything else keeps its core size"                "$(cat "$TMP/calls.core" 2>/dev/null)" "1024"
 check "another call goes to taskset unchanged"           "$(ran sm6115 -pc 4-7 123)" "taskset -pc 4-7 123"
 check "a mask for another program too"                   "$(ran sm6115 0x7c /bin/true)" "taskset 0x7c /bin/true"
 check "an option before the mask is not Valve's call"    "$(ran sm6115 -a 0x7c "$TMP/rt/steamwebhelper")" "taskset -a 0x7c $TMP/rt/steamwebhelper"

@@ -155,7 +155,7 @@ fi
 # boot) and retroforge-steam-keep stop-unused. That launch starts Steam cold.
 # TEST SEAMS (tests/test-steam.sh): RETROFORGE_STEAM_KEEP_CLI, RETROFORGE_STEAM_LAUNCH_WAIT,
 # RETROFORGE_STEAM_MINIMAL_DELAY, RETROFORGE_STEAM_SIGNIN_WAIT, RETROFORGE_STEAM_UI_WAIT,
-# RETROFORGE_STEAM_UI_SETTLE, RETROFORGE_PROC, RETROFORGE_STEAM_PROTON_CLI, RETROFORGE_CPUINFO, and
+# RETROFORGE_STEAM_UI_SETTLE, RETROFORGE_STEAM_UI_CLOSE_WAIT, RETROFORGE_PROC, RETROFORGE_STEAM_PROTON_CLI, RETROFORGE_CPUINFO, and
 # systemd-run and systemctl from PATH.
 keep_cli="${RETROFORGE_STEAM_KEEP_CLI:-/usr/bin/retroforge-steam-keep}"
 proton_cli="${RETROFORGE_STEAM_PROTON_CLI:-/usr/bin/retroforge-steam-proton}"
@@ -168,18 +168,37 @@ kept_start() {
   self="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
   for name in $(compgen -e); do
     case "$name" in
-      OGUI_ID|INVOCATION_ID|JOURNAL_STREAM|SYSTEMD_EXEC_PID|MANAGERPID|NOTIFY_SOCKET|LISTEN_*|WATCHDOG_*|PWD|OLDPWD|SHLVL|_) continue ;;
+      OGUI_ID|RETROFORGE_STEAM_PRESTART|INVOCATION_ID|JOURNAL_STREAM|SYSTEMD_EXEC_PID|MANAGERPID|NOTIFY_SOCKET|LISTEN_*|WATCHDOG_*|PWD|OLDPWD|SHLVL|_) continue ;;
     esac
     [[ "${!name}" == *$'\n'* ]] || env+=(--setenv="$name=${!name}")
   done
   systemd-run --user --quiet --collect --unit="$KEPT_UNIT" -p TasksMax=infinity --working-directory="$HOME" \
     "${env[@]}" --setenv=OGUI_ID=Steam --setenv=RETROFORGE_STEAM_KEPT=1 "$self" "$@" >/dev/null
 }
+# Steam's own UI, closed from OGUI: the client leaves Big Picture first. Its web helper killed
+# (minimal), a client keeps Big Picture open, and the next helper (a game launch's `full`) showed it
+# again, with the launching game's id on it: OGUI took it for the game's window and kept it in front,
+# the game ran hidden behind it, and Steam, which never saw the game focused, kept its UI full (MANGMI
+# Air X, 2026-11-23). steam://close/bigpicture leaves the client as one started -silent is, on its
+# hidden desktop window (`SP Desktop` in webhelper.txt, ~1 s); the next Steam UI launch opens Big
+# Picture again. Waits RETROFORGE_STEAM_UI_CLOSE_WAIT s (5) at most, so that minimal comes after it.
+kept_close_ui() {
+  local wlog="$RETROFORGE_STEAM_ROOT/logs/webhelper.txt" lines=0 i
+  [ -r "$wlog" ] && lines=$(wc -l <"$wlog")
+  ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
+    LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      exec "$client" steam://close/bigpicture ) >/dev/null 2>&1
+  for ((i = 0; i < ${RETROFORGE_STEAM_UI_CLOSE_WAIT:-5} * 4; i++)); do
+    tail -n +$((lines + 1)) "$wlog" 2>/dev/null | grep -aqE '\] SP Desktop_uid[0-9]+: ' && return 0
+    sleep 0.25
+  done
+}
 kept_stop() {  # TERM, INT or HUP: end the game this launch started, not Steam
   if [ -n "$appid" ]; then
     "$keep_cli" end "$appid"
   else
     "$keep_cli" end ui   # Steam's own UI: the games the player started from it
+    kept_close_ui
   fi
   "$keep_cli" minimal $$
   [ "$("$keep_cli" status 2>/dev/null)" = on ] || "$keep_cli" stop-idle
@@ -201,16 +220,21 @@ kept_launch() {
     log "stopped the kept Steam: it starts again with Proton-CachyOS ARMv8.0 as its tool"
   fi
   if kept_active; then
-    local slog="$RETROFORGE_STEAM_ROOT/logs/console_log.txt" lines=0 woke wait
-    [ -r "$slog" ] && lines=$(wc -l <"$slog")
+    local wlog="$RETROFORGE_STEAM_ROOT/logs/webhelper.txt" lines=0 woke wait
+    [ -r "$wlog" ] && lines=$(wc -l <"$wlog")
     woke="$("$keep_cli" full $$)"
     # Steam's own UI (no game) from a minimal client: a request that comes before the UI has started
     # again is lost (steam://open/bigpicture left Steam's window unmapped and OGUI on its loading
-    # screen, Air X, 2026-10-25). So it waits for the UI's first calls into the client, then 2 s.
+    # screen, Air X, 2026-10-25). So it waits until the new web helper has created the UI's main
+    # window (`SP BPM_uid0: STARTUP BrowserCreated`, or SP Desktop, in its webhelper.txt: ~3 s after
+    # the client started it), then 2 s. Not for SlowJSMethodCall in console_log.txt, which the client
+    # stopped writing (2026-11-22): every open waited out RETROFORGE_STEAM_UI_WAIT.
     if [ -z "$appid" ] && [ "$woke" = woke ]; then
       wait=$((SECONDS + ${RETROFORGE_STEAM_UI_WAIT:-30}))
-      until tail -n +$((lines + 1)) "$slog" 2>/dev/null | grep -q SlowJSMethodCall || [ "$SECONDS" -ge "$wait" ]; do
+      until tail -n +$((lines + 1)) "$wlog" 2>/dev/null | grep -aqE '\] SP [A-Za-z]+_uid[0-9]+: STARTUP BrowserCreated' \
+        || [ "$SECONDS" -ge "$wait" ]; do
         sleep 0.5
+        [ "$(wc -l <"$wlog" 2>/dev/null || echo 0)" -ge "$lines" ] || lines=0   # rotated
       done
       sleep "${RETROFORGE_STEAM_UI_SETTLE:-2}"
     fi
@@ -283,7 +307,54 @@ kept_launch() {
   [ "$("$keep_cli" status 2>/dev/null)" = on ] || "$keep_cli" stop-idle
   exit 0
 }
-if [ -z "$direct" ] && [ -z "${RETROFORGE_STEAM_KEPT:-}" ] && [ -x "$keep_cli" ]; then
+
+# ---- A game Steam runs through FEX: its FEXServer started first -------------------------------------
+# Steam runs an x86 game through its FEX tool, under the Steam Linux Runtime, whose pressure-vessel
+# first runs ~25 x86 helpers through FEX (library probes). With no FEXServer up, each FEX starts one,
+# which inherits the helper's stdout and outlives it by ~1 s, and pressure-vessel waits for that pipe's
+# end: ~1.25 s a helper, 28 s of Megabonk's start (MANGMI Air X, 2026-11-23). With the game's FEXServer
+# already up they connect to it, 0.1-0.3 s a helper: Megabonk's window 44 s after the launch, not 70.
+# So a launch starts that server first, as a user unit outside this launch's process tree (OGUI would
+# count it as the game's), for a game whose compat data FEX's tool has set up on an earlier launch. It
+# stays RETROFORGE_STEAM_FEXSERVER_LINGER s (60) after its last client; a running one is left as it is.
+# The runtime's own x86 programs (its probes, shell tools and scripts: hundreds of short processes) also
+# run without FEX's Multiblock, which costs more to compile than it saves for them: per program, in the
+# game's FEX folder, the files written only where none is (the player's own stays). The game keeps it.
+# Megabonk's window 39.1-40.1 s after the launch, not 40.9-43.1, its scripts 1.3 s shorter (Air X,
+# 2026-11-23).
+# TEST SEAM: RETROFORGE_STEAM_FEX (Steam's FEX tool folder).
+FEX_HELPERS="ld-linux-x86-64.so.2 ld-linux.so.2 ldconfig bash sh dash env cat cut dirname basename readlink
+realpath getopt grep sed head tail tr uname id mkdir mktemp ln rm cp mv chmod touch true false sort uniq wc
+find xargs sleep printf test expr ls stat x86_64-linux-gnu-capsule-capture-libs
+i386-linux-gnu-capsule-capture-libs x86_64-linux-gnu-detect-platform i386-linux-gnu-detect-platform
+x86_64-linux-gnu-detect-lib i386-linux-gnu-detect-lib x86_64-linux-gnu-inspect-library
+i386-linux-gnu-inspect-library x86_64-linux-gnu-check-locale steam-runtime-identify-library-abi
+steam-runtime-launcher-interface-0 steam-runtime-system-info"
+fex_server() {  # fex_server ARG...
+  local arg id="" fex="${RETROFORGE_STEAM_FEX:-$RETROFORGE_STEAM_ROOT/steamapps/common/FEX-Emu}" data
+  for arg in "$@"; do
+    case "$arg" in steam://rungameid/*) id="${arg#steam://rungameid/}" ;; esac
+  done
+  case "$id" in ''|*[!0-9]*) return 0 ;; esac
+  data="$RETROFORGE_STEAM_ROOT/steamapps/compatdata/$id"
+  [ -x "$fex/usr/bin/FEXServer" ] && [ -e "$data/fex-emu/Config.json" ] || return 0
+  if mkdir -p "$data/fex-emu/AppConfig" 2>/dev/null; then
+    for arg in $FEX_HELPERS; do
+      [ -e "$data/fex-emu/AppConfig/$arg.json" ] \
+        || printf '{"Config": {"Multiblock": "0"}}\n' >"$data/fex-emu/AppConfig/$arg.json" 2>/dev/null
+    done
+  fi
+  systemctl --user is-active --quiet "retroforge-fexserver-$id.service" 2>/dev/null && return 0
+  # FEXServer exits 1 when its time is up, as when stopped: not a failure
+  systemd-run --user --quiet --collect --unit="retroforge-fexserver-$id" --working-directory="$fex" \
+    -p SuccessExitStatus=1 --setenv=FEX_PORTABLE=1 --setenv=STEAM_COMPAT_DATA_PATH="$data" \
+    "$fex/usr/bin/FEXServer" -f -p "${RETROFORGE_STEAM_FEXSERVER_LINGER:-60}" >/dev/null 2>&1 \
+    || log "could not start FEX's server for app $id: its start waits on FEX more"
+}
+[ -n "${RETROFORGE_STEAM_KEPT:-}" ] || fex_server "$@"
+# ----------------------------------------------------------------------------------------------------
+
+if [ -z "$direct" ] && [ -z "${RETROFORGE_STEAM_KEPT:-}" ] && [ -z "${RETROFORGE_STEAM_PRESTART:-}" ] && [ -x "$keep_cli" ]; then
   kept_launch "$@"
 fi
 # Beside a game started without it: with the setting on, the kept client runs beside the game,
@@ -292,24 +363,18 @@ fi
 # makes. Hades on the MANGMI Air X peaked at 5810 MB of RAM+swap with it, 5735 MB alone (2026-10-25).
 # A client started for this signs in first (~20 s; RETROFORGE_STEAM_SIGNIN_WAIT s at most, 45): a game's
 # SteamAPI_Init does not wait for it. Not when Steam has no remembered sign-in (loginusers.vdf).
-kept_beside() {
+# kept_park ARG...: start the kept client with a launch's arguments (its steam:// ones left out: the
+# client itself starts nothing), wait for its sign-in (RETROFORGE_STEAM_SIGNIN_WAIT s at most, 45) and
+# leave it minimal. 1: it could not be started; 2: it did not sign in in time (left minimal all the same).
+kept_park() {
   local arg log="$RETROFORGE_STEAM_ROOT/logs/connection_log.txt" seen=0 node="" deadline
   local -a args=()
-  [ -x "$keep_cli" ] && [ "$("$keep_cli" status 2>/dev/null)" = on ] || return 0
-  if kept_active; then
-    "$keep_cli" minimal
-    return 0
-  fi
-  grep -Eqs '"RememberPassword"[[:space:]]+"1"' "$RETROFORGE_STEAM_ROOT/config/loginusers.vdf" || return 0
   for arg in "$@"; do
-    case "$arg" in steam://*) ;; *) args+=("$arg") ;; esac   # the client itself does not start the game
+    case "$arg" in steam://*) ;; *) args+=("$arg") ;; esac
   done
   [ -r "$log" ] && { seen=$(wc -l <"$log"); node=$(stat -c %i "$log"); }
   "$direct_cli" remember
-  if ! kept_start "${args[@]}"; then
-    log "could not start Steam as the user unit $KEPT_UNIT.service: app $direct runs without it"
-    return 0
-  fi
+  kept_start "${args[@]}" || return 1
   deadline=$((SECONDS + ${RETROFORGE_STEAM_SIGNIN_WAIT:-45}))
   while kept_active; do
     if [ -r "$log" ] && [ "$(stat -c %i "$log")" != "$node" ]; then seen=0; node=$(stat -c %i "$log"); fi
@@ -318,20 +383,60 @@ kept_beside() {
       return 0
     fi
     if [ "$SECONDS" -ge "$deadline" ]; then
-      log "Steam did not sign in within ${RETROFORGE_STEAM_SIGNIN_WAIT:-45} s: app $direct starts without it"
       "$keep_cli" minimal
-      return 0
+      return 2
     fi
     sleep 1
   done
+  return 0
 }
+kept_signed_in() { grep -Eqs '"RememberPassword"[[:space:]]+"1"' "$RETROFORGE_STEAM_ROOT/config/loginusers.vdf"; }
+kept_beside() {
+  [ -x "$keep_cli" ] && [ "$("$keep_cli" status 2>/dev/null)" = on ] || return 0
+  if kept_active; then
+    "$keep_cli" minimal
+    return 0
+  fi
+  kept_signed_in || return 0
+  kept_park "$@"
+  case $? in
+    1) log "could not start Steam as the user unit $KEPT_UNIT.service: app $direct runs without it" ;;
+    2) log "Steam did not sign in within ${RETROFORGE_STEAM_SIGNIN_WAIT:-45} s: app $direct starts without it" ;;
+  esac
+}
+
+# ---- Started in the background once the shell is up ------------------------------------------------
+# The first Steam game after a boot started the client first: Megabonk's window 57 s after the launch,
+# 44 s with Steam already kept (MANGMI Air X, page cache warm, 2026-11-23). So retroforge-session runs
+# this RETROFORGE_STEAM_PRESTART_DELAY s (30) after the shell starts, with RETROFORGE_STEAM_PRESTART=1
+# and a game launch's flags but no game: with "Keep Steam running" on and a remembered sign-in, it
+# starts the kept client as a launch would, and leaves it minimal once signed in. Never when the client
+# already runs (a game or Steam's UI opened first: nothing is touched), and never a download (the
+# bootstrap above ends this when Steam Client is not installed, or while its install runs).
+steam_prestart() {
+  [ -x "$keep_cli" ] && [ "$("$keep_cli" status 2>/dev/null)" = on ] || return 0
+  kept_active && return 0
+  kept_signed_in || return 0
+  log "starting the kept Steam in the background, for the first game"
+  kept_park "$@"
+  case $? in
+    1) log "could not start Steam as the user unit $KEPT_UNIT.service" ;;
+    2) log "Steam did not sign in within ${RETROFORGE_STEAM_SIGNIN_WAIT:-45} s; it is kept, minimal" ;;
+  esac
+}
+if [ -n "${RETROFORGE_STEAM_PRESTART:-}" ] && [ -z "${RETROFORGE_STEAM_KEPT:-}" ]; then
+  steam_prestart "$@"
+  exit 0
+fi
 # ----------------------------------------------------------------------------------------------------
 
 # ---- x86 games: the FEX guest ----------------------------------------------------------------------
 # Valve's FEX tool runs x86 games and x86 Protons, but needs an x86_64 + i386 graphics provider (ld.so,
 # glibc, x86 Mesa, graphics_provider.json at its root), and the image ships none.
 # /usr/lib/retroforge/steam-x86-guest keeps FEX's ArchLinux RootFS (1.4 GB) in the player's home and
-# mounts it with squashfuse on $RETROFORGE_STEAM_X86_GUEST_DIR/root. x86-guest.pin names a channel
+# mounts it on $RETROFORGE_STEAM_X86_GUEST_DIR/root: with the kernel's squashfs and overlayfs through
+# root's retroforge-x86-guest-mount@ unit (steam-x86-guest-kernel), else with squashfuse and
+# fuse-overlayfs. x86-guest.pin names a channel
 # (FEX's RootFS_links.json): whatever FEX publishes now, not a fixed version. `start`:
 #   - mounts the installed image when nothing is mounted yet (never twice; a dead mount is replaced);
 #   - starts a fetch DETACHED in the background, logging to this stderr, and returns: this `steam`

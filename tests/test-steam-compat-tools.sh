@@ -277,6 +277,14 @@ grep -q 'require_tool_appid" "4185400"' "$TOOL/toolmanifest.vdf" && ok "toolmani
   && ok "its .retroforge-pin: the name, the tag, the asset, its sha512 and sha256" || bad "marker: $(cat "$TOOL/.retroforge-pin" 2>&1)"
 [ "$(settings "$TOOL")" = '{"PROTON_DXVK_SAREK": "1"}' ] \
   && ok "user_settings.py loads as Proton loads it, with PROTON_DXVK_SAREK=1 and nothing else" || bad "settings: $(settings "$TOOL" 2>&1)"
+loaded_by() {  # loaded_by <tool dir> <proton's arguments...>: the exit status of importing it in a proton run with them
+  python3 -I -c 'import sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]); sys.argv[1:] = sys.argv[2:]; import user_settings' "$@"
+}
+loaded_by "$TOOL" run "$T/bin/d3ddriverquery64.exe"; q11=$?
+loaded_by "$TOOL" run "$T/bin/d3ddriverquery64.exe" -d3d12; q12=$?
+loaded_by "$TOOL" waitforexitandrun "$T/common/Hades/x64/Hades.exe"; game=$?
+[ "$q11" = 1 ] && [ "$q12" = 1 ] && [ "$game" = 0 ] \
+  && ok "and it ends Steam's driver query at once (D3D11 and D3D12), not a game" || bad "query $q11/$q12, game $game"
 [ "$(ls -A "$TOOLS")" = "$STABLE" ] && ok "nothing else in compatibilitytools.d" || bad "$(ls -A "$TOOLS")"
 [ -z "$(leftovers)" ] && [ ! -e "$NEXT" ] && ok "no temporary folders left" || bad "left: $(leftovers) $(ls -d "$NEXT" 2>&1)"
 grep -q "downloading $D1.tar.xz ($R1)" <<<"$ERR" && grep -q "Steam lists it as \"$SHOWN\" from its next start" <<<"$ERR" \
@@ -738,9 +746,13 @@ import importlib.machinery, importlib.util, sys
 loader = importlib.machinery.SourceFileLoader("helper", sys.argv[1])
 m = importlib.util.module_from_spec(importlib.util.spec_from_loader("helper", loader))
 loader.exec_module(m)
-open(sys.argv[2], "w").write(m.LEGACY_SETTINGS[0])' "$HELPER" "$1"
-  grep -q "Settings > General" "$1" || bad "the old text is not the toggle's"
+open(sys.argv[2], "w").write(m.LEGACY_SETTINGS[int(sys.argv[3])])' "$HELPER" "$1" "${2:-1}"
+  [ -n "${2:-}" ] || grep -q "Settings > General" "$1" || bad "the old text is not the toggle's"
 }
+legacy "$TOOL/user_settings.py" 0
+tools install
+[ "$RC" = 0 ] && grep -q d3ddriverquery64 "$TOOL/user_settings.py" && [ "$(settings "$TOOL")" = '{"PROTON_DXVK_SAREK": "1"}' ] \
+  && ok "the Sarek text before the driver query's end: ours, rewritten in today's text" || bad "rc=$RC err=$ERR $(cat "$TOOL/user_settings.py")"
 legacy "$TOOL/user_settings.py"
 tools install
 [ "$RC" = 0 ] && ! grep -q "Settings > General" "$TOOL/user_settings.py" && [ "$(settings "$TOOL")" = '{"PROTON_DXVK_SAREK": "1"}' ] \

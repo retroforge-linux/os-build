@@ -301,12 +301,14 @@ cat >"$W/bin/systemctl" <<EOF
 #!/usr/bin/env bash
 echo "systemctl \$*" >>"$W/sysd.log"
 case "\$*" in
+  *is-active*retroforge-fexserver-*) [ -e "$W/fexunit-active" ] ;;
   *is-active*) [ -e "$W/unit-active" ] ;;
   *" stop "*) rm -f "$W/unit-active" ;;
 esac
 EOF
 cat >"$W/bin/systemd-run" <<EOF
 #!/usr/bin/env bash
+case "\$*" in *--unit=retroforge-fexserver-*) printf '%s\n' "\$@" >"$W/fexrun.args"; touch "$W/fexunit-active"; exit 0 ;; esac
 printf '%s\n' "\$@" >"$W/sdrun.args"
 [ -e "$W/sdrun-fails" ] && { echo "Failed to connect to bus: No medium found" >&2; exit 1; }
 touch "$W/unit-active"
@@ -434,7 +436,7 @@ CONF="$W/home/.config/retroforge/steam.conf"
 STEAM_REAPER="$WROOT/linuxarm64/reaper"
 SLOG="$WROOT/logs/console_log.txt"   # Steam's own log: one line per step of a launch
 reset_keep() {
-  rm -f "$W/unit-active" "$W/sdrun.args" "$W/sdrun-fails" "$W/kills" "$W/sysd.log" "$W/count" "$W"/call* "$CONF" "$SLOG"
+  rm -f "$W/unit-active" "$W/sdrun.args" "$W/sdrun-fails" "$W/kills" "$W/sysd.log" "$W/count" "$W"/call* "$CONF" "$SLOG" "$WROOT/logs/webhelper.txt" "$W/fexrun.args" "$W/fexunit-active"
   rm -rf "$W/run/retroforge-steam-follow"
   local d; for d in "$P"/*; do [ -d "$d" ] && gone "${d##*/}"; done
   echo 0 >"$W/codes"
@@ -605,6 +607,42 @@ gone 4242
 finish
 [ "$WRC" = 0 ] && [ -e "$W/unit-active" ] && ok "and ends with it, exit 0; Steam keeps running" || bad "rc=$WRC $(cat "$W/err")"
 
+CASE="FEX: the game's FEXServer first"
+reset_keep; touch "$W/unit-active"
+mkdir -p "$W/fex/usr/bin" "$WROOT/steamapps/compatdata/42/fex-emu/AppConfig"; : >"$WROOT/steamapps/compatdata/42/fex-emu/Config.json"
+FAC="$WROOT/steamapps/compatdata/42/fex-emu/AppConfig"; echo '{"Config": {"Multiblock": "1"}}' >"$FAC/bash.json"
+printf '#!/bin/sh\n' >"$W/fex/usr/bin/FEXServer"; chmod +x "$W/fex/usr/bin/FEXServer"
+fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- game
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_FEX="$W/fex" -- -gamepadui -silent steam://rungameid/42
+until_true '[ -e "$W/call1" ]'
+A="$(cat "$W/fexrun.args" 2>/dev/null)"
+grep -qx -- "--unit=retroforge-fexserver-42" <<<"$A" && grep -qx -- "--setenv=STEAM_COMPAT_DATA_PATH=$WROOT/steamapps/compatdata/42" <<<"$A" \
+  && grep -qx -- "--setenv=FEX_PORTABLE=1" <<<"$A" && grep -qx -- "--user" <<<"$A" && grep -qx -- "SuccessExitStatus=1" <<<"$A" \
+  && [ "$(tail -4 <<<"$A" | tr '\n' ' ')" = "$W/fex/usr/bin/FEXServer -f -p 60 " ] \
+  && ok "a game FEX's tool has set up: its FEXServer starts first, a user unit, 60 s after its last client" || bad "$A"
+[ -e "$W/fexunit-active" ] && [ -e "$W/call1" ] && ok "and the launch still goes to the kept client" || bad "$(cat "$W/call1" 2>&1)"
+[ "$(ls "$FAC" | wc -l)" = 54 ] && [ "$(cat "$FAC/x86_64-linux-gnu-capsule-capture-libs.json")" = '{"Config": {"Multiblock": "0"}}' ] \
+  && [ "$(cat "$FAC/ld-linux-x86-64.so.2.json")" = '{"Config": {"Multiblock": "0"}}' ] \
+  && ok "the runtime's x86 helpers run without Multiblock, a file each in the game's FEX folder" || bad "$(ls "$FAC")"
+[ "$(cat "$FAC/bash.json")" = '{"Config": {"Multiblock": "1"}}' ] && ok "one already there (the player's own) is left as it is" || bad "$(cat "$FAC/bash.json")"
+kill -TERM "$wpid"; wait "$wpid"
+rm -f "$W/fexrun.args" "$W/count" "$W"/call*
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_FEX="$W/fex" -- -gamepadui -silent steam://rungameid/42
+until_true '[ -e "$W/call1" ]'
+[ ! -e "$W/fexrun.args" ] && ok "one already running is left as it is" || bad "started again: $(cat "$W/fexrun.args")"
+kill -TERM "$wpid"; wait "$wpid"
+reset_keep; touch "$W/unit-active"; rm -f "$WROOT/steamapps/compatdata/42/fex-emu/Config.json"; rm -r "$FAC"
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_FEX="$W/fex" -- -gamepadui -silent steam://rungameid/42
+until_true '[ -e "$W/call1" ]'
+[ ! -e "$W/fexrun.args" ] && [ ! -e "$FAC" ] && ok "a game FEX's tool has not set up (a native one, Proton, a first launch): none, nor files" || bad "$(cat "$W/fexrun.args"; ls "$FAC")"
+kill -TERM "$wpid"; wait "$wpid"
+reset_keep; touch "$W/unit-active"; : >"$WROOT/steamapps/compatdata/42/fex-emu/Config.json"
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_FEX="$W/fex" -- -gamepadui -steamos3 steam://open/bigpicture
+until_true '[ -e "$W/call1" ]'
+[ ! -e "$W/fexrun.args" ] && [ ! -e "$FAC" ] && ok "nor for Steam's UI" || bad "$(cat "$W/fexrun.args"; ls "$FAC")"
+kill -TERM "$wpid"; wait "$wpid"
+gone 4242; rm -rf "$WROOT/steamapps/compatdata/42/fex-emu"
+
 CASE="keep: a game, Steam kept"   # and no Steam log: the first reaper seen is the game's
 reset_keep; touch "$W/unit-active"
 fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- game
@@ -750,13 +788,14 @@ grep -q "client stays signed in" "$W/kerr" && ok "and it is said" || bad "$(cat 
 "${MENV[@]}" bash "$KEEP" minimal 2>/dev/null; RC=$?
 [ "$RC" = 0 ] && [ ! -s "$W/kills" ] && ok "frozen already: nothing is stopped" || bad "rc=$RC kills=$(cat "$W/kills")"
 out="$("${MENV[@]}" bash "$KEEP" full 2>/dev/null)"
-[ "$(state_of 7200)" = S ] && grep -qx -- "-CONT 7200" "$W/kills" && [ "$out" = woke ] \
-  && ok "full: the frozen helper goes on (Steam's UI comes back), and says it woke it" || bad "out=$out kills=$(cat "$W/kills")"
+[ ! -e "$P/7200" ] && grep -qx -- "-KILL 7200" "$W/kills" && ! grep -q -- "-CONT 7200" "$W/kills" && [ "$out" = woke ] \
+  && ok "full: the frozen helper is killed, not let go on, and it says it woke Steam's UI" || bad "out=$out kills=$(cat "$W/kills")"
+[ -e "$P/7300" ] && [ "$(state_of 7300)" != T ] && ok "the one the client starts instead runs (Steam's UI comes back)" || bad "state 7300: $(state_of 7300)"
 out="$("${MENV[@]}" bash "$KEEP" full 2>/dev/null)"
-[ -z "$out" ] && ok "full again: nothing to wake, nothing said" || bad "out=$out"
+[ -z "$out" ] && [ -e "$P/7300" ] && ok "full again: nothing to wake, nothing killed, nothing said" || bad "out=$out"
 : >"$W/kills"
 "${MENV[@]}" bash "$KEEP" minimal 2>/dev/null
-[ "$(state_of 7300)" = T ] && grep -qx -- "-TERM 7200" "$W/kills" && ok "minimal again after it ran: stopped and frozen anew" || bad "kills=$(cat "$W/kills")"
+[ "$(state_of 7400)" = T ] && grep -qx -- "-TERM 7300" "$W/kills" && ok "minimal again after it ran: stopped and frozen anew" || bad "kills=$(cat "$W/kills")"
 
 CASE="keep: minimal, the kernel's list of children"
 reset_minimal; mkdir -p "$P/7000/task/7000"; echo "7100 7050" >"$P/7000/task/7000/children"
@@ -872,13 +911,19 @@ cat >"$W/bin/keepwoke" <<EOF
 case "\$1" in full) echo woke ;; status) echo on ;; esac
 EOF
 chmod +x "$W/bin/keepwoke"
-reset_keep; touch "$W/unit-active"; mkdir -p "${SLOG%/*}"; echo "[2026-10-25 03:40:00] an older line" >"$SLOG"
+WLOG="$WROOT/logs/webhelper.txt"
+reset_keep; touch "$W/unit-active"; mkdir -p "${WLOG%/*}"
+echo "[2026-11-23 03:29:10] SP BPM_uid0: STARTUP BrowserCreated t=2.875 +0.0ms from create" >"$WLOG"   # an earlier helper's
 bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keepwoke" RETROFORGE_STEAM_UI_SETTLE=0 -- -gamepadui steam://open/bigpicture
 sleep 1.5
 [ ! -e "$W/call1" ] && ok "Steam's UI from a minimal client: not handed over while the UI starts again" || bad "handed over at once: $(cat "$W/call1" 2>&1)"
+echo "[2026-11-23 03:32:34] UB-65536: STARTUP BrowserCreated t=0.590 +0.0ms from create" >>"$WLOG"
 echo "[2026-10-25 03:44:10] STARTUP SlowJSMethodCall Settings.RegisterForSettingsChanges took 9.4ms" >>"$SLOG"
+sleep 1.5
+[ ! -e "$W/call1" ] && ok "nor on the helper's first browser, or on the old client's SlowJSMethodCall" || bad "handed over early: $(cat "$W/call1" 2>&1)"
+echo "[2026-11-23 03:32:36] SP Desktop_uid0: STARTUP BrowserCreated t=2.875 +0.0ms from create" >>"$WLOG"
 until_true '[ -e "$W/call1" ]'
-grep -qx "args: -gamepadui steam://open/bigpicture" "$W/call1" 2>/dev/null && ok "but once its first calls are in Steam's log" || bad "$(cat "$W/call1" 2>&1)"
+grep -qx "args: -gamepadui steam://open/bigpicture" "$W/call1" 2>/dev/null && ok "but once the new helper has created the UI's main window" || bad "$(cat "$W/call1" 2>&1)"
 kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
 reset_keep; touch "$W/unit-active"
 bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keepwoke" RETROFORGE_STEAM_UI_WAIT=1 RETROFORGE_STEAM_UI_SETTLE=0 -- -gamepadui steam://open/bigpicture
@@ -898,9 +943,22 @@ bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETR
 until_true '[ -e "$W/call1" ]'; sleep 1.2
 [ "$(cat "$W/keep.calls")" = "full pid first" ] && ls "$W/run/retroforge-steam-full/$wpid" >/dev/null 2>&1 \
   && ok "Steam's UI, while OGUI shows it: running, held by the launch" || bad "keep: $(cat "$W/keep.calls" 2>&1) $(ls "$W/run/retroforge-steam-full" 2>&1)"
-kill -TERM "$wpid"; wait "$wpid"; WRC=$?
+WLOG="$WROOT/logs/webhelper.txt"; mkdir -p "${WLOG%/*}"; : >"$WLOG"
+( until_true '[ -e "$W/call2" ]'; sleep 0.5; [ -e "$W/call2" ] && echo "[2026-11-23 06:24:41] SP Desktop_uid0: STARTUP BrowserCreated t=274.983 +0.0ms from create" >>"$WLOG" ) &
+kill -TERM "$wpid"; s0=$SECONDS; wait "$wpid"; WRC=$?
 [ "$WRC" = 143 ] && [ "$(tail -1 "$W/keep.calls")" = "minimal pid handed" ] && [ ! -e "$W/run/retroforge-steam-full/$wpid" ] \
   && ok "OGUI closes it: minimal again, the hold gone" || bad "rc=$WRC keep: $(cat "$W/keep.calls" 2>&1)"
+grep -qx "args: steam://close/bigpicture" "$W/call2" 2>/dev/null && grep -qx "cwd: $WROOT/steamrtarm64" "$W/call2" \
+  && ok "first the client leaves Big Picture (a game launch's helper would show it again, over the game)" || bad "$(cat "$W/call2" 2>&1)"
+[ $((SECONDS - s0)) -lt 4 ] && ok "and minimal follows once its hidden desktop window is there" || bad "took $((SECONDS - s0)) s"
+wait
+reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"
+step 42 Completed; fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- game
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" -- steam://rungameid/42
+until_true '[ -e "$W/call1" ]'; sleep 1.2
+kill -TERM "$wpid"; wait "$wpid"
+[ ! -e "$W/call2" ] && ok "a game's launch ended from OGUI leaves Steam's UI as it is" || bad "$(cat "$W/call2" 2>&1)"
+gone 4242
 reset_keep
 
 # ================================================================================================

@@ -411,6 +411,24 @@ exec 3<&0
 setpriv --inh-caps=-all --ambient-caps=-all $RETROFORGE_SESSION_CMD <&3 3<&- &
 CLIENT_PID=$!
 exec 3<&-
+# Steam, started in the background once the shell has come up: the first Steam game after a boot then
+# finds the kept client running (Megabonk's window 44 s after its launch instead of 57 s, MANGMI Air X,
+# 2026-11-23). /usr/bin/steam decides with RETROFORGE_STEAM_PRESTART=1 (Steam Client installed, its
+# sign-in remembered, "Keep Steam running" on, not running yet), on gamescope's second Xwayland, where
+# OGUI starts games. RETROFORGE_STEAM_PRESTART_DELAY s (30) after the shell; `off` leaves it to the first
+# launch.
+case "${RETROFORGE_STEAM_PRESTART_DELAY:=30}" in
+  off) ;;
+  *)
+    if command -v steam >/dev/null 2>&1; then
+      _games_display="${DISPLAY#:}"
+      _games_display=":$((${_games_display%%.*} + 1))"
+      ( sleep "$RETROFORGE_STEAM_PRESTART_DELAY"
+        kill -0 "$CLIENT_PID" 2>/dev/null || exit 0
+        DISPLAY="$_games_display" RETROFORGE_STEAM_PRESTART=1 exec steam -gamepadui -steamos3 -steampal -steamdeck -silent
+      ) </dev/null >/dev/null &
+    fi ;;
+esac
 wait "$CLIENT_PID"
 status=$?
 set -e

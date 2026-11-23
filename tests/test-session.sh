@@ -561,7 +561,7 @@ chmod +x "$T/bin/gamescope" "$T/client" "$T/game"
 run_session() {
   : > "$T/log"; rm -f "$T/client-exit"
   PATH="$T/bin:$PATH" XDG_RUNTIME_DIR="$T/run" HOME="$T/home" RETROFORGE_SESSION_CMD="${SESSION_CMD:-$T/client}" \
-    RETROFORGE_OGUI_REAPER="$T/reaper" RETROFORGE_GAME_STOP_TIMEOUT=1 \
+    RETROFORGE_OGUI_REAPER="$T/reaper" RETROFORGE_GAME_STOP_TIMEOUT=1 RETROFORGE_STEAM_PRESTART_DELAY="${PRESTART_DELAY:-off}" \
     sh "$SESSION" < "$T/stdin" > "$T/session.out" 2>&1 &
   spid=$!; spids+=("$spid")
 }
@@ -601,6 +601,33 @@ else
   else
     bad "the fake client never started (second run)"
   fi
+fi
+
+# -------------------------------------------------------------------------------------------------
+CASE="Steam started in the background"
+if [ -e /etc/retroforge/session.conf ] || [ -e /usr/lib/retroforge/device-env ]; then
+  ok "skipped: this host has RetroForge's session.conf/device-env, which would override the fakes"
+else
+  printf '#!/bin/bash\necho "steam DISPLAY=$DISPLAY PRESTART=${RETROFORGE_STEAM_PRESTART-} args=$*" >> "%s/log"\n' "$T" >"$T/bin/steam"
+  chmod +x "$T/bin/steam"
+  PRESTART_DELAY=0.3 run_session
+  if waitfor 'grep -q "^steam " "$T/log"'; then
+    grep -qx "steam DISPLAY=:2 PRESTART=1 args=-gamepadui -steamos3 -steampal -steamdeck -silent" "$T/log" \
+      && ok "RETROFORGE_STEAM_PRESTART_DELAY s after the shell: steam, RETROFORGE_STEAM_PRESTART=1, on the games' Xwayland" \
+      || bad "$(grep '^steam ' "$T/log")"
+  else
+    bad "no background steam: $(tail -3 "$T/session.out")"
+  fi
+  touch "$T/client-exit"; waitfor "! kill -0 $spid 2>/dev/null"; wait "$spid" 2>/dev/null
+  PRESTART_DELAY=1 run_session
+  waitfor 'grep -qx client-up "$T/log"'; touch "$T/client-exit"
+  waitfor "! kill -0 $spid 2>/dev/null"; wait "$spid" 2>/dev/null; sleep 1.5
+  ! grep -q "^steam " "$T/log" && ok "not once the shell has ended" || bad "$(grep '^steam ' "$T/log")"
+  run_session
+  waitfor 'grep -qx client-up "$T/log"'; sleep 0.5; touch "$T/client-exit"
+  waitfor "! kill -0 $spid 2>/dev/null"; wait "$spid" 2>/dev/null
+  ! grep -q "^steam " "$T/log" && ok "RETROFORGE_STEAM_PRESTART_DELAY=off: none" || bad "$(grep '^steam ' "$T/log")"
+  rm -f "$T/bin/steam"
 fi
 
 # -------------------------------------------------------------------------------------------------
