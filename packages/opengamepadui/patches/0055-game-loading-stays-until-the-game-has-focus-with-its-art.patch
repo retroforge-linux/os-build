@@ -1,0 +1,260 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: retroforge <retroforge@invalid>
+Date: Mon, 23 Nov 2026 12:00:00 +0000
+Subject: [PATCH] fix(GameLoading): stay up until the game has gamescope's
+ focus, with its art
+
+The loading screen faded out once the launched app's first window was
+detected. For a Steam game started through a running client that is
+almost at once (Steam's own windows), long before the game's window, and
+OpenGamepadUI's overlay then went transparent: gamescope keeps painting
+the last frame of the window it focused before (HELD_COMMIT_BASE in
+steamcompmgr's paint_all) when nothing has its focus, so the previous
+game's last picture showed, frozen, for the whole load (MANGMI Air X,
+2026-11-23: GAMESCOPE_FOCUSED_WINDOW empty between games, OpenGamepadUI's
+window is the STEAM_OVERLAY one and never the focus). It also never came
+up when OpenGamepadUI was still in the in-game state (the game before
+not yet seen to stop), since that state is not entered again.
+
+The screen now comes up on every launch (load_started, which its
+FadeEffect already listens for) and stays until gamescope reports a
+window of the game focused: not nothing, not OpenGamepadUI, not the app
+focused when the game was started unless it is this game's. Steam's own
+windows carry the game's app id too (OpenGamepadUI tags them with the
+running app's), so a window of a steam or steamwebhelper process is
+shown only once it has kept the focus 5 s: the "Starting game" dialog a
+client started by the launch puts up for ~3 s stays hidden, a prompt
+Steam needs answered does not. The app ending or 180 s also take it
+down. Once the game's art is found it shows its banner, dimmed, behind
+its logo (its name when it has no logo) and "Starting...", all still: no
+spinner, so OpenGamepadUI draws nothing while the game loads. Until then,
+and for a game with no art, it is the screen it was.
+---
+ core/ui/common/game/game_loading.gd   | 130 +++++++++++++++++++++++++-
+ core/ui/common/game/game_loading.tscn |  42 +++++++++
+ 2 files changed, 170 insertions(+), 2 deletions(-)
+
+diff --git a/core/ui/common/game/game_loading.gd b/core/ui/common/game/game_loading.gd
+index de84a78..c7857a7 100644
+--- a/core/ui/common/game/game_loading.gd
++++ b/core/ui/common/game/game_loading.gd
+@@ -2,7 +2,18 @@ extends Control
+ 
+ signal load_started
+ 
++## How long the screen waits for a window of the game to take gamescope's focus before it gives up
++const FOCUS_TIMEOUT_S := 180.0
++## How long a window of Steam's own may keep the focus before the screen gives way to it: its
++## "Starting game" dialog (~3 s on a client started by the launch) stays hidden, a prompt Steam needs
++## answered (a cloud conflict, an EULA) is seen
++const STEAM_GRACE_S := 5.0
++enum Focus { GAME, STEAM }
++
+ var launch_manager := load("res://core/global/launch_manager.tres") as LaunchManager
++var library_manager := load("res://core/global/library_manager.tres") as LibraryManager
++var boxart_manager := load("res://core/global/boxart_manager.tres") as BoxArtManager
++var gamescope := load("res://core/systems/gamescope/gamescope.tres") as GamescopeInstance
+ var state_machine := (
+ 	preload("res://assets/state/state_machines/global_state_machine.tres") as StateMachine
+ )
+@@ -10,10 +21,20 @@ var menu_state := preload("res://assets/state/states/menu.tres") as State
+ var popup_state := preload("res://assets/state/states/popup.tres") as State
+ var in_game_state := preload("res://assets/state/states/in_game.tres") as State
+ var game_launching := false
++var logger := Log.get_logger("GameLoading", Log.LEVEL.INFO)
++var _app: RunningApp
++var _focused_at_launch := 0
++var _last_focus := Vector2i(-1, -1)
++var _xwayland_primary := gamescope.get_xwayland(gamescope.XWAYLAND_TYPE_PRIMARY)
++var _xwayland_game := gamescope.get_xwayland(gamescope.XWAYLAND_TYPE_GAME)
+ 
+ @onready var fade_effect := $FadeEffect as FadeEffect
+ @onready var label := %RichTextLabel as RichTextLabel
+ @onready var progress_bar := %ProgressBar as ProgressBar
++@onready var banner := %Banner as TextureRect
++@onready var logo := %Logo as TextureRect
++@onready var title := %Title as Label
++@onready var spinner := $Loading02 as Control
+ 
+ 
+ # Called when the node enters the scene tree for the first time.
+@@ -29,16 +50,121 @@ func _ready() -> void:
+ 		visible = to in [in_game_state, popup_state]
+ 	state_machine.state_changed.connect(on_state_changed)
+ 
++	# The screen stays up until gamescope focuses a window of the game. Until then gamescope keeps
++	# painting the last frame of whatever it focused before (the previous game, frozen) under
++	# OpenGamepadUI, and an app's first window (a Steam launch's are Steam's own) comes long before
++	# the game's. Deferred: the signal is emitted while GamescopeInstance is bound (see LaunchManager).
++	if _xwayland_primary:
++		var on_focus_changed := func(_from: int, _to: int) -> void:
++			_on_focus_changed.call_deferred()
++		_xwayland_primary.focused_app_updated.connect(on_focus_changed)
++		_xwayland_primary.focused_window_updated.connect(on_focus_changed)
++
+ 
+ func _on_app_launched(app: RunningApp):
+ 	game_launching = true
++	_app = app
++	_focused_at_launch = _xwayland_primary.focused_app if _xwayland_primary else 0
++	_last_focus = Vector2i(-1, -1)
++	logger.info("Loading screen up for {0} (focused app {1})".format([app.launch_item.name if app.launch_item else "?", _focused_at_launch]))
++	# OpenGamepadUI's own screen until the game's art is found, and for a game without any
+ 	label.text = "Loading..."
+ 	progress_bar.visible = false
+-	app.app_type_detected.connect(_on_window_created, CONNECT_ONE_SHOT)
+-	app.app_killed.connect(_on_window_created, CONNECT_ONE_SHOT)
++	spinner.visible = true
++	title.text = app.launch_item.name if app.launch_item else ""
++	title.visible = false
++	banner.texture = null
++	logo.texture = null
++	var on_killed := func():
++		if game_launching and _app == app:
++			logger.info("The app ended before its window")
++			_on_window_created()
++	app.app_killed.connect(on_killed, CONNECT_ONE_SHOT)
++	# Up now, whatever the state: OpenGamepadUI is still in the in-game state when the game before
++	# this one has not been seen to stop yet, and that state is not entered again. (FadeEffect fades
++	# in on load_started, ending a fade-out still running.)
++	load_started.emit()
++	var give_up := func():
++		if game_launching and _app == app:
++			logger.info("No window of the game in {0} s".format([FOCUS_TIMEOUT_S]))
++			_on_window_created()
++	get_tree().create_timer(FOCUS_TIMEOUT_S).timeout.connect(give_up)
++	_load_art(app)
++
++
++## The game's banner behind its logo (its name when it has no logo) and "Starting...": still images,
++## nothing animates while the game loads. A game with neither keeps OpenGamepadUI's own screen.
++func _load_art(app: RunningApp) -> void:
++	if not app.launch_item or not library_manager.has_app(app.launch_item.name):
++		return
++	var item := library_manager.get_app_by_name(app.launch_item.name)
++	var banner_texture: Texture2D = await boxart_manager.get_boxart(item, BoxArtProvider.LAYOUT.BANNER)
++	if _app != app or not game_launching:
++		return
++	var logo_texture: Texture2D = await boxart_manager.get_boxart(item, BoxArtProvider.LAYOUT.LOGO)
++	if _app != app or not game_launching:
++		return
++	if banner_texture == null and logo_texture == null:
++		return
++	banner.texture = banner_texture
++	logo.texture = logo_texture
++	title.visible = logo_texture == null
++	spinner.visible = false
++	label.text = "Starting..."
++
++
++## A window of the game has gamescope's focus: not nothing, not OpenGamepadUI, and not the app that
++## was focused when the game was started (a game still running then), unless it is this game's. Steam's
++## own windows carry the game's app id too (OpenGamepadUI tags them with the running app's): one is
++## shown once it has kept the focus STEAM_GRACE_S.
++func _on_focus_changed() -> void:
++	if not game_launching or not _app or not _xwayland_primary:
++		return
++	var to := _xwayland_primary.focused_app
++	if to in [GamescopeInstance.OVERLAY_GAME_ID, 0, 1]:
++		return
++	if to == _focused_at_launch and not _app.owns_app_id(to):
++		return
++	var window := _xwayland_primary.focused_window
++	# focused_window_updated comes many times a second for the same window
++	if _last_focus == Vector2i(to, window):
++		return
++	_last_focus = Vector2i(to, window)
++	var kind := _focus_kind(window)
++	logger.info("Focus: app {0}, window {1}, {2}".format([to, window, Focus.keys()[kind]]))
++	if kind == Focus.STEAM:
++		var app := _app
++		var still_focused := func():
++			if game_launching and _app == app and _xwayland_primary.focused_window == window:
++				logger.info("Steam's window {0} kept the focus".format([window]))
++				_on_window_created()
++		get_tree().create_timer(STEAM_GRACE_S).timeout.connect(still_focused)
++		return
++	_on_window_created()
++
++
++## Whose window has the focus: a process named steam or steamwebhelper owns Steam's
++func _focus_kind(window: int) -> Focus:
++	if window <= 0:
++		return Focus.GAME
++	for xwayland: GamescopeXWayland in [_xwayland_game, _xwayland_primary]:
++		if not xwayland:
++			continue
++		var pids: PackedInt64Array = xwayland.get_pids_for_window(window)
++		if pids.is_empty():
++			continue
++		for pid in pids:
++			var process_name := str(Reaper.get_pid_status(pid).get("Name", ""))
++			if process_name in ["steam", "steamwebhelper"]:
++				return Focus.STEAM
++		return Focus.GAME
++	return Focus.GAME
+ 
+ 
+ func _on_window_created() -> void:
++	if not game_launching:
++		return
++	logger.info("Loading screen down")
+ 	game_launching = false
+ 	await get_tree().create_timer(0.5).timeout
+ 	fade_effect.fade_out()
+diff --git a/core/ui/common/game/game_loading.tscn b/core/ui/common/game/game_loading.tscn
+index 83c997e..73a5906 100644
+--- a/core/ui/common/game/game_loading.tscn
++++ b/core/ui/common/game/game_loading.tscn
+@@ -30,6 +30,48 @@ grow_horizontal = 2
+ grow_vertical = 2
+ color = Color(0, 0, 0, 1)
+ 
++[node name="Banner" type="TextureRect" parent="."]
++unique_name_in_owner = true
++modulate = Color(0.4, 0.4, 0.4, 1)
++layout_mode = 1
++anchors_preset = 15
++anchor_right = 1.0
++anchor_bottom = 1.0
++grow_horizontal = 2
++grow_vertical = 2
++mouse_filter = 2
++expand_mode = 1
++stretch_mode = 6
++
++[node name="Logo" type="TextureRect" parent="."]
++unique_name_in_owner = true
++layout_mode = 1
++anchors_preset = -1
++anchor_left = 0.2
++anchor_top = 0.25
++anchor_right = 0.8
++anchor_bottom = 0.6
++grow_horizontal = 2
++grow_vertical = 2
++mouse_filter = 2
++expand_mode = 1
++stretch_mode = 5
++
++[node name="Title" type="Label" parent="."]
++unique_name_in_owner = true
++layout_mode = 1
++anchors_preset = -1
++anchor_left = 0.1
++anchor_top = 0.25
++anchor_right = 0.9
++anchor_bottom = 0.6
++grow_horizontal = 2
++grow_vertical = 2
++theme_override_font_sizes/font_size = 48
++horizontal_alignment = 1
++vertical_alignment = 1
++autowrap_mode = 3
++
+ [node name="VBoxContainer" type="VBoxContainer" parent="."]
+ layout_mode = 1
+ anchors_preset = 15
+-- 
+2.56.1
+
