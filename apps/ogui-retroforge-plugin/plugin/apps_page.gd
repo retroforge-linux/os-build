@@ -350,7 +350,8 @@ func _install(id: String, name_text: String, args: Array, emu: Dictionary, row: 
 	var poll := Timer.new()
 	poll.wait_time = PROGRESS_POLL
 	add_child(poll)
-	if emu.get("progress") != null:  # Steam: steam-install writes the percentage to a file
+	# Steam, and an emulator with folders (RetroArch's shaders): the percentage is written to a file.
+	if emu.get("progress") != null:
 		poll.timeout.connect(_show_progress_file.bind(str(emu.get("progress")), id))
 	else:
 		poll.timeout.connect(_show_progress.bind(part, int(emu.get("size", 0)), id))
@@ -359,7 +360,7 @@ func _install(id: String, name_text: String, args: Array, emu: Dictionary, row: 
 	poll.queue_free()
 	_busy.erase(id)
 	_progress_rows.erase(id)
-	if code == 0 and before != null and _installed(id) == before:
+	if code == 0 and before != null and EmuState.unchanged(emu, _list().get(id, {})):
 		_notify(name_text + " is up to date")
 	elif code == 0 and emu.get("kind") == "steam" and before == null:
 		# Its first start is Steam's own sign-in (a QR code for the Steam Mobile App).
@@ -461,7 +462,8 @@ func _reload() -> void:
 	refresh()
 
 
-## One option's dropdown: "Emulator's setting" (RetroForge leaves it alone), then each choice.
+## One option's dropdown: "Emulator's setting" (RetroForge leaves it alone; none on an option with a
+## default), then each choice.
 ## Items are added once it is in the tree (the Dropdown's OptionButton is @onready); select() does
 ## not emit item_selected, so building the rows never saves.
 func _add_option(id: String, name_text: String, option: Dictionary) -> void:
@@ -472,12 +474,12 @@ func _add_option(id: String, name_text: String, option: Dictionary) -> void:
 	dropdown.clear()  # dropdown.tscn ships one placeholder item, which would shift every index
 	for text in EmuOptions.emulator_items(option):
 		dropdown.add_item(text)
-	dropdown.select(EmuOptions.index_of(option, EmuOptions.emulator_choice(id, option)))
+	dropdown.select(EmuOptions.emulator_index(option, EmuOptions.emulator_choice(id, option)))
 	dropdown.item_selected.connect(_set_option.bind(id, name_text, option, dropdown))
 
 
 func _set_option(index: int, id: String, name_text: String, option: Dictionary, dropdown: Control) -> void:
-	var values := EmuOptions.values(option)
+	var values := EmuOptions.emulator_values(option)
 	if index < 0 or index >= values.size():
 		logger.warn("%s: %s: no choice at item %d" % [id, option["id"], index])
 		return
@@ -486,7 +488,7 @@ func _set_option(index: int, id: String, name_text: String, option: Dictionary, 
 		return
 	logger.warn("could not write " + LaunchArgs.player_conf_path(id))
 	_notify("Could not save the %s setting of %s" % [option["label"], name_text])
-	dropdown.select(EmuOptions.index_of(option, EmuOptions.emulator_choice(id, option)))  # what is saved
+	dropdown.select(EmuOptions.emulator_index(option, EmuOptions.emulator_choice(id, option)))  # what is saved
 
 
 ## The Toggle only emits on the player's input: this never fires while the rows are built.

@@ -500,11 +500,13 @@ def run(argv):
         opt_args, opt_env = apply_options(emulator, options, confs, system)
         args = opt_args + args
         # The window follows the picture's size (launch_def: window_size): RetroArch tells it on stderr.
-        follows = definition["window_size"] == window_size.RETROARCH_LOG
+        # The player can turn it off (options.json picture_window): it breaks shaders.
+        sized = definition["window_size"] if options is None or emuopts.window_size(options, *confs) else None
+        follows = sized == window_size.RETROARCH_LOG
         if follows:
             args = ["--verbose"] + args
-        if rom is not None and isinstance(definition["window_size"], dict):
-            lines = window_size.display_lines(definition["window_size"], system, args,
+        if rom is not None and isinstance(sized, dict):
+            lines = window_size.display_lines(sized, system, args,
                                               (options or {}).get("files"), HOME, warn)
             if lines:
                 display_back = window_size.size_display(ENV.get("DISPLAY", ""), lines, STATE_DIR, say, warn)
@@ -536,7 +538,7 @@ def run(argv):
                                    stderr=subprocess.PIPE if follows else None)
         except (OSError, ValueError) as err:
             fail("mount-failed", emulator, f"could not start {binary}: {err}")
-        follower = window_size.follow(definition["window_size"], emu, args, ENV.get("DISPLAY", ""), say, warn)
+        follower = window_size.follow(sized, emu, args, ENV.get("DISPLAY", ""), say, warn)
         rc = wait_emulator(emu, definition["exit_resend"], interrupted)
         if follower:
             follower.join(timeout=2)  # the pipe closed with the emulator: its last lines

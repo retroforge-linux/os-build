@@ -11,7 +11,8 @@ extends RefCounted
 ## page never saves a line the launcher would not read as that option's value.
 ## A choice is a `<id>=<value>` line in a player conf (launch_args.gd), the same files as CPUS:
 ##   - Main menu > Apps: the emulator's conf. No line = "Emulator's setting": RetroForge leaves
-##     the emulator's own setting alone (what the player set in the emulator's UI applies).
+##     the emulator's own setting alone (what the player set in the emulator's UI applies). An option
+##     with a "default" has no such item: no line = that choice.
 ##   - Game settings > RetroForge: the game's conf. No line = "Emulator default": the choice above.
 
 const LaunchArgs := preload("launch_args.gd")
@@ -21,7 +22,7 @@ const UNSET_GAME := "Emulator default"
 
 
 ## The options of an emulator, in options.json's order: [{id, label, description, choices: [{value,
-## label}]}]. [] when it has none or the file is not what retroforge-launch reads.
+## label}]}], and "default" for an option that has one. [] when it has none or the file is not what retroforge-launch reads.
 static func options_for(emulator: String, data_dir: String = DATA_DIR) -> Array:
 	return parse(LaunchArgs.read_text(data_dir.path_join(emulator).path_join("options.json")))
 
@@ -68,11 +69,28 @@ static func _option(option) -> Dictionary:
 			return {}
 		seen[choice["value"]] = true
 		choices.append({"value": choice["value"], "label": choice["label"]})
-	return {"id": option["id"], "label": option["label"], "description": str(option.get("description", "")),
+	var out := {"id": option["id"], "label": option["label"], "description": str(option.get("description", "")),
 		"choices": choices}
+	if option.has("default"):
+		if not (option["default"] is String and seen.has(option["default"])):
+			return {}
+		out["default"] = option["default"]
+	return out
 
 
-## The values a dropdown's items stand for, in item order: "" (unset) first, then each choice.
+## The values the emulator level's items stand for, in item order: "" (unset) first unless the option
+## has a default, then each choice.
+static func emulator_values(option: Dictionary) -> Array:
+	return values(option).slice(1) if option.has("default") else values(option)
+
+
+## The emulator level's item for a saved value: its default's (or unset) when it is not a choice.
+static func emulator_index(option: Dictionary, value: String) -> int:
+	var items := emulator_values(option)
+	return maxi(0, items.find(value if items.has(value) else option.get("default", "")))
+
+
+## The values the game level's items stand for, in item order: "" (unset) first, then each choice.
 static func values(option: Dictionary) -> Array:
 	var out: Array = [""]
 	for choice in option["choices"]:
@@ -88,24 +106,24 @@ static func choice_label(option: Dictionary, value: String) -> String:
 	return ""
 
 
-## Dropdown items at the emulator level: "Emulator's setting", then each choice.
+## Dropdown items at the emulator level: "Emulator's setting" (not with a default), then each choice.
 static func emulator_items(option: Dictionary) -> PackedStringArray:
-	var out := PackedStringArray([UNSET_EMULATOR])
-	for choice in option["choices"]:
-		out.append(choice["label"])
+	var out := PackedStringArray()
+	for value in emulator_values(option):
+		out.append(UNSET_EMULATOR if value == "" else choice_label(option, value))
 	return out
 
 
 ## Dropdown items at the game level: "Emulator default (<what the emulator level says>)", then each choice.
 static func game_items(option: Dictionary, emulator_value: String) -> PackedStringArray:
-	var current := choice_label(option, emulator_value)
+	var current := choice_label(option, emulator_value if emulator_value != "" else str(option.get("default", "")))
 	var out := PackedStringArray(["%s (%s)" % [UNSET_GAME, current if current != "" else UNSET_EMULATOR.to_lower()]])
 	for choice in option["choices"]:
 		out.append(choice["label"])
 	return out
 
 
-## The item to select for a saved value: 0 (unset) when it is not one of the choices.
+## The game level's item for a saved value: 0 (unset) when it is not one of the choices.
 static func index_of(option: Dictionary, value: String) -> int:
 	return maxi(0, values(option).find(value))
 

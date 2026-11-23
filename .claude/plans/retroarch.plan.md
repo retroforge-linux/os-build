@@ -41,7 +41,10 @@ RetroArch itself: `pkgforge-dev/RetroArch-AppImage-Enhanced`, `RetroArch-<v>-any
 - **D1b RetroArch's Online Updater stays OFF** (user 2026-11-09: players must not install cores for
   other systems). The seed hides it, the core updater and Load Core; the cores folder is ours. A `.so`
   copied in by hand over SMB/SSH can still be loaded from RetroArch's content browser: not offered by
-  the UI, not blocked.
+  the UI, not blocked. SHADER PRESETS come with RetroArch instead (user 2026-11-23): catalog
+  `folders`, libretro/slang-shaders pinned at one commit (sha256), unpacked to
+  `~/.config/retroarch/shaders/shaders_slang`. The picture-sized window breaks shaders, so options.json
+  `picture_window` (every emulator with `window_size`; per emulator and per game; default On) turns it off.
 - **D2 Mega CD on RetroArch, BIOS required.** Genesis Plus GX needs `bios_CD_U.bin` / `bios_CD_E.bin` /
   `bios_CD_J.bin` in the flat `~/bios` (ClownMDEmu needed none: a regression, accepted). A segacd game
   without the BIOS gets a clear "BIOS missing" message, not a black screen.

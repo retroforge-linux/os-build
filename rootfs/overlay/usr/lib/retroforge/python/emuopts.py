@@ -15,12 +15,18 @@
 #                       "format": "ini" | "toml" | "yaml" | "xml",
 #                       "separator": " = "}},           how an added line is written (ini/toml; default "=")
 #    "options": [{"id": "aspect", "label": "Aspect ratio", "description": "...",
+#                 "default": "16:9",                      optional, below
 #                 "choices": [{"value": "16:9", "label": "16:9", "set": [ACTION, ...]}, ...]}],
 #    "notes": ["..."]}
 #
 #   ACTION = {"args": ["-C", "lockAspectRatio=1"]}                  on the emulator's command line
 #          | {"env": {"NAME": "value"}}                             in its environment
 #          | {"file": "main", "section": "Display", "key": "AspectRatio", "value": "16:9"}
+#          | {"window_size": false}                                 the definition's window_size on or off
+#
+# "default" names the choice the emulator level has when none is saved: such an option never leaves the
+# emulator's own setting alone. "window_size" is for the launcher (window_size below): false runs the
+# emulator without the picture-sized window or display its definition asks for, which breaks shaders.
 #
 # A file action names the setting by section and key: an INI/TOML [section] ("" = before the first
 # header), a YAML mapping path ("Video/Performance Overlay"), an XML element path under the root
@@ -126,8 +132,11 @@ def _check_action(action, files, where):
             raise OptionsError(f"{where}: file {action['file']!r} is not declared in files")
         if not (_one_line(action["section"], action["key"], action["value"]) and action["key"].strip()):
             raise OptionsError(f"{where}: section, key and value must be one-line strings (key not empty)")
+    elif kind == {"window_size"}:
+        if not isinstance(action["window_size"], bool):
+            raise OptionsError(f"{where}: window_size must be true or false")
     else:
-        raise OptionsError(f"{where}: an action is {{args}}, {{env}} or {{file, section, key, value}}")
+        raise OptionsError(f"{where}: an action is {{args}}, {{env}}, {{window_size}} or {{file, section, key, value}}")
 
 
 def _check_files(files, path):
@@ -164,8 +173,8 @@ def _check_choice(choice, files, seen, where):
 
 
 def _check_option(option, files, path):
-    if not (isinstance(option, dict) and set(option) <= {"id", "label", "description", "choices"}):
-        raise OptionsError(f"{path}: an option is {{id, label, description, choices}}")
+    if not (isinstance(option, dict) and set(option) <= {"id", "label", "description", "default", "choices"}):
+        raise OptionsError(f"{path}: an option is {{id, label, description, default, choices}}")
     oid = option.get("id")
     if not (isinstance(oid, str) and OPTION_ID.fullmatch(oid)):
         raise OptionsError(f"{path}: option id {oid!r} must be lowercase letters, digits and _")
@@ -182,6 +191,10 @@ def _check_option(option, files, path):
     written = {frozenset((a["file"], a["section"], a["key"]) for a in c["set"] if "file" in a) for c in choices}
     if len(written) > 1:
         raise OptionsError(f"{where}: every choice must write the same settings (file, section, key)")
+    if len({sum("window_size" in a for a in c["set"]) for c in choices}) > 1:
+        raise OptionsError(f"{where}: every choice must set window_size, or none")
+    if "default" in option and not (_str(option["default"]) and option["default"] in seen):
+        raise OptionsError(f"{where}: default {option['default']!r} is not one of its choices")
 
 
 def load_options(data_dir, emulator):
@@ -515,14 +528,26 @@ def patch_file(path, fmt, edits, separator="="):
 # ------------------------------------------------------------------------------------ applying --
 
 def resolve(options, emulator_conf, game_conf):
-    """[(emulator choice or None, game choice or None)] per option chosen at some level (valid values only)."""
+    """[(emulator choice or None, game choice or None)] per option chosen at some level (valid values
+    only); an option with a default always has an emulator choice."""
     out = []
     for option in options["options"]:
         by_value = {c["value"]: c for c in option["choices"]}
-        emu, game = by_value.get(emulator_conf.get(option["id"])), by_value.get(game_conf.get(option["id"]))
+        emu = by_value.get(emulator_conf.get(option["id"])) or by_value.get(option.get("default"))
+        game = by_value.get(game_conf.get(option["id"]))
         if emu or game:
             out.append((emu, game))
     return out
+
+
+def window_size(options, emulator_conf, game_conf):
+    """Whether this run keeps the picture-sized window or display its definition asks for (window_size):
+    the winning choice's, True when no option decides it."""
+    for emu, game in resolve(options, emulator_conf, game_conf):
+        for action in (game or emu)["set"]:
+            if "window_size" in action:
+                return action["window_size"]
+    return True
 
 
 def unknown_values(options, conf):

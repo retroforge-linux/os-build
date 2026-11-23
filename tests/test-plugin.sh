@@ -828,6 +828,29 @@ func test_emu_state() -> void:
 	r = EmuState.rows("retroarch", fresh, {})
 	check("state: RetroArch not installed: Download as for any emulator (its cores come with it)",
 		[r.main.button, r.main.args], ["Download", ["install", "retroarch"]])
+	# Its shader presets (catalog "folders"): a device that had RetroArch before them is offered them.
+	var shaders := ra.duplicate(true).merged({"folders": {"Shader presets": {"due": true, "size": 52 * 1048576}}}, true)
+	r = EmuState.rows("retroarch", shaders, {})
+	check("state: installed without its shader presets: Update, naming them and their size",
+		[r.main.button, r.main.args, r.main.description],
+		["Update", ["install", "retroarch"], "To download: Shader presets, about 52 MB."])
+	shaders["folders"]["Shader presets"]["due"] = false
+	r = EmuState.rows("retroarch", shaders, {})
+	check("state: shader presets in place: Open", [r.main.button, r.main.args], ["Open", []])
+	shaders["folders"]["Shader presets"]["due"] = true
+	shaders["cores"]["armgba"]["installed"] = null
+	r = EmuState.rows("retroarch", shaders, {})
+	check("state: a missing core still comes first (Repair fetches both)", r.main.button, "Repair")
+	r = EmuState.rows("retroarch", shaders.merged({"installed": null}, true), {})
+	check("state: not installed: Download, whatever is due", r.main.button, "Download")
+	check("state: an install that changed nothing", EmuState.unchanged(ra, ra.duplicate(true)), true)
+	var after := ra.duplicate(true)
+	after["cores"]["snes9x"]["installed"] = "nightly-2026-11-08-cc"
+	check("state: ... a newer core alone is a change", EmuState.unchanged(ra, after), false)
+	var due := ra.duplicate(true).merged({"folders": {"Shader presets": {"due": true, "size": mb}}}, true)
+	after = due.duplicate(true)
+	after["folders"]["Shader presets"]["due"] = false
+	check("state: ... and so are the shader presets alone", EmuState.unchanged(due, after), false)
 
 ## Per-emulator options: what the pages offer from options.json, and the choice at each level.
 func test_emu_options() -> void:
@@ -888,6 +911,24 @@ func test_emu_options() -> void:
 	check("conf: the option id is the key, last line wins",
 		EmuOptions.conf_choice("aspect=4:3\nCPUS=big\naspect=16:9\n", aspect), "16:9")
 	check("conf: a value the option does not have reads as unset", EmuOptions.conf_choice("aspect=21:9\n", aspect), "")
+	# An option with a default (the picture-sized window, On): no "Emulator's setting" item, and the
+	# default is what is selected, and named, when nothing is saved.
+	var raw_sized := {"id": "picture_window", "label": "Picture-sized window", "default": "on", "choices": [
+		{"value": "on", "label": "On", "set": [{"window_size": true}]},
+		{"value": "off", "label": "Off", "set": [{"window_size": false}]}]}
+	var sized: Dictionary = EmuOptions.parse(JSON.stringify({"options": [raw_sized]}))[0]
+	check("default: the emulator level offers the choices only",
+		[EmuOptions.emulator_items(sized), EmuOptions.emulator_values(sized)], [PackedStringArray(["On", "Off"]), ["on", "off"]])
+	check("default: selected when nothing, or an unknown value, is saved; a saved choice wins",
+		[EmuOptions.emulator_index(sized, ""), EmuOptions.emulator_index(sized, "maybe"), EmuOptions.emulator_index(sized, "off")], [0, 0, 1])
+	check("default: the game level names it", EmuOptions.game_items(sized, ""), PackedStringArray(["Emulator default (On)", "On", "Off"]))
+	check("default: ... or the emulator's choice", EmuOptions.game_items(sized, "off")[0], "Emulator default (Off)")
+	check("default: the game level keeps its unset item", EmuOptions.values(sized), ["", "on", "off"])
+	check("no default: the emulator level's items and values line up",
+		[EmuOptions.emulator_values(aspect), EmuOptions.emulator_index(aspect, "16:9"), EmuOptions.emulator_index(aspect, "x")], [["", "4:3", "16:9"], 2, 0])
+	for wrong in ["maybe", true, ""]:
+		check("default: refused when it is not a choice (%s)" % str(wrong),
+			EmuOptions.parse(JSON.stringify({"options": [raw_sized.merged({"default": wrong}, true)]})), [])
 	var rom := "/home/player/roms/psx/Crash Team Racing (USA).chd"
 	check("emulator choice: unset at first", EmuOptions.emulator_choice("duckstation", aspect), "")
 	EmuOptions.set_emulator_choice("duckstation", aspect, "4:3")

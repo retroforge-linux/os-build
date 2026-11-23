@@ -161,11 +161,49 @@
           ]
         }
       ]
+    },
+    {
+      "id": "picture_window",
+      "label": "Picture-sized window",
+      "description": "Draws the game at its own size and lets the display scale it up, which is lighter on the GPU. Breaks shaders: turn it off to use them.",
+      "default": "on",
+      "choices": [
+        {
+          "value": "on",
+          "label": "On",
+          "set": [
+            {
+              "window_size": true
+            },
+            {
+              "file": "main",
+              "section": "",
+              "key": "video_fullscreen",
+              "value": "\"false\""
+            }
+          ]
+        },
+        {
+          "value": "off",
+          "label": "Off",
+          "set": [
+            {
+              "window_size": false
+            },
+            {
+              "file": "main",
+              "section": "",
+              "key": "video_fullscreen",
+              "value": "\"true\""
+            }
+          ]
+        }
+      ]
     }
   ],
   "notes": [
     "retroarch.cfg is RetroArch's own settings file: `key = \"value\"` lines, no sections (section \"\"), every value quoted; RetroArch rewrites it whole on exit (config_save_on_exit), keeping these keys. Keys and values from RetroArch 1.22.2 configuration.c and gfx/video_defines.h.",
     "aspect_ratio_index is enum aspect_ratio: 22 ASPECT_RATIO_CORE (the core's own shape), 24 ASPECT_RATIO_FULL (the whole screen). video_scale_integer, video_smooth (bilinear), video_vsync and fps_show are booleans.",
-    "Left out: renderer (Vulkan; N64 alone runs on RetroArch's GL driver through the seeded per-core override armN64.cfg), resolution and widescreen_hack (core options, not RetroArch settings: N64 rendering size is armN64's own, later if needed), shaders (armGBA's LCD presets: later). Core options (armGBA's BIOS choice, Genesis Plus GX's region, armN64's renderer and resolution) stay in RetroArch's Quick Menu > Core Options."
+    "Left out: renderer (Vulkan; N64 alone runs on RetroArch's GL driver through the seeded per-core override armN64.cfg), resolution and widescreen_hack (core options, not RetroArch settings: N64 rendering size is armN64's own, later if needed), shaders (RetroArch's own Quick Menu > Shaders; the presets come with RetroArch, catalog \"folders\"). Core options (armGBA's BIOS choice, Genesis Plus GX's region, armN64's renderer and resolution) stay in RetroArch's Quick Menu > Core Options."
   ]
 }

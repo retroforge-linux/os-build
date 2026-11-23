@@ -57,6 +57,10 @@
 # game's X server became 960x544, a fullscreen app opened at that size and the DPU plane scaled a
 # 544x960 copy to the panel.
 #
+# THE PLAYER CAN TURN IT OFF (options.json picture_window, per emulator and per game, on by default;
+# emuopts.window_size): shaders are drawn at the window's size, too few pixels for a CRT or LCD mask, and
+# then scaled up. Off, the launcher never comes here and the emulator fills the games display.
+#
 # NEVER RAISES: an X11 failure is a warning, and the game keeps the window RetroArch made, or runs on the
 # display as it was.
 

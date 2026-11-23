@@ -40,7 +40,7 @@ command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 
 # The checks are in Python (JSON + regex); each prints "ok|FAIL <TAB> case <TAB> message".
 out="$(RETROFORGE_NET_TEST="${RETROFORGE_NET_TEST:-0}" python3 - "$CATALOG" "$LAUNCH_CONF" "$EMU_DATA_DIR" <<'PY'
-import json, os, re, sys, urllib.request
+import hashlib, json, os, re, sys, urllib.request
 
 catalog_path, launch_conf, emu_conf_dir = sys.argv[1:4]
 net = os.environ.get("RETROFORGE_NET_TEST") == "1"
@@ -77,7 +77,7 @@ for line in open(launch_conf):
 
 ROLLING = {"latest", "preview", "nightly", "continuous", "dev", "master", "main"}
 REQUIRED = {"name", "author", "systems", "github", "tag", "asset", "sha256", "size", "homepage", "licence"}
-OPTIONAL = {"data", "unpack", "self_update", "tag_pattern", "cores", "extract"}
+OPTIONAL = {"data", "unpack", "self_update", "tag_pattern", "cores", "extract", "folders"}
 
 def check_github(case, e, rx):
     url = f"https://api.github.com/repos/{e['github']}/releases/tags/{e['tag']}"
@@ -120,6 +120,7 @@ def check_github(case, e, rx):
 
 sys.path.insert(0, os.path.join(emu_conf_dir, "..", "..", "..", "lib", "retroforge", "python"))
 import emu_cores
+import emu_folders
 
 class CoreFail(Exception):
     def __init__(self, code, msg):
@@ -127,6 +128,46 @@ class CoreFail(Exception):
 
 CORE_CTX = emu_cores.Ctx(Fail=CoreFail, EXIT_USAGE=2, EXIT_NET=3, EXIT_VERIFY=4, EXIT_LOCAL=5,
                          SAFE_TAG=re.compile(r"[A-Za-z0-9._@-]+"))
+
+FOLDERS_CTX = emu_folders.Ctx(
+    Fail=CoreFail, EXIT_VERIFY=4, HOME="/home/player", EMU_DIR="/home/player/emulators",
+    safe_relative=lambda p: (isinstance(p, str) and p not in ("", ".") and not p.startswith("/")
+                             and os.path.normpath(p) == p and ".." not in p.split("/")))
+
+def check_folders(case, emu, e):
+    """Pinned folders (RetroArch's shader presets): what emu_folders.specs refuses, this refuses; the zip
+    is GitHub's archive of one full commit (a branch's would move under the pin); no two emulators share
+    a target; online, the bytes are still the pin's (GitHub builds archives on demand)."""
+    try:
+        folders = emu_folders.specs(FOLDERS_CTX, emu, e)
+    except CoreFail as err:
+        bad(case, f"folders refused by retroforge-emu: {err}")
+        return
+    for f in folders:
+        if re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/archive/[0-9a-f]{40}\.zip", f["url"]):
+            ok(case, f"folder {f['name']}: one commit's archive, into ~/{f['to']}")
+        else:
+            bad(case, f"folder {f['name']}: {f['url']} is not a GitHub archive of a full commit")
+        if f["to"] in folder_targets:
+            bad(case, f"folder target ~/{f['to']} is also {folder_targets[f['to']]}'s")
+        folder_targets[f["to"]] = emu
+        if not net:
+            continue
+        h, n = hashlib.sha256(), 0
+        try:
+            with urllib.request.urlopen(f["url"], timeout=60) as r:
+                for block in iter(lambda: r.read(1 << 20), b""):
+                    h.update(block)
+                    n += len(block)
+        except Exception as err:
+            bad(case, f"folder {f['name']}: {f['url']} not readable: {err}")
+            continue
+        if (h.hexdigest(), n) == (f["sha256"], f["size"]):
+            ok(case, f"folder {f['name']}: the archive is still the pinned bytes")
+        else:
+            bad(case, f"folder {f['name']}: the archive is now sha256 {h.hexdigest()}, {n} bytes")
+
+folder_targets = {}
 
 def check_cores(case, emu, e):
     try:
@@ -202,6 +243,8 @@ for emu, e in emus.items():
     # (system_args "-L .../cores/<core>_libretro.so") and every core loaded there is in the catalog.
     if "cores" in e:
         check_cores(case, emu, e)
+    if "folders" in e:
+        check_folders(case, emu, e)
 
     # An unpacked archive (PortMaster): a folder under the player's home and the version file in it,
     # both normalised relative paths; self_update only on one (retroforge-emu refuses it otherwise).

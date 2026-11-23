@@ -93,6 +93,11 @@
 # `rollback <emulator> --core=<core>`; `list` and `check` report them under "cores". Sources, layout
 # and checks: /usr/lib/retroforge/python/emu_cores.py.
 #
+# FOLDERS (catalog "folders", RetroArch's shader presets): pinned zips unpacked into the player's home
+# after the emulator and its cores, downloaded again only when their pin moves; `list` reports them
+# under "folders" and counts a due one in "size". Checks and layout: emu_folders.py. The download is no
+# longer one file, so `list` names a "progress" file the page reads instead: the N% printed last.
+#
 # Layout (what retroforge-launch runs): /home/player/emulators/<emulator>/{<tag>.AppImage, current}, or
 # for an unpacked archive the catalog's `to` (/home/player/emulators/<emulator>/ then only holds the
 # install lock and the download in progress).
@@ -125,6 +130,7 @@ import zipfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
 import emu_cores  # noqa: E402
+import emu_folders  # noqa: E402
 
 EXIT_OK, EXIT_USAGE, EXIT_NET, EXIT_VERIFY, EXIT_LOCAL, EXIT_RATE = 0, 2, 3, 4, 5, 6
 
@@ -365,12 +371,28 @@ def remember_newest(emu, e, tag):
 
 SCALE = [0, 99]  # where a download's 0-99% lands on stdout (an entry with cores: 0-80)
 SHOWN = [-1]      # the highest N% printed: stdout never goes back
+PROGRESS = [None]  # the file that holds it too (an entry with folders), or None
+
+
+def scale(lo, hi):
+    SCALE[:] = [lo, hi]
 
 
 def emit(pct):
     if pct > SHOWN[0]:
         print(f"{pct}%", flush=True)
         SHOWN[0] = pct
+        if PROGRESS[0] is not None:
+            try:
+                with open(PROGRESS[0], "w") as f:
+                    f.write(f"{pct}\n")
+            except OSError as err:
+                log(f"warning: cannot write {PROGRESS[0]}: {err}")
+                PROGRESS[0] = None
+
+
+def progress_path(emu):
+    return os.path.join(EMU_DIR, emu, ".progress")
 
 
 def download(url, part, size):
@@ -591,18 +613,34 @@ def cmd_install(emu, tested=False):
     e = checked_entry(emu, entry(load_catalog(), emu))
     if tested and tested_tag(e) is None:
         raise Fail(EXIT_USAGE, f"{emu} has no tested build: it follows {e['tag']}")
+    # A bad core or folder is refused before anything is downloaded.
     if "cores" in e:
-        emu_cores.specs(CTX, emu, e)  # a bad core is refused before anything is downloaded
-        SCALE[1] = 80
-    install_build(emu, e, tested)
-    if "cores" in e:
-        d = os.path.join(EMU_DIR, emu)
-        lock = lock_dir(d)
-        try:
-            emu_cores.install(CTX, emu, e, d, tested)
-        finally:
-            os.close(lock)
-    emit(100)
+        emu_cores.specs(CTX, emu, e)
+    folders = emu_folders.specs(FOLDERS_CTX, emu, e) if "folders" in e else []
+    # Where the emulator's download ends, then the cores'; due folders are most of the bytes.
+    built, cored = (35, 45) if emu_folders.due(FOLDERS_CTX, emu, folders) else (80, 99)
+    if "cores" in e or folders:
+        scale(0, built)
+    if folders:
+        PROGRESS[0] = progress_path(emu)
+        if os.path.lexists(PROGRESS[0]):  # a killed install's: the page would show its percentage
+            os.unlink(PROGRESS[0])
+    try:
+        install_build(emu, e, tested)
+        if "cores" in e or folders:
+            d = os.path.join(EMU_DIR, emu)
+            lock = lock_dir(d)
+            try:
+                if "cores" in e:
+                    emu_cores.install(CTX, emu, e, d, tested, built, cored)
+                emu_folders.install(FOLDERS_CTX, emu, folders, d, cored, 99)
+            finally:
+                os.close(lock)
+        PROGRESS[0] = None
+        emit(100)
+    finally:
+        if folders and os.path.lexists(progress_path(emu)):
+            os.unlink(progress_path(emu))
     return EXIT_OK
 
 
@@ -714,9 +752,23 @@ def cmd_list():
         }
         if "cores" in e:
             out[emu]["cores"] = emu_cores.listing(CTX, e, os.path.join(EMU_DIR, emu))
+        if "folders" in e:
+            list_folders(emu, e, out[emu])
     out.update(steam_entries())
     print(json.dumps({"emulators": out}, sort_keys=True))
     return EXIT_OK
+
+
+def list_folders(emu, e, row):
+    """The "folders" of a `list` row; a due one counts in what there is to download."""
+    try:
+        row["folders"] = emu_folders.listing(FOLDERS_CTX, emu, emu_folders.specs(FOLDERS_CTX, emu, e))
+    except Fail as f:
+        log(f"warning: {f}")
+        return
+    row["progress"] = progress_path(emu)
+    if isinstance(row["size"], int):
+        row["size"] += sum(f["size"] for f in row["folders"].values() if f["due"])
 
 
 def previous_tag(emu):
@@ -806,6 +858,7 @@ def cmd_remove(emu):
     if not EMU_ID.fullmatch(emu or ""):
         raise Fail(EXIT_USAGE, f"bad emulator name '{emu}'")
     remove_unpacked(emu)
+    remove_folders(emu)
     d = os.path.join(EMU_DIR, emu)
     try:
         shutil.rmtree(d)
@@ -814,6 +867,17 @@ def cmd_remove(emu):
     except OSError as err:
         raise Fail(EXIT_LOCAL, f"cannot remove {d}: {err}")
     return EXIT_OK
+
+
+def remove_folders(emu):
+    """Delete the catalog's folders of this emulator, where it put them (see FOLDERS)."""
+    try:
+        e = load_catalog().get(emu)
+        folders = emu_folders.specs(FOLDERS_CTX, emu, e) if isinstance(e, dict) and "folders" in e else []
+    except Fail as f:
+        log(f"warning: {f}")
+        return
+    emu_folders.remove(FOLDERS_CTX, emu, folders)
 
 
 def remove_unpacked(emu):
@@ -873,6 +937,10 @@ CTX = emu_cores.Ctx(Fail=Fail, EXIT_USAGE=EXIT_USAGE, EXIT_NET=EXIT_NET, EXIT_VE
                     EXIT_LOCAL=EXIT_LOCAL, log=log, curl_base=curl_base, tested_build=tested_build,
                     newest_build=newest_build, verify=verify, emit=emit, cached=cached,
                     check_key=check_key, SAFE_TAG=SAFE_TAG, SPACE_MARGIN=SPACE_MARGIN)
+FOLDERS_CTX = emu_folders.Ctx(Fail=Fail, EXIT_VERIFY=EXIT_VERIFY, EXIT_LOCAL=EXIT_LOCAL, log=log,
+                              download=download, scale=scale, verify=verify, unpack_member=unpack_member,
+                              discard=discard, safe_relative=safe_relative, HOME=HOME, EMU_DIR=EMU_DIR,
+                              MARKER=MARKER, SPACE_MARGIN=SPACE_MARGIN)
 
 
 if __name__ == "__main__":

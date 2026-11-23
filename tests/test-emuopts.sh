@@ -234,6 +234,47 @@ JSONFILE["files"]["main"].update(path=".config/fake/config.json", format="json")
 got = load(JSONFILE)
 check("a json-format file is refused (its writer went with gopher64)",
       isinstance(got, str) and got.startswith("refused"), True)
+# A choice can turn the picture-sized window off (window_size), and an option can name the choice that
+# applies when none is saved (default): every emulator with window_size offers picture_window, On.
+SIZED = {"files": {"main": {"path": ".config/fake/sized.ini", "format": "ini", "separator": " = "}},
+         "options": [{"id": "picture_window", "label": "Picture-sized window", "default": "on",
+                      "choices": [{"value": "on", "label": "On", "set": [
+                                       {"window_size": True},
+                                       {"file": "main", "section": "", "key": "full", "value": "no"}]},
+                                  {"value": "off", "label": "Off", "set": [
+                                       {"window_size": False},
+                                       {"file": "main", "section": "", "key": "full", "value": "yes"}]}]}]}
+sized = load(SIZED)
+check("an option with a default and window_size loads", isinstance(sized, dict), True)
+for what, e_conf, g_conf, want in (("nothing saved: the default, on", {}, {}, True),
+                                   ("off for the emulator", {"picture_window": "off"}, {}, False),
+                                   ("off for the game only", {}, {"picture_window": "off"}, False),
+                                   ("on for the game, off for the emulator", {"picture_window": "off"},
+                                    {"picture_window": "on"}, True),
+                                   ("an unknown value is the default", {"picture_window": "maybe"}, {}, True)):
+    check(f"window_size: {what}", eo.window_size(sized, e_conf, g_conf), want)
+check("window_size: options without the action leave it on", eo.window_size(load(GOOD), {"aspect": "16:9"}, {}), True)
+got = []
+SH = f"{T}/sizedhome"
+eo.apply(sized, SH, f"{SH}/state", "x", {}, {}, got.append)
+check("a default is written as the emulator's choice", (read(f"{SH}/.config/fake/sized.ini"), got), ("full = no\n", []))
+eo.apply(sized, SH, f"{SH}/state", "x", {}, {"picture_window": "off"}, got.append)
+check("a game's choice goes over the default", read(f"{SH}/.config/fake/sized.ini"), "full = yes\n")
+eo.restore(SH, f"{SH}/state", "x", got.append)
+check("... and the default is back after the run", (read(f"{SH}/.config/fake/sized.ini"), got), ("full = no\n", []))
+
+
+def sized_refused(what, change):
+    d = json.loads(json.dumps(SIZED))
+    change(d["options"][0])
+    got = load(d)
+    check(what + ": refused", isinstance(got, str) and got.startswith("refused"), True)
+
+
+sized_refused("a default that is not a choice", lambda o: o.update(default="maybe"))
+sized_refused("a default that is not a string", lambda o: o.update(default=True))
+sized_refused("window_size that is not true or false", lambda o: o["choices"][0]["set"][0].update(window_size="on"))
+sized_refused("window_size in one choice only", lambda o: o["choices"][1]["set"].pop(0))
 PER_SYSTEM = json.loads(json.dumps(GOOD))
 PER_SYSTEM["files"]["main"]["path"] = ".config/fake/{system}/settings.ini"
 check("a '{system}' settings folder loads", load(PER_SYSTEM)["files"]["main"]["path"], ".config/fake/{system}/settings.ini")
@@ -246,6 +287,36 @@ for emu in sorted(os.listdir(DATA)):
             check(f"the image's {emu}/options.json loads", True, True)
         except eo.OptionsError as err:
             check(f"the image's {emu}/options.json loads", str(err), True)
+
+# ================================================================================================
+CASE = "picture_window"
+# A picture-sized window (window_size) breaks shaders: every emulator that has one lets the player
+# turn it off (per emulator and per game), On unless they did, and says why. And no other does.
+for emu in sorted(os.listdir(DATA)):
+    try:
+        with open(os.path.join(DATA, emu, "emulator.json")) as f:
+            has = "window_size" in json.load(f)
+        opts = eo.load_options(DATA, emu) or {"options": []}
+    except (OSError, ValueError, eo.OptionsError):
+        continue  # reported above, or not an emulator
+    picture = [o for o in opts["options"] if any("window_size" in a for c in o["choices"] for a in c["set"])]
+    if not has:
+        check(f"{emu}: no window_size, so nothing to turn off", picture, [])
+        continue
+    check(f"{emu}: one picture_window option, On by default, that says it breaks shaders",
+          [(o["id"], o.get("default"), [c["value"] for c in o["choices"]], "reaks shaders" in o["description"])
+           for o in picture], [("picture_window", "on", ["on", "off"], True)])
+    check(f"{emu}: on = sized to the picture, off = not",
+          [eo.window_size(opts, {"picture_window": v}, {}) for v in ("on", "off")], [True, False])
+# RetroArch's window is its own: off, it must fill the screen rather than open at video_scale 1.
+ra = eo.load_options(DATA, "retroarch")
+got = []
+for value, want in (("off", '"true"'), ("on", '"false"')):
+    h = f"{T}/rahome"
+    write(f"{h}/.config/retroarch/retroarch.cfg", read(os.path.join(DATA, "retroarch", "retroarch.cfg")))
+    eo.apply(ra, h, f"{h}/state", "retroarch", {"picture_window": value}, {}, got.append)
+    check(f"retroarch: {value} writes video_fullscreen {want}",
+          (eo.ini_get(read(f"{h}/.config/retroarch/retroarch.cfg"), "", "video_fullscreen"), got), (want, []))
 
 # ================================================================================================
 CASE = "image options.json against its seeds"

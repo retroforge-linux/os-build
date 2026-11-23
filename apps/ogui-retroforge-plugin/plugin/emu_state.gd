@@ -19,6 +19,9 @@ extends RefCounted
 ## previous build and its newest): a newer core is an Update of the entry (install updates RetroArch
 ## and its cores together), a missing core is a Repair (install fetches what is missing), and each
 ## core that kept its previous build has its own Revert row (rollback <id> --core=<core>).
+##
+## An entry with folders (RetroArch's shader presets: list's "folders", known offline) that is installed
+## without one, or with an older one, offers an Update for it.
 
 const Credits := preload("credits.gd")
 
@@ -100,6 +103,18 @@ static func rows(id: String, emu: Dictionary, check: Dictionary) -> Dictionary:
 			main.button = "Update"
 			main.args = install
 			main.description = "Newer cores available: %s." % ", ".join(newer)
+	elif installed != null and main.button == "Open":
+		var folders: Dictionary = emu.get("folders") if emu.get("folders") is Dictionary else {}
+		var due := []
+		var due_mb := 0
+		for folder in folders:
+			if folders[folder] is Dictionary and folders[folder].get("due") == true:
+				due.append(folder)
+				due_mb += int(folders[folder].get("size", 0)) / 1048576
+		if not due.is_empty():
+			main.button = "Update"
+			main.args = install
+			main.description = "To download: %s, about %d MB." % [", ".join(due), due_mb]
 
 	var extra := []
 	if installed != null and follows and not self_update and main.button != "Update":
@@ -124,6 +139,11 @@ static func rows(id: String, emu: Dictionary, check: Dictionary) -> Dictionary:
 			"description": "The version RetroForge tested, %d MB." % mb,
 			"args": ["install", id, "--tested"]}
 	return {"main": main, "tested": tested_row, "extra": extra}
+
+
+## Whether an install changed nothing: the same build, cores and folders in `list` before and after.
+static func unchanged(before: Dictionary, after: Dictionary) -> bool:
+	return ["installed", "cores", "folders"].all(func(key): return before.get(key) == after.get(key))
 
 
 ## Steam Client (retroforge-emu's "kind": "steam"): Download until installed, then Open (Steam's own

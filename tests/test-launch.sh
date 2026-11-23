@@ -387,6 +387,7 @@ for line in 'video_driver = "vulkan"' 'audio_driver = "pipewire"' 'input_joypad_
             'sort_savefiles_enable = "false"' 'sort_savestates_enable = "false"' \
             'menu_show_online_updater = "false"' 'menu_show_core_updater = "false"' \
             'menu_show_load_core = "false"' 'core_updater_buildbot_cores_url = ""' \
+            'video_shader_dir = "/home/player/.config/retroarch/shaders"' \
             'cheevos_enable = "true"' 'cheevos_hardcore_mode_enable = "false"' \
             'input_menu_toggle_gamepad_combo = "4"' 'pause_nonactive = "false"'; do
   has retroarch/retroarch.cfg "$line" "seeded"
@@ -1201,6 +1202,18 @@ if [ -f "$T/libfakex11.so" ]; then
   ws_run ""
   [ ! -e "$T/x11.log" ] && grep -q "no DISPLAY: the window keeps RetroArch's size" "$T/launch.err" \
     && ok "no DISPLAY: a warning, and the game runs" || bad "no DISPLAY: $(tr '\n' '|' < "$T/launch.err")"
+  # The player's picture_window (options.json): off, for the emulator or for the game, RetroArch runs as it
+  # would alone. (The stand-in definition is DuckStation's, so are its options.)
+  WS_CONF="$HOME/.config/retroforge/emulators/duckstation.conf"; mkdir -p "${WS_CONF%/*}"
+  WS_SAVED="$T/ws-conf-saved"; rm -f "$WS_SAVED"; [ -f "$WS_CONF" ] && cp "$WS_CONF" "$WS_SAVED"
+  printf 'picture_window=off\n' > "$WS_CONF"
+  ws_run
+  [ "$(sed -n 's/^arg=//p' "$T/emu.log" | head -1)" != --verbose ] && [ ! -e "$T/x11.log" ] \
+    && ok "picture_window off: no --verbose, X untouched" || bad "off: '$(sed -n 's/^arg=//p' "$T/emu.log" | head -1)' $(cat "$T/x11.log" 2>/dev/null)"
+  printf 'picture_window=on\n' > "$WS_CONF"
+  ws_run
+  [ "$(resizes)" = "640x480 " ] && ok "picture_window on: the window follows the picture" || bad "on: '$(resizes)'"
+  rm -f "$WS_CONF"; [ -f "$WS_SAVED" ] && cp "$WS_SAVED" "$WS_CONF"
   rm -f "$T/geometry" "$T/later" "$T/win-pid"
   python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d.pop("window_size"); json.dump(d, open(sys.argv[1], "w"))' \
     "$WS_DATA/duckstation/emulator.json"
@@ -1262,6 +1275,9 @@ if [ -f "$T/libfakex11.so" ]; then
   [ "$gd_up" = 2133x1200 ] && ok "5x: 1200 lines asked (gamescope caps it at its output)" || bad "5x: up $gd_up"
   printf 'resolution=auto\n' > "$GD_CONF"; gd_run
   [ -z "$(modes)" ] && ok "Automatic: the display is left alone" || bad "auto: modes '$(modes)'"
+  printf 'resolution=2x\npicture_window=off\n' > "$GD_CONF"; gd_run
+  [ "$gd_up" = 1280x720 ] && [ -z "$(modes)" ] && [ ! -e "$GD_JOURNAL" ] \
+    && ok "picture_window off: the display is left alone" || bad "picture_window off: up $gd_up, modes '$(modes)'"
   printf 'resolution=2x\n' > "$GD_CONF"; gd_run gui
   [ -z "$(modes)" ] && ok "Open (--gui): the display is left alone" || bad "gui: modes '$(modes)'"
   GD_GAMESCOPE= gd_run

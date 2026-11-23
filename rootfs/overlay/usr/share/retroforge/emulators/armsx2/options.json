@@ -343,6 +343,32 @@
           ]
         }
       ]
+    },
+    {
+      "id": "picture_window",
+      "label": "Picture-sized window",
+      "description": "Draws the game at its own size and lets the display scale it up, which is lighter on the GPU. Breaks shaders: turn it off to use them.",
+      "default": "on",
+      "choices": [
+        {
+          "value": "on",
+          "label": "On",
+          "set": [
+            {
+              "window_size": true
+            }
+          ]
+        },
+        {
+          "value": "off",
+          "label": "Off",
+          "set": [
+            {
+              "window_size": false
+            }
+          ]
+        }
+      ]
     }
   ],
   "notes": [

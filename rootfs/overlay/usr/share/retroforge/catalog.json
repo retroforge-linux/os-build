@@ -155,7 +155,16 @@
           "sha256": "d6baa00ca13ac89e9949a2211d262f937fa185c411d5ad31d56debbcb3237002",
           "size": 721693
         }
-      }
+      },
+      "folders": [
+        {
+          "name": "Shader presets",
+          "url": "https://github.com/libretro/slang-shaders/archive/02bf134555c4595bd6b69be89feaff923da83754.zip",
+          "sha256": "88f46b7ae8935f85176538241d2e0fcb9b682e9babfb100cfbb3c76635e3a89d",
+          "size": 55065491,
+          "to": ".config/retroarch/shaders/shaders_slang"
+        }
+      ]
     },
     "dsperate": {
       "name": "DSperate",
