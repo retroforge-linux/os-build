@@ -308,7 +308,9 @@ kept_launch() {
   exit 0
 }
 
-# ---- A game Steam runs through FEX: its FEXServer started first -------------------------------------
+# ---- A game Steam runs through FEX: its graphics driver, and its FEXServer started first ------------
+# retroforge-steam-direct `fex` gives an x86 game the driver the player chose for it (Game settings),
+# the device's own arm64 Mesa by default, in the game's FEX folder (its own comments say how).
 # Steam runs an x86 game through its FEX tool, under the Steam Linux Runtime, whose pressure-vessel
 # first runs ~25 x86 helpers through FEX (library probes). With no FEXServer up, each FEX starts one,
 # which inherits the helper's stdout and outlives it by ~1 s, and pressure-vessel waits for that pipe's
@@ -337,6 +339,9 @@ fex_server() {  # fex_server ARG...
   done
   case "$id" in ''|*[!0-9]*) return 0 ;; esac
   data="$RETROFORGE_STEAM_ROOT/steamapps/compatdata/$id"
+  # An x86 game's graphics driver (Game settings: the device's own GL, through FEX's thunk, by default);
+  # not asked for a game Proton runs (~0.2 s, Python's start)
+  [ -d "$data/pfx" ] || { [ -x "$direct_cli" ] && "$direct_cli" fex "$id"; }
   [ -x "$fex/usr/bin/FEXServer" ] && [ -e "$data/fex-emu/Config.json" ] || return 0
   if mkdir -p "$data/fex-emu/AppConfig" 2>/dev/null; then
     for arg in $FEX_HELPERS; do

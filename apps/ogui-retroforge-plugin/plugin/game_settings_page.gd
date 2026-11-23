@@ -1,8 +1,9 @@
 extends ScrollContainer
 
 ## Game settings > RetroForge: per-ROM options, in the screen the gear on OGUI's launch menu opens.
-## For Steam games: their Proton, FEX TSO, launch option and resolution, which
-## retroforge-steam-direct keeps and uses when it starts the game without the client.
+## For Steam games: their FEX TSO, launch option and resolution, which retroforge-steam-direct keeps
+## and uses when it starts the game without the client; and an x86 game's graphics driver, which
+## /usr/bin/steam sets before every launch of it.
 ## "Run on fast cores": the emulator's default (Main menu > Apps), On or Off for this game
 ## (CPUS=big / all in the game's conf, which retroforge-launch reads; launch_args.gd). Then one
 ## dropdown per option of the game's emulator (options.json, emu_options.gd): "Emulator default
@@ -54,6 +55,8 @@ const STEAM_LIBRARY_ID := "retroforge-steam"
 const STEAM_DIRECT := "/usr/bin/retroforge-steam-direct"
 const TSO_CHOICES := ["default", "on", "off"]
 const TSO_ABOUT := "How closely FEX keeps x86 memory ordering between a game's threads. Off is faster on this CPU; some games then crash or glitch. Default: Proton's, On."
+const DRIVER_CHOICES := ["default", "native", "x86"]
+const DRIVER_ABOUT := "An x86 game's OpenGL driver. Native: the device's own, which FEX hands the game's GL calls to (less CPU, faster loading). x86 Mesa: our x86 driver, emulated with the game, for a game that misdraws on Native. Vulkan games use the x86 driver either way. Default: Native."
 const DisplaySettings := preload("display_settings.gd")
 var _steam_app := 0  # the Steam app id of the game being configured, 0 for none
 var _tso: Control  # OGUI Dropdowns: the Steam game's own choices
@@ -61,6 +64,7 @@ var _launch: Control
 var _launch_keys: Array = []
 var _resolution: Control
 var _resolution_keys: Array = []  # "default", then WxH: the sizes of Settings > Display > Game resolution
+var _driver: Control
 var _display := DisplaySettings.new()
 const DIRECT_OFF := " Used only while Apps > Steam Client > \"Steam: start games without Steam\" is on."
 
@@ -144,6 +148,7 @@ func _build_page() -> void:
 	_tso = _steam_dropdown("FEX TSO", TSO_ABOUT, "tso")
 	_launch = _steam_dropdown("Launch option", "Which of the game's programs starts, as in Steam's launch dialog. Default: the one Steam last started.", "launch")
 	_resolution = _steam_dropdown("Resolution", "The size the game draws at; the display scales it to the panel. Default: its Game resolution in Steam, else Settings > Display.", "resolution")
+	_driver = _steam_dropdown("Graphics driver", DRIVER_ABOUT, "driver")
 
 
 func _steam_dropdown(title: String, description: String, key: String) -> Control:
@@ -215,7 +220,7 @@ func _on_game_settings_entered(_from: State) -> void:
 ## than one.
 func _fill_steam_rows() -> void:
 	var app := _steam_app
-	for row in [_tso, _launch, _resolution]:
+	for row in [_tso, _launch, _resolution, _driver]:
 		row.visible = false
 	if _item != null:
 		_focus_group.current_focus = _fast_cores
@@ -260,7 +265,12 @@ func _fill_steam_rows() -> void:
 	_resolution.select(_resolution_keys.find(mine))
 	for row in [_tso, _launch, _resolution]:
 		row.description = str(row.get_meta("about")) + ("" if data.get("direct", "on") == "on" else DIRECT_OFF)
+	_driver.clear()
+	for text in ["Default (Native)", "Native", "x86 Mesa"]:
+		_driver.add_item(text)
+	_driver.select(maxi(DRIVER_CHOICES.find(settings.get("driver", "default")), 0))
 	_tso.visible = true
+	_driver.visible = data.get("x86", false) == true
 	_launch.visible = entries.size() > 1
 	_resolution.visible = _resolution_keys.size() > 1
 	_focus_group.current_focus = _tso
@@ -279,7 +289,7 @@ func _output_of(cmd_path: String, args: Array[String]) -> String:
 
 
 func _on_steam_choice(key: String, index: int) -> void:
-	var values: Array = {"tso": TSO_CHOICES,
+	var values: Array = {"tso": TSO_CHOICES, "driver": DRIVER_CHOICES,
 		"launch": _launch_keys}.get(key, _resolution_keys)
 	if _steam_app <= 0 or index < 0 or index >= values.size():
 		return

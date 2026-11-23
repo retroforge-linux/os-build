@@ -352,7 +352,7 @@ rm -rf "$S/compatibilitytools.d" "$S/config/config.vdf"
 CASE="run: per-game choices"
 GAMES="$H/.config/retroforge/steam-games.json"
 direct -- game 1145360
-[ "$RC" = 0 ] && python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["settings"] == {"tso": "default", "launch": "default", "resolution": "default"}, d; assert d["tso_hint"] == "0", d; assert [e["key"] for e in d["launch"]] == ["0", "1", "2", "3", "4", "15"], d; assert d["launch"][-1]["description"] == "Hades (Steam Deck)", d; assert d["direct"] in ("on", "off"), d' "$OUT" \
+[ "$RC" = 0 ] && python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["settings"] == {"tso": "default", "launch": "default", "resolution": "default", "driver": "default"}, d; assert d["x86"] is False, d; assert d["tso_hint"] == "0", d; assert [e["key"] for e in d["launch"]] == ["0", "1", "2", "3", "4", "15"], d; assert d["launch"][-1]["description"] == "Hades (Steam Deck)", d; assert d["direct"] in ("on", "off"), d' "$OUT" \
   && ok "game: every choice at its default, and the launch entries Steam's dialog offers here, in its order" || bad "rc=$RC out=$OUT err=$ERR"
 direct -- game 1145360 set launch 0
 [ "$RC" = 0 ] && python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"1145360": {"launch": "0"}}' "$GAMES" \
@@ -383,6 +383,64 @@ rmdir "$GAME/Odd"
 for k in launch tso; do direct -- game 1145360 set $k default; done
 python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {}' "$GAMES" && ok "all back to default: nothing kept" || bad "$(cat "$GAMES")"
 rm -rf "$S/compatibilitytools.d" "$GAMES"
+
+CASE="fex: an x86 game's graphics driver"
+# Megabonk's folder: two x86 programs (64- and 32-bit, an interpreter each), an x86 library and an
+# arm64 program (no), a file that is not executable (no).
+MB="$S/steamapps/common/Megabonk"; FX="$S/steamapps/compatdata/3405340/fex-emu"
+acf "$S" 3405340 Megabonk 4
+elf() {  # elf <file> <bits> <machine> <interp 0|1>: a minimal ELF header and one program header
+  mkdir -p "$(dirname "$1")"
+  python3 - "$@" <<'PY'
+import struct, sys
+path, bits, machine, interp = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == "1"
+ident = b"\x7fELF" + bytes([2 if bits == 64 else 1, 1, 1]) + bytes(9)
+if bits == 64:
+    head = ident + struct.pack("<HHIQQQIHHHHHH", 2, machine, 1, 0, 64, 0, 0, 64, 56, 1, 0, 0, 0)
+    ph = struct.pack("<IIQQQQQQ", 3 if interp else 1, 4, 0, 0, 0, 0, 0, 1)
+else:
+    head = ident + struct.pack("<HHIIIIIHHHHHH", 2, machine, 1, 0, 52, 0, 0, 52, 32, 1, 0, 0, 0)
+    ph = struct.pack("<IIIIIIII", 3 if interp else 1, 0, 0, 0, 0, 0, 4, 1)
+open(path, "wb").write(head + ph)
+PY
+  chmod +x "$1"
+}
+elf "$MB/Megabonk.x86_64" 64 62 1; elf "$MB/bin/tool32" 32 3 1; elf "$MB/UnityPlayer.so" 64 62 0
+elf "$MB/arm/native" 64 183 1; elf "$MB/data/plain" 64 62 1; chmod -x "$MB/data/plain"
+mkdir -p "$FX/AppConfig"; echo '{"ThunksDB": {"GL": 0}}' >"$FX/AppConfig/Steam_3405340_tool32.json"
+direct -- fex 3405340
+cfg() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(json.dumps(d.get("ThunksDB")), "ours" if d.get("RetroForge") else "theirs")' "$FX/AppConfig/Steam_3405340_$1.json" 2>&1; }
+[ "$RC" = 0 ] && [ "$(cfg Megabonk.x86_64)" = '{"GL": 1} ours' ] && [ "$(ls "$FX/AppConfig")" = "$(printf 'Steam_3405340_Megabonk.x86_64.json\nSteam_3405340_tool32.json')" ] \
+  && ok "native by default: FEX's GL thunk on for each x86 program, by app id and program (not its library, not arm64)" || bad "rc=$RC $(ls "$FX/AppConfig") $(cfg Megabonk.x86_64) err=$ERR"
+[ "$(cfg tool32)" = '{"GL": 0} theirs' ] && ok "a file of the player's own is left as it is" || bad "$(cfg tool32)"
+python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); o = d["DB"]["GL"]["Overlay"]; assert d["DB"]["GL"]["Library"] == "libGL-guest.so"; assert "/run/gfx/main/usr/lib/libGL.so.1" in o and "/usr/lib/pressure-vessel/overrides/lib/x86_64-linux-gnu/libGL.so.1" in o and "/run/gfx/main/usr/lib32/libGL.so.1" in o; assert "Vulkan" not in d["DB"]; assert not any("@PREFIX_LIB@" in p for p in o)' "$FX/ThunksDB.json" \
+  && ok "and a thunk database naming the container's own library paths (not @PREFIX_LIB@), GL only" || bad "$(head -c 300 "$FX/ThunksDB.json")"
+grep -q "app 3405340: GL through the device's own driver" <<<"$ERR" && ok "it says so" || bad "err=$ERR"
+direct -- fex 3405340
+[ "$RC" = 0 ] && [ -z "$ERR" ] && ok "again: nothing to change, nothing said" || bad "rc=$RC err=$ERR"
+direct -- game 3405340
+python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["x86"] is True and d["settings"]["driver"] == "default", d' "$OUT" \
+  && ok "game: an x86 game, its driver at its default" || bad "out=$OUT"
+direct -- game 3405340 set driver x86
+direct -- fex 3405340
+[ "$(ls "$FX/AppConfig")" = Steam_3405340_tool32.json ] && [ ! -e "$FX/ThunksDB.json" ] && grep -q "GL through the x86 driver in FEX's guest" <<<"$ERR" \
+  && ok "x86: our files gone, the player's kept" || bad "$(ls "$FX" "$FX/AppConfig") err=$ERR"
+direct -- game 3405340 set driver vulkan
+[ "$RC" = 2 ] && ok "set: a driver that is not a choice is refused" || bad "rc=$RC"
+rm "$FX/AppConfig/Steam_3405340_tool32.json"; direct -- game 3405340 set driver native; direct -- fex 3405340
+[ "$(cfg tool32)" = '{"GL": 1} ours' ] || bad "tool32: $(cfg tool32)"
+rm "$MB/bin/tool32"; direct -- fex 3405340
+[ ! -e "$FX/AppConfig/Steam_3405340_tool32.json" ] && [ -e "$FX/AppConfig/Steam_3405340_Megabonk.x86_64.json" ] \
+  && ok "a program gone from the game: our file for it goes" || bad "$(ls "$FX/AppConfig")"
+rm -rf "$FX"; mkdir -p "$S/steamapps/compatdata/3405340/pfx"
+direct -- fex 3405340
+[ ! -e "$FX" ] && ok "a game Proton runs (a prefix in its compat data): left alone" || bad "$(ls -R "$FX")"
+rm -rf "$S/steamapps/compatdata/3405340"
+direct -- fex 1145360
+[ "$RC" = 0 ] && [ ! -e "$S/steamapps/compatdata/1145360" ] && ok "a game with no x86 program: nothing" || bad "rc=$RC $(ls "$S/steamapps/compatdata" 2>&1)"
+direct -- fex 999
+[ "$RC" = 0 ] && ok "a game that is not installed: nothing, exit 0" || bad "rc=$RC err=$ERR"
+rm -rf "$MB" "$S/steamapps/appmanifest_3405340.acf" "$GAMES"
 
 CASE="run: Steam's game resolution"
 mkdir -p "$S/config" "$S/userdata/12345/config"
@@ -630,8 +688,13 @@ wrap RETROFORGE_STEAM_KEPT=1 -- -silent steam://rungameid/1145360
 ! asked && grep -qx "steam://rungameid/1145360" "$W/client.args" \
   && ok "the kept client's own run (inside its unit) is the client" || bad "direct: $(cat "$W/direct.calls" 2>&1)"
 wrap -- -silent steam://rungameid/1145360
-[ "$(cat "$W/direct.calls")" = "$(printf 'check 1145360\nremember')" ] && grep -qx "steam://rungameid/1145360" "$W/client.args" \
-  && ok "a game the helper refuses: asked once, then the client" || bad "direct: $(cat "$W/direct.calls" 2>&1)"
+[ "$(cat "$W/direct.calls")" = "$(printf 'check 1145360\nfex 1145360\nremember')" ] && grep -qx "steam://rungameid/1145360" "$W/client.args" \
+  && ok "a game the helper refuses: asked once (and to set its graphics driver), then the client" || bad "direct: $(cat "$W/direct.calls" 2>&1)"
+mkdir -p "$S/steamapps/compatdata/1145360/pfx"
+wrap -- -silent steam://rungameid/1145360
+[ "$(cat "$W/direct.calls")" = "$(printf 'check 1145360\nremember')" ] \
+  && ok "a game Proton runs (a prefix in its compat data): its graphics driver not asked" || bad "direct: $(cat "$W/direct.calls" 2>&1)"
+rm -rf "$S/steamapps/compatdata/1145360"
 
 echo
 echo "$PASS passed, $FAIL failed"

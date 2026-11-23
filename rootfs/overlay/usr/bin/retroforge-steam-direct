@@ -13,8 +13,10 @@
 #   retroforge-steam-direct remember     keep every game's newest launch in Steam's log (/usr/bin/steam
 #                                        runs it before the client starts)
 #   retroforge-steam-direct game APPID [set KEY VALUE]
-#                                        print (JSON) APPID's own FEX TSO, launch
-#                                        option and resolution (Game settings > RetroForge), after saving one
+#                                        print (JSON) APPID's own FEX TSO, launch option, resolution and
+#                                        graphics driver (Game settings > RetroForge), after saving one
+#   retroforge-steam-direct fex APPID    give an x86 game the graphics driver chosen for it, in its FEX
+#                                        folder (/usr/bin/steam runs it before every launch of a game)
 #   retroforge-steam-direct restore-resolution PID DISPLAY WxH WxH
 #                                        once PID ends, give DISPLAY's X server the first size back if it
 #                                        still has the second (run, through systemd-run, starts it)
@@ -381,7 +383,7 @@ def swap_tool(appid, tools, command, want=None):
 
 # The player's per-game choices (Game settings, steam_game_settings.gd), keyed by app id.
 GAMES = os.path.join(os.path.dirname(CONF), "steam-games.json")
-CHOICES = {"tso": ("default", "on", "off")}
+CHOICES = {"tso": ("default", "on", "off"), "driver": ("default", "native", "x86")}
 
 
 def read_games():
@@ -394,10 +396,10 @@ def read_games():
 
 
 def game_settings(appid):
-    """tso, launch and resolution for appid: "default" for each one not chosen."""
+    """tso, launch, resolution and driver for appid: "default" for each one not chosen."""
     mine = read_games().get(str(appid))
     mine = mine if isinstance(mine, dict) else {}
-    return {k: str(mine.get(k, "default")) for k in ("tso", "launch", "resolution")}
+    return {k: str(mine.get(k, "default")) for k in ("tso", "launch", "resolution", "driver")}
 
 
 def tso_hint(app):
@@ -422,6 +424,141 @@ def save_game_setting(appid, key, value):
     with open(GAMES + ".part", "w", encoding="utf-8") as f:
         json.dump(games, f, indent=1, sort_keys=True)
     os.replace(GAMES + ".part", GAMES)
+
+# ------------------------------------------------------------------------------------------------
+# x86 games: their graphics driver (Game settings > RetroForge > Graphics driver)
+#
+# Steam runs an x86 Linux game through its FEX tool, in pressure-vessel's x86 container, where the game
+# loads the x86 Mesa of our FEX guest (the graphics provider, /run/gfx/main): the driver then runs
+# emulated too. FEX can hand GL to the device's own arm64 Mesa instead (a "thunk"): the game's
+# libGL.so.1 becomes FEX's guest thunk library, whose calls run the host's driver natively (/run/host
+# in the container). Valve's tool ships it off. Two files in the game's FEX folder
+# (<library>/steamapps/compatdata/<appid>/fex-emu) turn it on:
+#   ThunksDB.json  FEX's thunk database, with the paths an x86 loader opens there. Valve's names only
+#                  @PREFIX_LIB@ paths, which FEX expands to lib64 folders in the container (its
+#                  multiarch check looks in the game's working folder when the root is empty), so they
+#                  never match and the game keeps the x86 driver even with the thunk on
+#   AppConfig/Steam_<appid>_<program>.json  {"ThunksDB": {"GL": 1}}, for each x86 program in the game's
+#                  folder: FEX keys app configs by app id and program, so pressure-vessel's own x86
+#                  probes keep the x86 driver
+# Megabonk on the Air X (2026-11-23): the same frame rate (the A610 is its limit), ~20% less of the
+# CPU, its load ~2.5 s shorter. Vulkan stays on the guest's x86 Turnip: through FEX's Vulkan thunk
+# (with the device's Turnip named for the host side and Valve's x86-only layers dropped there) Megabonk
+# found the GPU, then died a minute in ("Vulkan - Out of memory! (allocating memory for buffer)").
+# Native is the default; x86 removes our files. A file without our "RetroForge" key is the player's own
+# and stays. Proton games (a pfx in their compat data) and games with no x86 program are left alone.
+# TEST SEAM: RETROFORGE_STEAM_FEX_DEPTH (how deep the game's folder is searched, 3).
+MARK = "written by retroforge-steam-direct for the game's graphics driver (Game settings)"
+FEX_DIRS = {
+    64: ("/usr/lib/pressure-vessel/overrides/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu",
+         "/lib/x86_64-linux-gnu", "/run/gfx/main/usr/lib", "/run/gfx/usr/lib", "/usr/lib", "/usr/lib64"),
+    32: ("/usr/lib/pressure-vessel/overrides/lib/i386-linux-gnu", "/usr/lib/i386-linux-gnu",
+         "/lib/i386-linux-gnu", "/run/gfx/main/usr/lib32", "/run/gfx/usr/lib32", "/usr/lib32"),
+}
+
+
+def thunk_db():
+    def paths(names):
+        return [f"{d}/{n}" for bits in (64, 32) for d in FEX_DIRS[bits] for n in names]
+    return {"RetroForge": MARK, "DB": {
+        "GL": {"Library": "libGL-guest.so", "Overlay": paths(["libGL.so", "libGL.so.1", "libGL.so.1.2.0", "libGL.so.1.7.0"])}}}
+
+
+def x86_programs(folder):
+    """Names of the x86 programs in folder (ELF x86-64 or i386 with an interpreter), a few levels deep."""
+    depth = int(os.environ.get("RETROFORGE_STEAM_FEX_DEPTH", "3"))
+    found = set()
+    base = folder.rstrip("/").count("/")
+    for top, dirs, files in os.walk(folder):
+        if top.count("/") - base >= depth:
+            dirs[:] = []
+        for name in files:
+            path = os.path.join(top, name)
+            try:
+                if not os.stat(path).st_mode & 0o111:
+                    continue
+                with open(path, "rb") as f:
+                    head = f.read(64)
+                    if len(head) < 52 or head[:4] != b"\x7fELF" or head[5] != 1:
+                        continue
+                    bits = {1: 32, 2: 64}.get(head[4])
+                    machine = int.from_bytes(head[18:20], "little")
+                    if (bits, machine) not in ((64, 62), (32, 3)):
+                        continue
+                    if bits == 64:
+                        phoff, phsize, phnum = int.from_bytes(head[32:40], "little"), *(int.from_bytes(head[i:i + 2], "little") for i in (54, 56))
+                    else:
+                        phoff, phsize, phnum = int.from_bytes(head[28:32], "little"), *(int.from_bytes(head[i:i + 2], "little") for i in (42, 44))
+                    f.seek(phoff)
+                    table = f.read(phsize * min(phnum, 64))
+                if any(int.from_bytes(table[i:i + 4], "little") == 3 for i in range(0, len(table) - 3, phsize or 1)):
+                    found.add(name)
+            except (OSError, ValueError):
+                continue
+    return sorted(found)
+
+
+def x86_game(appid):
+    """(FEX folder, its x86 programs) of an installed x86 Linux game, else None."""
+    found = manifest(steam_library(), appid)
+    if not found or not found[1].strip("/."):
+        return None
+    lib, installdir, _ = found
+    data = os.path.join(lib, "steamapps", "compatdata", str(appid))
+    if os.path.isdir(os.path.join(data, "pfx")):
+        return None
+    programs = x86_programs(os.path.join(lib, "steamapps", "common", installdir))
+    return (os.path.join(data, "fex-emu"), programs) if programs else None
+
+
+def ours(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f).get("RetroForge") == MARK
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def write_json(path, value):
+    """path holds value (ours) unless a file of the player's is there; True when it changed."""
+    text = json.dumps(value, indent=1) + "\n"
+    try:
+        with open(path, encoding="utf-8") as f:
+            old = f.read()
+    except OSError:
+        old = None
+    if old == text or (old is not None and not ours(path)):
+        return False
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".part", "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(path + ".part", path)
+    return True
+
+
+def fex_driver(appid):
+    """Give an x86 game the driver chosen for it (native: GL and Vulkan through FEX's thunks)."""
+    game = x86_game(appid)
+    if not game:
+        return
+    folder, programs = game
+    native = game_settings(appid)["driver"] in ("default", "native")
+    changed = False
+    if native:
+        changed |= write_json(os.path.join(folder, "ThunksDB.json"), thunk_db())
+        for name in programs:
+            changed |= write_json(os.path.join(folder, "AppConfig", f"Steam_{appid}_{name}.json"),
+                                  {"RetroForge": MARK, "ThunksDB": {"GL": 1}})
+    for path in glob.glob(os.path.join(glob.escape(folder), "AppConfig", f"Steam_{appid}_*.json")) \
+            + [os.path.join(folder, "ThunksDB.json")]:
+        name = os.path.basename(path)[len(f"Steam_{appid}_"):-len(".json")]
+        keep = native and (path.endswith("/ThunksDB.json") or name in programs)
+        if not keep and ours(path):
+            os.remove(path)
+            changed = True
+    if changed:
+        log(f"app {appid}: " + (f"GL through the device's own driver (FEX's thunk) for {', '.join(programs)}"
+                                if native else "GL through the x86 driver in FEX's guest"))
 
 
 def beta_key(sl, appid):
@@ -806,6 +943,13 @@ def main(argv):
         if launch is None:
             return 1
         return 0 if cmd == "check" else run(appid, launch)
+    if cmd == "fex" and len(argv) == 2 and argv[1].isdigit():
+        try:
+            fex_driver(int(argv[1]))
+        except OSError as err:
+            log(f"app {argv[1]}: could not set its graphics driver: {err}")
+            return 1
+        return 0
     if cmd == "restore-resolution" and len(argv) == 5 and argv[1].isdigit():
         sizes = [re.fullmatch(r"(\d+)x(\d+)", a) for a in argv[3:]]
         if all(sizes):
@@ -836,9 +980,10 @@ def main(argv):
         steam = game_resolution(appid)
         print(json.dumps({"settings": game_settings(appid), "direct": state()[0],
                           "launch": [{"key": e["key"], "description": e["description"]} for e in entries],
-                          "steam_resolution": "%dx%d" % steam if steam else "", "tso_hint": tso_hint(app)}))
+                          "steam_resolution": "%dx%d" % steam if steam else "", "tso_hint": tso_hint(app),
+                          "x86": bool(x86_game(appid))}))
         return 0
-    log("usage: retroforge-steam-direct status|on|off|remember|check APPID|run APPID|game APPID [set KEY VALUE]")
+    log("usage: retroforge-steam-direct status|on|off|remember|check APPID|run APPID|fex APPID|game APPID [set KEY VALUE]")
     return 2
 
 
