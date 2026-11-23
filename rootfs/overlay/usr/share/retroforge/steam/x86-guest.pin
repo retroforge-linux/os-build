@@ -3,8 +3,8 @@
 #
 # Read by /usr/lib/retroforge/steam-x86-guest, which /usr/bin/steam starts in the background: it
 # downloads the image into the player's home (~/.local/share/retroforge/fex-guest/<name>-<version>.sqsh),
-# checks it, and the wrapper mounts it with squashfuse on ~/.local/share/retroforge/fex-guest/root
-# while Steam runs. STEAM_COMPAT_GRAPHICS_PROVIDER points at root/graphics_provider.json, so that tree
+# checks it, and the wrapper mounts it on ~/.local/share/retroforge/fex-guest/root while Steam runs
+# (the kernel's squashfs through root's steam-x86-guest-kernel, else squashfuse). STEAM_COMPAT_GRAPHICS_PROVIDER points at root/graphics_provider.json, so that tree
 # is both pressure-vessel's graphics provider and FEX's RootFS (docs/steam-arm64.md).
 #
 # Not in the image: it is 1.36 GB, a root slot is 2 GB (image/partition-table.txt), and

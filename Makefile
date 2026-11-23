@@ -503,6 +503,7 @@ test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-dev-signing.sh
 	bash $(TESTS_DIR)/test-steam-install.sh
 	bash $(TESTS_DIR)/test-steam-x86-guest.sh
+	bash $(TESTS_DIR)/test-steam-x86-guest-kernel.sh
 	bash $(TESTS_DIR)/test-steam-compat-tools.sh
 	bash $(TESTS_DIR)/test-steam-proton.sh
 	bash $(TESTS_DIR)/test-steam-remoteplay.sh

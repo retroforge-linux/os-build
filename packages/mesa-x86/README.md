@@ -5,7 +5,8 @@ same patches as the host driver in [`../mesa`](../mesa). `make mesa-x86` builds 
 `rootfs/lib-assemble-x86-mesa.sh` puts it in the OS image at `/usr/lib/retroforge/x86-mesa/root`
 with `payload.conf` (the Arch snapshot it was built against, the Mesa version). The guest itself,
 FEX's ArchLinux RootFS, is not in the image: a device downloads it (Main menu > Emulators > Steam
-Client) and `steam-x86-guest` lays this payload over it with `fuse-overlayfs` whenever it mounts it
+Client) and `steam-x86-guest` lays this payload over it whenever it mounts it (the kernel's overlayfs
+through root's `steam-x86-guest-kernel`, else `fuse-overlayfs`)
 (user decision 2026-10-18: built into the image, so nothing needs hosting). `RETROFORGE_X86_MESA=0`
 builds an image without it.
 
@@ -131,7 +132,7 @@ was private it could not be.
 ## Switching devices to it: `x86-guest.pin`
 
 `rootfs/overlay/usr/share/retroforge/steam/x86-guest.pin` names the guest a device downloads and
-mounts with squashfuse, and starts out on FEX's own ArchLinux RootFS (2026-08-11). Our image is the
+mounts, and starts out on FEX's own ArchLinux RootFS (2026-08-11). Our image is the
 same kind of file with the same layout, so switching is four fields, all printed in the release
 notes:
 

@@ -1,0 +1,20 @@
+// Let a user's session mount its own x86 guest with the kernel: /usr/lib/retroforge/steam-x86-guest
+// runs `systemctl --no-ask-password start retroforge-x86-guest-mount@<user>.service`, and
+// retroforge-x86-guest-release@<user>.service once the last steam is gone. Both run
+// /usr/lib/retroforge/steam-x86-guest-kernel as root.
+//
+// Exactly start, of those two units, with the subject's own user name as the instance, for the
+// active LOCAL session and wheel, as the installer's rule. An SSH login gets no grant, and
+// steam-x86-guest mounts with FUSE then. What a process of the user buys by starting them: root
+// mounts that user's own image read-only, nosuid, nodev on that user's own fex-guest/root, so a
+// crafted image reaches the kernel's squashfs driver (accepted 2026-11-23, steam-x86-guest-kernel).
+// tests/test-steam-x86-guest-kernel.sh evaluates this rule.
+polkit.addRule(function(action, subject) {
+    var unit = action.lookup("unit");
+    if (action.id == "org.freedesktop.systemd1.manage-units" &&
+        (unit == "retroforge-x86-guest-mount@" + subject.user + ".service" ||
+         unit == "retroforge-x86-guest-release@" + subject.user + ".service") &&
+        action.lookup("verb") == "start" &&
+        subject.active && subject.local && subject.isInGroup("wheel"))
+        return polkit.Result.YES;
+});

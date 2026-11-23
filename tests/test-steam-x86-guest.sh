@@ -26,13 +26,19 @@
 #   - `start` leaves a holder outside the caller's process tree that ignores TERM, and releases once
 #     the caller is gone, SIGKILL included;
 #   - a download that finishes while Steam runs is mounted then, and not when Steam is gone.
+#   the kernel's mounts (steam-x86-guest-kernel, root's, through retroforge-x86-guest-mount@<user>):
+#   - asked for first, with the image and our Mesa named in fex-guest/.kernel-request; FUSE only when
+#     the unit is refused (an SSH login), fails or mounts nothing, and it says why;
+#   - released through retroforge-x86-guest-release@<user>, never with fusermount; the holder too;
+#   - RETROFORGE_X86_GUEST_KERNEL=0: FUSE only. tests/test-steam-x86-guest-kernel.sh tests root's half.
 #   wrapper:
 #   - the client starts without waiting for the download, which goes on detached after `steam` exits;
 #   - with a channel, every start checks it in the background; a move is mounted once no steam has the old one;
 #   - STEAM_COMPAT_GRAPHICS_PROVIDER and ~/.steam/sdk32, sdk64 are set up;
 #   - mounted before the client starts, released when the last `steam` exits, never by a second one;
 #   - RETROFORGE_STEAM_X86_GUEST=0 turns all of it off.
-# squashfuse and fusermount3 are stubs that edit a fake mount table, as in test-portmaster.sh. FEX's
+# squashfuse, fusermount3 and systemctl are stubs that edit a fake mount table, as in test-portmaster.sh;
+# systemctl refuses unless a case says otherwise ($T/kernel-mode), as for an SSH login. FEX's
 # server is a local HTTP server that honours Range and can be slowed down or cut off. xxhsum is the
 # real one (Debian/Arch package xxhash; the image has it) when installed, else a stand-in.
 set -uo pipefail
@@ -201,6 +207,31 @@ open(sys.argv[3], "w").close(); time.sleep(600)' "$1" "$2" "$T/locked" &
 }
 unlock() { kill "$LOCKPID"; wait "$LOCKPID" 2>/dev/null; }
 
+# systemctl --no-ask-password start retroforge-x86-guest-{mount,release}@<user>.service: root's
+# steam-x86-guest-kernel, on the fake mount table. $T/kernel-mode: fail (refused, the default), ok, or
+# broken (succeeds and mounts nothing). The mount copies the request to $T/request.
+cat >"$T/stub/systemctl" <<EOF
+#!/bin/bash
+echo "systemctl \$*" >>"$T/calls"
+mode="\$(cat "$T/kernel-mode" 2>/dev/null || echo fail)"; unit="\${!#}"
+[ "\$mode" = fail ] && { echo "Failed to start \$unit: Interactive authentication required." >&2; exit 1; }
+m="$MNT"; e="\$(printf '%s' "\$m" | sed 's/ /\\\\040/g')"
+case "\$unit" in
+  retroforge-x86-guest-mount@*)
+    [ "\$mode" = broken ] && exit 0
+    cp "$GUEST/.kernel-request" "$T/request"
+    echo "rf-x86-guest \$e overlay ro,nosuid,nodev 0 0" >>"$T/mounts"
+    echo '{"graphics_provider_v0":{}}' >"\$m/graphics_provider.json" ;;
+  retroforge-x86-guest-release@*)
+    E="\$e" awk '!(\$2 == ENVIRON["E"] && \$3 == "overlay")' "$T/mounts" >"$T/mounts.new" && mv "$T/mounts.new" "$T/mounts"
+    rm -f "\$m/graphics_provider.json" ;;
+esac
+EOF
+chmod +x "$T/stub/systemctl"
+export RETROFORGE_SYSTEMCTL="$T/stub/systemctl"
+KUSER="$(python3 -c 'import os, pwd; print(pwd.getpwuid(os.getuid()).pw_name)' 2>/dev/null)"
+kernel_on() { M="$MNT" awk '{ gsub(/\\040/, " ", $2) } $2 == ENVIRON["M"] && $3 == "overlay" { f = 1 } END { exit !f }' "$T/mounts"; }
+
 # ================================================================================================
 CASE="the real pin"
 python3 - "$PIN_REAL" <<'PY' && ok "a channel: FEX's RootFS_links.json, its arch squashfs entry, no fixed version" || bad "the image's x86-guest.pin is malformed"
@@ -304,6 +335,80 @@ printf 'snapshot=2025-12-01\n' >"$MESA_T/payload.conf"; touch "$T/overlay-fails"
 RETROFORGE_X86_MESA="$MESA_T" helper mount
 [ "$RC" = 1 ] && not_mounted && ! in_table "$BASE_T" && ok "exit 1, and the base is released again" || bad "rc=$RC mounts: $(cat "$T/mounts")"
 rm -f "$T/overlay-fails"
+
+CASE="kernel: mount"
+if [ -z "$KUSER" ]; then
+  echo ok >"$T/kernel-mode"; reset_calls
+  helper mount
+  [ "$RC" = 0 ] && is_mounted && [ "$(calls systemctl)" = 0 ] && [ "$(calls squashfuse)" = 1 ] && grep -q "has no name" <<<"$ERR" \
+    && ok "uid $(id -u) has no name for the unit: FUSE, and it says why" || bad "rc=$RC err=$ERR calls: $(cat "$T/calls")"
+  helper release
+  skip "uid $(id -u) has no user name here: the kernel cases need one"
+else
+  echo ok >"$T/kernel-mode"; reset_calls; rm -f "$T/request"
+  helper mount
+  [ "$RC" = 0 ] && kernel_on && [ -f "$MNT/graphics_provider.json" ] && [ "$(calls squashfuse)" = 0 ] \
+    && ok "root's kernel mount, no squashfuse" || bad "rc=$RC err=$ERR calls: $(cat "$T/calls") mounts: $(cat "$T/mounts")"
+  grep -qxF "systemctl --no-ask-password start retroforge-x86-guest-mount@$KUSER.service" "$T/calls" \
+    && ok "systemctl --no-ask-password start retroforge-x86-guest-mount@<user>.service" || bad "calls: $(cat "$T/calls")"
+  [ "$(cat "$T/request" 2>/dev/null)" = "$(printf 'image=%s\nmesa=0' "$(basename "$IMG1")")" ] \
+    && ok "the request: image=<the image's file name>, mesa=0 (no payload)" || bad "request: $(cat "$T/request" 2>&1)"
+  grep -q "mounted $(basename "$IMG1") on $MNT (the kernel's squashfs and overlayfs)" <<<"$ERR" && ok "and says so" || bad "stderr: $ERR"
+  [ "$(cat "$GUEST/.mounted")" = "$IMG1" ] && ok ".mounted names the image" || bad ".mounted: $(cat "$GUEST/.mounted")"
+
+  CASE="kernel: mounted already"
+  reset_calls
+  helper mount
+  [ "$RC" = 0 ] && [ ! -s "$T/calls" ] && ok "nothing asked again" || bad "rc=$RC calls: $(cat "$T/calls")"
+
+  CASE="kernel: release"
+  reset_calls
+  helper release
+  [ "$RC" = 0 ] && not_mounted && [ "$(cat "$T/calls")" = "systemctl --no-ask-password start retroforge-x86-guest-release@$KUSER.service" ] \
+    && ok "released by root's release unit, no fusermount" || bad "rc=$RC err=$ERR calls: $(cat "$T/calls")"
+
+  CASE="kernel: with our x86 Mesa"
+  printf 'snapshot=2025-12-01\n' >"$MESA_T/payload.conf"; reset_calls
+  RETROFORGE_X86_MESA="$MESA_T" helper mount
+  [ "$RC" = 0 ] && kernel_on && [ "$(calls squashfuse)" = 0 ] && [ "$(calls fuse-overlayfs)" = 0 ] \
+    && [ "$(sed -n 2p "$T/request")" = mesa=1 ] && ok "mesa=1 in the request, no FUSE at all" || bad "rc=$RC request: $(cat "$T/request") calls: $(cat "$T/calls")"
+  grep -q "with our x86 Mesa over it (the kernel's squashfs and overlayfs)" <<<"$ERR" && ok "and says so" || bad "stderr: $ERR"
+  RETROFORGE_X86_MESA="$MESA_T" helper release
+  not_mounted && ! in_table "$BASE_T" && ok "released" || bad "mounts: $(cat "$T/mounts")"
+
+  CASE="kernel: refused"
+  echo fail >"$T/kernel-mode"; reset_calls
+  helper mount
+  [ "$RC" = 0 ] && is_mounted && ! kernel_on && [ "$(calls systemctl)" = 1 ] && [ "$(calls squashfuse)" = 1 ] \
+    && ok "an SSH login, say: squashfuse instead" || bad "rc=$RC calls: $(cat "$T/calls")"
+  grep -q "Interactive authentication required" <<<"$ERR" && grep -q "mounting with FUSE instead" <<<"$ERR" && ok "and says why" || bad "stderr: $ERR"
+  reset_calls
+  helper release
+  not_mounted && [ "$(calls systemctl)" = 0 ] && [ "$(calls fusermount)" = 1 ] && ok "a FUSE mount: released with fusermount, root not asked" || bad "calls: $(cat "$T/calls")"
+
+  CASE="kernel: the unit mounts nothing"
+  echo broken >"$T/kernel-mode"; reset_calls
+  helper mount
+  [ "$RC" = 0 ] && is_mounted && ! kernel_on && [ "$(calls squashfuse)" = 1 ] && ok "squashfuse after the wait" || bad "rc=$RC err=$ERR calls: $(cat "$T/calls")"
+  grep -q "did not mount" <<<"$ERR" && ok "and says so" || bad "stderr: $ERR"
+  helper release
+
+  CASE="kernel: turned off"
+  echo ok >"$T/kernel-mode"; reset_calls
+  RETROFORGE_X86_GUEST_KERNEL=0 helper mount
+  [ "$RC" = 0 ] && is_mounted && [ "$(calls systemctl)" = 0 ] && [ "$(calls squashfuse)" = 1 ] && ok "RETROFORGE_X86_GUEST_KERNEL=0: squashfuse, root not asked" || bad "rc=$RC calls: $(cat "$T/calls")"
+  helper release
+
+  CASE="kernel: the holder releases"
+  sleep 600 & FAKESTEAM=$!; reset_calls
+  helper start "$FAKESTEAM"
+  [ "$RC" = 0 ] && kernel_on && ok "start: root's mount" || bad "rc=$RC err=$ERR"
+  kill -KILL "$FAKESTEAM"; wait "$FAKESTEAM" 2>/dev/null
+  until_true 50 not_mounted && grep -qxF "systemctl --no-ask-password start retroforge-x86-guest-release@$KUSER.service" "$T/calls" \
+    && ok "its steam gone: released by root's unit" || bad "mounts: $(cat "$T/mounts") calls: $(cat "$T/calls")"
+  settle
+fi
+echo fail >"$T/kernel-mode"
 
 CASE="start"
 sleep 600 & FAKESTEAM=$!; reset_calls

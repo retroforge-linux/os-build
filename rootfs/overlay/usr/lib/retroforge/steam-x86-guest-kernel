@@ -1,0 +1,351 @@
+#!/usr/bin/env python3
+# steam-x86-guest-kernel — root's half of steam-x86-guest: mount a user's x86 guest with the kernel's
+# squashfs and overlayfs instead of squashfuse and fuse-overlayfs, and release it again.
+#
+# WHY: before every x86 game pressure-vessel probes the guest's libraries and drivers (thousands of
+# lookups and opens, through the x86 ld.so under FEX). Through two FUSE layers that took 11.1 s of
+# Megabonk's launch, through the kernel's 6.9-7.9 s, and its container 2.4 s instead of 3.1 s: about
+# 4 s off every x86 launch (MANGMI Air X, 2026-11-23, alternating, warm). Nothing changes in game.
+#
+#   steam-x86-guest-kernel mount USER    mount the image USER's fex-guest/.kernel-request names
+#   steam-x86-guest-kernel release USER  take down what `mount` mounted
+#
+# WHO RUNS IT: retroforge-x86-guest-mount@USER.service and retroforge-x86-guest-release@USER.service
+# (oneshot, root). 50-retroforge-x86-guest.rules lets an active local wheel session start them for its
+# own user name. steam-x86-guest (the player's) writes the request, starts the unit and mounts with FUSE
+# when that fails (an SSH login has no grant).
+#
+# TRUST: the image is the user's own file: what FEX's channel hashed (XXH3, not a cryptographic hash),
+# or whatever the user put there. Root mounts it anyway (decided 2026-11-23), so a crafted image
+# reaches the kernel's squashfs driver. What root does not let the user choose:
+#   - where: the home comes from the password database; below it every folder is opened one at a time,
+#     never through a symlink, each one the user's and on the home's filesystem, and the overlay goes
+#     on that descriptor (/proc/self/fd/N), so no symlink or rename moves it onto /usr or /etc;
+#   - which file: a regular file of the user's, <name>.sqsh in fex-guest itself, opened the same way;
+#     the loop device is set up from that descriptor (LOOP_CONFIGURE), never from a path;
+#   - how: a read-only loop device; squashfs and overlay read-only, nosuid and nodev, so no setuid
+#     program, file capability or device node in an image works; every other layer is root's;
+#   - what it takes down: an overlay it mounted (source rf-x86-guest) on that same fex-guest/root.
+#
+# LAYOUT: the image on /run/retroforge/x86-guest/<uid>/base (squashfs on a loop device), and on
+# fex-guest/root a read-only overlay (lower layers only), source rf-x86-guest:
+#   lowerdir=<uid>/layers/mask:<our x86 Mesa>:<uid>/layers/opaque:<base>
+# Our x86 Mesa (/usr/lib/retroforge/x86-mesa/root) marks each guest folder it replaces with a
+# .wh..wh..opq file, which fuse-overlayfs honours and the kernel's overlayfs shows as a file. So two
+# small layers in <uid>/layers (made once per boot) do the marker's work: in <opaque> (under ours) each such folder carries
+# trusted.overlay.opaque=y, which hides the guest's entries there and not ours; in <mask> (over ours)
+# each marker has a whiteout, which hides the marker. Without our Mesa (mesa=0 in the request, e.g. a
+# guest older than its snapshot): lowerdir=<uid>/empty:<base> (an overlay with no upper layer needs
+# two lower ones).
+#
+# Everything goes to stderr: the unit's journal.
+#
+# TEST SEAMS (tests/test-steam-x86-guest-kernel.sh, which needs root): RETROFORGE_X86_GUEST_RUN,
+# RETROFORGE_X86_MESA.
+import ctypes
+import errno
+import fcntl
+import glob
+import os
+import pwd
+import re
+import shutil
+import stat
+import struct
+import sys
+import tempfile
+
+RUN = os.environ.get("RETROFORGE_X86_GUEST_RUN", "/run/retroforge/x86-guest")
+MESA = os.environ.get("RETROFORGE_X86_MESA", "/usr/lib/retroforge/x86-mesa")
+GUEST = (".local", "share", "retroforge", "fex-guest")  # under the home, as steam-x86-guest has it
+REQUEST = ".kernel-request"
+SOURCE = "rf-x86-guest"
+MARKER = ".wh..wh..opq"
+IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.sqsh")
+
+MS_RDONLY, MS_NOSUID, MS_NODEV = 1, 2, 4
+MNT_DETACH = 2
+LOOP_CTL_GET_FREE = 0x4C82
+LOOP_CONFIGURE = 0x4C0A
+LO_FLAGS_READ_ONLY, LO_FLAGS_AUTOCLEAR = 1, 4
+
+libc = ctypes.CDLL(None, use_errno=True)
+libc.mount.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_char_p, ctypes.c_ulong, ctypes.c_void_p]
+libc.umount2.argtypes = [ctypes.c_char_p, ctypes.c_int]
+
+
+class Failed(Exception):
+    pass
+
+
+def log(msg):
+    print(f"steam-x86-guest-kernel: {msg}", file=sys.stderr, flush=True)
+
+
+def sys_mount(source, target, fstype, data=None):
+    flags = MS_RDONLY | MS_NOSUID | MS_NODEV
+    if libc.mount(source.encode(), target.encode(), fstype.encode(), flags, data.encode() if data else None):
+        raise Failed(f"could not mount {fstype} on {target}: {os.strerror(ctypes.get_errno())}")
+
+
+def sys_umount(target):
+    if libc.umount2(target.encode(), MNT_DETACH):
+        raise Failed(f"could not unmount {target}: {os.strerror(ctypes.get_errno())}")
+
+
+def unescape(field):
+    return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), field)
+
+
+def mountinfo():
+    """(mount id, mount point, fstype, source) of every mount, as /proc/self/mountinfo lists them."""
+    with open("/proc/self/mountinfo", encoding="utf-8", errors="replace") as f:
+        for line in f:
+            fl = line.split()
+            sep = fl.index("-")
+            yield int(fl[0]), unescape(fl[4]), fl[sep + 1], unescape(fl[sep + 2])
+
+
+def mount_id(fd):
+    with open(f"/proc/self/fdinfo/{fd}", encoding="utf-8") as f:
+        return int(re.search(r"^mnt_id:\s*(\d+)", f.read(), re.M).group(1))
+
+
+def ours(fd):
+    """Is the folder fd names the root of an overlay this mounted?"""
+    mid = mount_id(fd)
+    return any(m == mid and fstype == "overlay" and source == SOURCE for m, _, fstype, source in mountinfo())
+
+
+def open_dir(name, parent, uid, dev):
+    """name in parent (a descriptor), no symlink followed: a folder uid owns, on filesystem dev."""
+    try:
+        fd = os.open(name, os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=parent)
+    except OSError as err:
+        raise Failed(f"cannot open {name}: {err.strerror}")
+    st = os.fstat(fd)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != uid or (dev is not None and st.st_dev != dev):
+        os.close(fd)
+        raise Failed(f"{name} is not a folder of the user's on the home's filesystem")
+    return fd
+
+
+def guest_dir(pw):
+    """(the user's fex-guest, opened as open_dir does, its filesystem)."""
+    home = os.open(pw.pw_dir, os.O_PATH | os.O_DIRECTORY | os.O_CLOEXEC)  # the password database's
+    st = os.fstat(home)
+    if st.st_uid != pw.pw_uid:
+        os.close(home)
+        raise Failed(f"{pw.pw_dir} is not {pw.pw_name}'s")
+    fd = home
+    try:
+        for name in GUEST:
+            nxt = open_dir(name, fd, pw.pw_uid, st.st_dev)
+            os.close(fd)
+            fd = nxt
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd, st.st_dev
+
+
+def request(guest, uid):
+    """(image name, our Mesa or not) from fex-guest/.kernel-request: image=<name>.sqsh, mesa=0|1."""
+    try:
+        fd = os.open(REQUEST, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=guest)
+    except OSError as err:
+        raise Failed(f"no request: {err.strerror}")
+    with os.fdopen(fd, "rb") as f:
+        st = os.fstat(f.fileno())
+        if not stat.S_ISREG(st.st_mode) or st.st_uid != uid:
+            raise Failed(f"{REQUEST} is not a file of the user's")
+        text = f.read(4096).decode("utf-8", "replace")
+    fields = dict(re.findall(r"^(image|mesa)=(.*)$", text, re.M))
+    image, mesa = fields.get("image", ""), fields.get("mesa")
+    if not IMAGE.fullmatch(image) or mesa not in ("0", "1"):
+        raise Failed(f"{REQUEST} wants image=<name>.sqsh and mesa=0 or 1")
+    return image, mesa == "1"
+
+
+def open_image(guest, name, uid, dev):
+    """name in fex-guest, read-only: a regular file uid owns, on the home's filesystem."""
+    try:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_NOCTTY | os.O_CLOEXEC, dir_fd=guest)
+    except OSError as err:
+        raise Failed(f"cannot open {name}: {err.strerror}")
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_uid != uid or st.st_dev != dev:
+        os.close(fd)
+        raise Failed(f"{name} is not a file of the user's on the home's filesystem")
+    return fd
+
+
+def loop_attach(image_fd, name):
+    """A free loop device, read-only, backed by image_fd: (its open descriptor, its path). It goes
+    away by itself once nothing has it open or mounted (LO_FLAGS_AUTOCLEAR)."""
+    ctl = os.open("/dev/loop-control", os.O_RDWR | os.O_CLOEXEC)
+    try:
+        for _ in range(16):
+            n = fcntl.ioctl(ctl, LOOP_CTL_GET_FREE)
+            dev = f"/dev/loop{n}"
+            fd = os.open(dev, os.O_RDWR | os.O_CLOEXEC)
+            # struct loop_config: fd, block_size, struct loop_info64, __reserved[8]
+            config = struct.pack("=II5Q4I64s64s32s2Q8Q", image_fd, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                                 LO_FLAGS_READ_ONLY | LO_FLAGS_AUTOCLEAR, name.encode()[:63], b"", b"",
+                                 0, 0, *([0] * 8))
+            try:
+                fcntl.ioctl(fd, LOOP_CONFIGURE, config)
+                return fd, dev
+            except OSError as err:
+                os.close(fd)
+                if err.errno != errno.EBUSY:  # EBUSY: another one took it first
+                    raise Failed(f"could not set up {dev}: {err.strerror}")
+        raise Failed("no free loop device")
+    finally:
+        os.close(ctl)
+
+
+def run_dir(uid):
+    """/run/retroforge/x86-guest/<uid>, root's (made 0700 here; the overlay reads its layers as root)."""
+    path = os.path.join(RUN, str(uid))
+    os.makedirs(path, mode=0o700, exist_ok=True)
+    st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0:
+        raise Failed(f"{path} is not root's folder")
+    return path
+
+
+def take_down(mountpoint):
+    """Unmount whatever is on mountpoint (one of root's folders in /run), lazily, top first."""
+    while any(m == mountpoint for _, m, _, _ in mountinfo()):
+        sys_umount(mountpoint)
+
+
+def layers(work, base, mesa):
+    """The overlay's lower layers, top first (LAYOUT above). <mask> and <opaque> follow from our Mesa's
+    tree alone, which cannot change before the next boot (/usr is read-only, /run goes with the boot):
+    they are made once, in a folder renamed into place, and never changed or removed after that, so an
+    overlay a game still holds after a lazy release keeps its layers as they were."""
+    tree = os.path.join(MESA, "root")
+    if not (mesa and os.path.isdir(tree)):
+        empty = os.path.join(work, "empty")
+        os.makedirs(empty, 0o755, exist_ok=True)
+        return [empty, base]
+    done = os.path.join(work, "layers")
+    if not os.path.isdir(done):
+        new = tempfile.mkdtemp(prefix=".layers-", dir=work)
+        os.chmod(new, 0o755)
+        mask, opaque = os.path.join(new, "mask"), os.path.join(new, "opaque")
+        os.mkdir(mask, 0o755)
+        os.mkdir(opaque, 0o755)
+        for folder, _, files in os.walk(tree):
+            if MARKER in files:
+                rel = os.path.relpath(folder, tree)
+                os.makedirs(os.path.join(opaque, rel), 0o755, exist_ok=True)
+                os.setxattr(os.path.join(opaque, rel), "trusted.overlay.opaque", b"y")
+                os.makedirs(os.path.join(mask, rel), 0o755, exist_ok=True)
+                os.mknod(os.path.join(mask, rel, MARKER), stat.S_IFCHR | 0o600, os.makedev(0, 0))
+        os.rename(new, done)
+    return [os.path.join(done, "mask"), tree, os.path.join(done, "opaque"), base]
+
+
+def release_root(guest):
+    """Take down every overlay of ours on fex-guest/root. Something else there is left alone. Mount ids
+    tell them apart: a FUSE mount of the user's is not even stat-able by root (no allow_other)."""
+    home = mount_id(guest)
+    while True:
+        try:
+            fd = os.open("root", os.O_PATH | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC, dir_fd=guest)
+        except FileNotFoundError:
+            return
+        except OSError as err:  # a symlink, say: nothing of ours can be there
+            raise Failed(f"cannot open fex-guest/root: {err.strerror}")
+        try:
+            if mount_id(fd) == home:
+                return  # nothing mounted there
+            if not ours(fd):
+                raise Failed("something else is mounted on fex-guest/root")
+            sys_umount(f"/proc/self/fd/{fd}")
+            log("unmounted the x86 guest")
+        finally:
+            os.close(fd)
+
+
+def cmd_mount(pw):
+    uid = pw.pw_uid
+    work = run_dir(uid)
+    base = os.path.join(work, "base")
+    guest, dev = guest_dir(pw)
+    try:
+        name, mesa = request(guest, uid)
+        release_root(guest)
+        take_down(base)
+        root = open_dir("root", guest, uid, dev)
+        try:
+            image = open_image(guest, name, uid, dev)
+            try:
+                os.makedirs(base, 0o700, exist_ok=True)
+                loop, loopdev = loop_attach(image, name)
+                try:
+                    sys_mount(loopdev, base, "squashfs")
+                finally:
+                    os.close(loop)  # the mount holds it now; on a failure, autoclear frees it
+            finally:
+                os.close(image)
+            try:
+                lower = layers(work, base, mesa)
+                sys_mount(SOURCE, f"/proc/self/fd/{root}", "overlay", "lowerdir=" + ":".join(lower))
+            except BaseException:
+                take_down(base)
+                raise
+        finally:
+            os.close(root)
+    finally:
+        os.close(guest)
+    log(f"mounted {name} on {pw.pw_name}'s fex-guest/root ({loopdev}"
+        + (", with our x86 Mesa over it)" if len(lower) > 2 else ")"))
+
+
+def cmd_release(pw):
+    uid = pw.pw_uid
+    work = run_dir(uid)
+    try:
+        guest, _ = guest_dir(pw)
+    except (Failed, OSError) as err:
+        log(f"cannot reach the user's fex-guest ({err}); releasing the image only")
+    else:
+        try:
+            release_root(guest)
+        finally:
+            os.close(guest)
+    take_down(os.path.join(work, "base"))
+    for d in glob.glob(os.path.join(glob.escape(work), ".layers-*")):  # one cut short
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def main():
+    args = sys.argv[1:]
+    if len(args) != 2 or args[0] not in ("mount", "release"):
+        print("usage: steam-x86-guest-kernel mount|release USER", file=sys.stderr)
+        return 64
+    try:
+        pw = pwd.getpwnam(args[1])
+    except KeyError:
+        log(f"no user {args[1]}")
+        return 1
+    if pw.pw_uid == 0:
+        log("not for root")
+        return 1
+    try:
+        os.makedirs(RUN, mode=0o755, exist_ok=True)
+        with open(os.path.join(RUN, f".{pw.pw_uid}.lock"), "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            (cmd_mount if args[0] == "mount" else cmd_release)(pw)
+    except (Failed, OSError) as err:
+        log(str(err))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,11 @@
+[Unit]
+Description=Kernel mount of %i's x86 guest for Steam's FEX
+# Started by /usr/lib/retroforge/steam-x86-guest (the player's, from /usr/bin/steam) through
+# 50-retroforge-x86-guest.rules, for the session's own user, and by nothing else: no [Install].
+# steam-x86-guest-kernel says what it checks. No sandboxing that gives the service a mount namespace
+# of its own (PrivateTmp=, ProtectSystem=, ProtectHome=...): its mounts have to be the user's.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/retroforge/steam-x86-guest-kernel mount %i
+TimeoutStartSec=60

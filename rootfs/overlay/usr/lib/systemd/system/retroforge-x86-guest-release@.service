@@ -1,0 +1,9 @@
+[Unit]
+Description=Release %i's kernel-mounted x86 guest
+# Started by /usr/lib/retroforge/steam-x86-guest once the last steam is gone, through
+# 50-retroforge-x86-guest.rules; no [Install]. Same mount namespace as the mount unit.
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/retroforge/steam-x86-guest-kernel release %i
+TimeoutStartSec=60

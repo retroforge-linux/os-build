@@ -56,6 +56,16 @@
 # and without a payload, the image is mounted on fex-guest/root as it is, and one line says why.
 # Released together: the overlay, then the base.
 #
+# THE KERNEL'S MOUNTS FIRST: pressure-vessel's probes before every x86 game run ~4 s faster on the
+# kernel's squashfs and overlayfs than through squashfuse and fuse-overlayfs, and only root can mount
+# those. So `mount` writes fex-guest/.kernel-request (image=<file>, mesa=0|1: the same choice of image
+# and of our Mesa as above) and starts retroforge-x86-guest-mount@<user>.service, which runs
+# /usr/lib/retroforge/steam-x86-guest-kernel as root (it says what it checks, and the layout: the
+# image on /run/retroforge/x86-guest/<uid>/base, an overlay with source rf-x86-guest on fex-guest/root).
+# 50-retroforge-x86-guest.rules grants that to the active local session only; anywhere else (an SSH
+# login), or when it fails, it mounts with FUSE as above and says why. A kernel mount is released by
+# retroforge-x86-guest-release@<user>.service; fusermount cannot.
+#
 # squashfuse starts with TERM and INT ignored, as PortMaster's runtimes do (portmaster/bin/mount), so
 # OGUI's Exit cannot pull the tree out from under a game that is still shutting down. It ends with a
 # lazy unmount (fusermount3 -u -z): whatever still has a file open keeps it, and squashfuse exits once
@@ -66,13 +76,15 @@
 #
 # TEST SEAMS (tests/test-steam-x86-guest.sh): RETROFORGE_STEAM_X86_GUEST_DIR (also set by
 # /usr/bin/steam), RETROFORGE_STEAM_X86_GUEST_PIN, RETROFORGE_MOUNTS, RETROFORGE_SQUASHFUSE,
-# RETROFORGE_FUSERMOUNT, RETROFORGE_XXHSUM, RETROFORGE_X86_MESA, RETROFORGE_FUSE_OVERLAYFS.
+# RETROFORGE_FUSERMOUNT, RETROFORGE_XXHSUM, RETROFORGE_X86_MESA, RETROFORGE_FUSE_OVERLAYFS,
+# RETROFORGE_SYSTEMCTL, RETROFORGE_X86_GUEST_KERNEL (0: FUSE only).
 import fcntl
 import glob
 import hashlib
 import http.client
 import json
 import os
+import pwd
 import re
 import select
 import shutil
@@ -94,6 +106,8 @@ FUSERMOUNT = os.environ.get("RETROFORGE_FUSERMOUNT", "fusermount3")
 FUSE_OVERLAYFS = os.environ.get("RETROFORGE_FUSE_OVERLAYFS", "fuse-overlayfs")
 MESA = os.environ.get("RETROFORGE_X86_MESA", "/usr/lib/retroforge/x86-mesa")
 XXHSUM = os.environ.get("RETROFORGE_XXHSUM", "xxhsum")
+SYSTEMCTL = os.environ.get("RETROFORGE_SYSTEMCTL", "systemctl")
+KERNEL = os.environ.get("RETROFORGE_X86_GUEST_KERNEL", "1") != "0"
 ROOT = os.path.join(GUEST, "root")
 BASE = os.path.join(GUEST, "base")  # the image, under our x86 Mesa on ROOT
 CURRENT = os.path.join(GUEST, "current")
@@ -101,6 +115,9 @@ MOUNTED = os.path.join(GUEST, ".mounted")
 USERS = os.path.join(GUEST, ".users.lock")
 MOUNT_LOCK = os.path.join(GUEST, ".mount.lock")
 FETCH_LOCK = os.path.join(GUEST, ".fetch.lock")
+REQUEST = os.path.join(GUEST, ".kernel-request")  # what steam-x86-guest-kernel mounts
+KERNEL_FS = "overlay"  # its mount on ROOT; FUSE ones are fuse.squashfuse, fuse.fuse-overlayfs
+UNIT_WAIT = 60.0
 SPARE = 256 << 20  # left free in /home after the download
 MOUNT_WAIT = 5.0
 CHANNEL_WAIT = 15.0  # seconds for the links file; the fetch runs detached, so this never delays a steam
@@ -226,12 +243,21 @@ def unescape(field):
     return re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), field)
 
 
-def mounted(path=ROOT):
+def fstype(path=ROOT):
+    """The type of the filesystem mounted on path (the last one listed: the top), or None."""
+    found = None
     try:
         with open(MOUNTS, encoding="utf-8", errors="replace") as f:
-            return any(len(fl) > 1 and unescape(fl[1]) == path for fl in (line.split() for line in f))
+            for fl in (line.split() for line in f):
+                if len(fl) > 2 and unescape(fl[1]) == path:
+                    found = fl[2]
     except OSError:
-        return False
+        pass
+    return found
+
+
+def mounted(path=ROOT):
+    return fstype(path) is not None
 
 
 def mounted_image():
@@ -253,10 +279,52 @@ def working(path=ROOT):
         return False
 
 
+def unit(action):
+    """Run root's retroforge-x86-guest-<action>@<user>.service (steam-x86-guest-kernel <action>) and wait
+    for it; True when it succeeded."""
+    try:
+        name = f"retroforge-x86-guest-{action}@{pwd.getpwuid(os.getuid()).pw_name}.service"
+    except KeyError:
+        log(f"uid {os.getuid()} has no name for retroforge-x86-guest-{action}@")
+        return False
+    try:
+        res = subprocess.run([SYSTEMCTL, "--no-ask-password", "start", name], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, timeout=UNIT_WAIT)
+    except (OSError, subprocess.SubprocessError) as err:
+        log(f"could not start {name}: {err}")
+        return False
+    if res.returncode != 0:
+        log(f"{name}: {' '.join(res.stderr.split()) or f'exit {res.returncode}'}")
+        return False
+    return True
+
+
+def kernel_mount(image, tree):
+    """Have root mount image on ROOT with the kernel's squashfs and overlayfs (our x86 Mesa over it when
+    tree); True when it serves the tree afterwards."""
+    if not KERNEL:
+        return False
+    new = REQUEST + ".new"
+    with open(new, "w", encoding="utf-8") as f:
+        f.write(f"image={os.path.basename(image)}\nmesa={1 if tree else 0}\n")
+    os.replace(new, REQUEST)
+    if not unit("mount"):
+        log("mounting with FUSE instead")
+        return False
+    if serving(ROOT, image):
+        return True
+    fusermount_u()
+    return False
+
+
 def fusermount_u():
-    """Release ROOT, then the image under our x86 Mesa when one is mounted on BASE."""
+    """Release ROOT (a kernel mount through root's unit), then the image under our x86 Mesa when one is
+    mounted on BASE."""
+    kernel = fstype(ROOT) == KERNEL_FS
+    if kernel:
+        unit("release")
     for path in (ROOT, BASE):
-        if path == BASE and not mounted(BASE):
+        if (path == BASE and not mounted(BASE)) or (path == ROOT and kernel):
             continue
         try:
             subprocess.run([FUSERMOUNT, "-u", "-z", path], stdin=subprocess.DEVNULL,
@@ -331,10 +399,11 @@ def do_mount(image):
         fusermount_u()
     tree = payload(image)
     os.makedirs(ROOT, exist_ok=True)
-    if tree is None:
+    kernel = kernel_mount(image, tree)
+    if not kernel and tree is None:
         if not fuse([SQUASHFUSE, image, ROOT], image) or not serving(ROOT, image):
             return False
-    else:
+    elif not kernel:
         os.makedirs(BASE, exist_ok=True)
         if not fuse([SQUASHFUSE, image, BASE], image) or not serving(BASE, image):
             fusermount_u()
@@ -345,7 +414,8 @@ def do_mount(image):
             return False
     with open(MOUNTED, "w", encoding="utf-8") as f:
         f.write(image + "\n")
-    log(f"mounted {os.path.basename(image)} on {ROOT}" + (", with our x86 Mesa over it" if tree else ""))
+    log(f"mounted {os.path.basename(image)} on {ROOT}" + (", with our x86 Mesa over it" if tree else "")
+        + (" (the kernel's squashfs and overlayfs)" if kernel else ""))
     return True
 
 
