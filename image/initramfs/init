@@ -255,6 +255,50 @@ if [ -n "$VARSPEC" ] && [ -f /usr/lib/retroforge/factory-reset-hook.sh ] && _rde
 fi
 
 # ---------------------------------------------------------------------------------------------
+# Check /var before mounting it
+# ---------------------------------------------------------------------------------------------
+# Nothing else checks /var (systemd-fsck only sees fstab mounts), and ext4 keeps writing after an
+# error. -p replays the journal and makes the safe fixes. A replayed journal means an unclean stop,
+# and writes a dropped-out disk acknowledged and then lost leave no error flag, so -p -f then checks
+# all of it (Air X SD, cold: 108 ms, preen 46 ms). Exit 4 asks for a manual fsck nobody can run
+# here, so -f -y takes every fix. The mount below runs whatever the result.
+fsck_log() {  # <log|warn> <e2fsck output>: one kmsg line per output line, at most 40
+  printf '%s\n' "$2" | {
+    n=0
+    while IFS= read -r line; do
+      n=$((n + 1)); [ "$n" -le 40 ] && "$1" "e2fsck: $line"
+    done
+    [ "$n" -le 40 ] || "$1" "e2fsck: $((n - 40)) more lines not logged"
+  }
+}
+
+fsck_var() {  # <dev>
+  local out rc pass=-p
+  command -v e2fsck >/dev/null || { warn "no e2fsck in the initramfs; /var mounted unchecked"; return 0; }
+  out=$(e2fsck -p "$1" 2>&1); rc=$?
+  case $out in
+    *'recovering journal'*)
+      fsck_log warn "$out"
+      warn "/var ($1) was not cleanly unmounted; checking all of it"
+      pass='-p -f'
+      out=$(e2fsck -p -f "$1" 2>&1); rc=$? ;;
+  esac
+  if [ "$rc" -eq 0 ]; then
+    fsck_log log "$out"
+    return 0
+  fi
+  fsck_log warn "$out"
+  warn "e2fsck $pass on /var ($1) exited $rc"
+  [ $((rc & 4)) -ne 0 ] || return 0
+  [ -d /run/retroforge/splash ] && printf 'Repairing system storage\n' >/run/retroforge/splash/status
+  out=$(e2fsck -f -y "$1" 2>&1); rc=$?
+  fsck_log warn "$out"
+  warn "e2fsck -f -y on /var ($1) exited $rc"
+  [ -d /run/retroforge/splash ] && printf 'Starting RetroForge\n' >/run/retroforge/splash/status
+  return 0
+}
+
+# ---------------------------------------------------------------------------------------------
 # /var + the /etc overlay
 # ---------------------------------------------------------------------------------------------
 # Kept inline rather than in a function: a $(...) capture would run the mounts in a subshell
@@ -264,7 +308,7 @@ if [ -z "$VARSPEC" ]; then
   degrade "no retroforge.var= on the kernel cmdline"
 elif ! VARDEV=$(resolve "$VARSPEC"); then
   degrade "var device '$VARSPEC' never appeared after 30s"
-elif ! mount -t ext4 "$VARDEV" "$SYSROOT/var"; then
+elif fsck_var "$VARDEV"; ! mount -t ext4 "$VARDEV" "$SYSROOT/var"; then
   degrade "cannot mount var $VARDEV at $SYSROOT/var"
 else
   # upper and work MUST share a filesystem (overlayfs rename requirement) — both live on /var.

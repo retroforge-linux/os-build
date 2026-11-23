@@ -113,7 +113,10 @@ ESP_MARKER="/EFI/steamos/grubenv"
 # cgroup_favordynmods=1: moving a process between cgroups otherwise waits out an RCU grace period,
 # 10-20 ms on the Air X with lazy RCU, and every login, scope and game launch moves one; with it the
 # move is ~free, for a slightly costlier fork and exit (2026-10-31).
-BOOT_CMDLINE="quiet loglevel=3 video=efifb:off console=tty0 cgroup.memory=nokmem,nosocket nosoftlockup panic=5 cpuidle.governor=teo cgroup_favordynmods=1"
+# fsck.repair=yes: systemd-fsck answers yes for /home and the ESP. In its default preen mode,
+# damage it will not fix alone fails the check, and /home (nofail) is then simply not mounted:
+# a session with no ROMs, saves or Steam, and nobody at a console to run fsck.
+BOOT_CMDLINE="quiet loglevel=3 video=efifb:off console=tty0 cgroup.memory=nokmem,nosocket nosoftlockup panic=5 cpuidle.governor=teo cgroup_favordynmods=1 fsck.repair=yes"
 
 # The installed system only, not the installer (which prints its failure log to tty1 and so needs
 # the console there): no fbdev emulation, so the kernel puts nothing on the panel itself and the boot

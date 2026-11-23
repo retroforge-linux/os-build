@@ -31,7 +31,8 @@ IMG="$OUT/initramfs.cpio.zst"
 # /bin/sh is bash (the base has no busybox); the rest is util-linux + coreutils. partx resolves
 # the PARTUUID= specs (root=, retroforge.var=, retroforge.efi=/steamos.efi=) from each disk's own
 # partition table, and findfs the rest, both without udev; mkdir creates the overlay upper/work and
-# the /efi mountpoint on first boot; sleep paces the device-probe poll.
+# the /efi mountpoint on first boot; sleep paces the device-probe poll; e2fsck checks /var before
+# it is mounted, since nothing else ever does.
 #
 # The init's own mounts are all INSIDE the btrfs root ($SYSROOT/efi, $SYSROOT/var), so they survive
 # switch_root attached to the new root's filesystem. umount and chroot are the factory reset hook's
@@ -39,7 +40,7 @@ IMG="$OUT/initramfs.cpio.zst"
 # request, and on a request binds /dev /proc /sys /run into the root, chroots into it to run the OS's
 # /usr/lib/retroforge/factory-reset, and unbinds all of it again -- nothing it mounts reaches
 # switch_root (a still-mounted /esp there was design C's orphan-and-double-mount problem).
-BINS=(bash mount umount switch_root partx findfs mkdir sleep chroot)
+BINS=(bash mount umount switch_root partx findfs mkdir sleep chroot e2fsck)
 
 # The boot splash. Three files, staged whole rather than resolved through copy_deps() below,
 # because the drawer is STATIC on purpose (apps/retroforge-splash/src/retroforge-splash.c explains
