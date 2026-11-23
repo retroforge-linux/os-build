@@ -800,6 +800,16 @@ Megabonk on Vulkan (`-force-vulkan`) found the device's Turnip and opened its wi
 minute in: `Vulkan - Out of memory! (allocating memory for buffer)`, SIGSEGV. On x86 Turnip it ran
 (17 frames a second in its menu, 106% of a core).
 
+That out-of-memory was not the thunk's (2026-11-23, Air X). No Vulkan call failed and memory was
+plentiful: Unity stops using a memory type once its usage passes ~92% of the budget it is shown, and
+it was shown a 512 MiB heap. The shell's VRAM report limit (`retroforge-session` starts OGUI with
+mesa's vram-report-limit layer on) reached the game: OGUI's environment was `/usr/bin/steam`'s, a
+client started there copied it, and the host side's loader loads the arm64 layer (the x86 guest has
+none, so x86 Turnip was spared). With the layer off for the host side, Megabonk ran on the thunk
+past the 2-minute test. `/usr/bin/steam` now drops the three variables, as `retroforge-launch` does
+for emulators; Proton's DXVK had the same 512 MiB heap whenever they came through. The Vulkan thunk
+is still not turned on for games.
+
 ## Proton-CachyOS arm64, and DXVK-Sarek for the Adreno 610/613 (downloaded, not shipped)
 
 **Why the A610 needs it (2026-10-16).** Turnip in Mesa 26.2.5 (`packages/mesa`) gives the A610 only

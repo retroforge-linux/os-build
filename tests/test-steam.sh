@@ -582,9 +582,12 @@ wrap 0 -gamepadui -silent steam://rungameid/42
 
 CASE="keep: a game, Steam not running"
 reset_keep
-bg_wrap RETROFORGE_STEAM_KEEP=on OGUI_ID=Hades DISPLAY=:1 -- -gamepadui -silent steam://rungameid/42
+bg_wrap RETROFORGE_STEAM_KEEP=on OGUI_ID=Hades DISPLAY=:1 ENABLE_MESA_VRAM_REPORT_LIMIT=1 VK_VRAM_REPORT_LIMIT_HEAP_SIZE=512 \
+  VK_VRAM_REPORT_LIMIT_DEVICE_ID=6010000 -- -gamepadui -silent steam://rungameid/42
 until_true '[ -s "$W/sdrun.args" ]'
 A="$(cat "$W/sdrun.args" 2>/dev/null)"
+! grep -q -- "VRAM_REPORT_LIMIT" <<<"$A" \
+  && ok "not with the shell's VRAM report limit (its games would see a 512 MiB heap)" || bad "systemd-run: $A"
 grep -qx -- "--user" <<<"$A" && grep -qx -- "--unit=retroforge-steam" <<<"$A" && grep -qx -- "--collect" <<<"$A" \
   && ok "starts the user unit retroforge-steam.service" || bad "systemd-run: $A"
 grep -qx -- "--setenv=OGUI_ID=Steam" <<<"$A" && ! grep -q -- "--setenv=OGUI_ID=Hades" <<<"$A" \
