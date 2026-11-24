@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 14:00:00 -0800
+Subject: [PATCH] interconnect: qcom: icc-rpm: program all three bits of the
+ BIMC priority fields
+
+The PRIOLVL and AREQPRIO fields of the BIMC BKE health registers are
+three bits wide on the SM6115: Qualcomm's bengal BIMC definitions give
+the registers a mask of 0x80000707, and on a MANGMI Air X a write of
+0x80000707 to the TCU port's HEALTH0 reads back unchanged.
+
+icc-rpm masks the fields with 0x3 and 0x300, so a priority of 4 to 7
+loses its top bit. The TCU ports of SM6115, QCM2290 and Shikra ask for
+priority 6 and got 2, below what the vendor driver gives the SMMU's
+table walks.
+
+Widen the masks to 0x7 and 0x700. The other icc-rpm tables use
+priorities of 3 or less, so their writes do not change.
+
+Tested on a MANGMI Air X with 0139: all four TCU health registers read
+0x606 after boot and after three suspends to vmin.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/interconnect/qcom/icc-rpm.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/interconnect/qcom/icc-rpm.c b/drivers/interconnect/qcom/icc-rpm.c
+index b3da614..3de2e68 100644
+--- a/drivers/interconnect/qcom/icc-rpm.c
++++ b/drivers/interconnect/qcom/icc-rpm.c
+@@ -29,8 +29,8 @@
+ #define M_BKE_HEALTH_CFG_ADDR(i, n)	(M_BKE_REG_BASE(n) + 0x40 + (0x4 * i))
+ 
+ #define M_BKE_HEALTH_CFG_LIMITCMDS_MASK	0x80000000
+-#define M_BKE_HEALTH_CFG_AREQPRIO_MASK	0x300
+-#define M_BKE_HEALTH_CFG_PRIOLVL_MASK	0x3
++#define M_BKE_HEALTH_CFG_AREQPRIO_MASK	0x700
++#define M_BKE_HEALTH_CFG_PRIOLVL_MASK	0x7
+ #define M_BKE_HEALTH_CFG_AREQPRIO_SHIFT	0x8
+ #define M_BKE_HEALTH_CFG_LIMITCMDS_SHIFT 0x1f
+ 

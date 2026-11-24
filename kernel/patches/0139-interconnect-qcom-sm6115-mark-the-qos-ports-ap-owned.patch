@@ -1,0 +1,215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 13:30:00 -0800
+Subject: [PATCH] interconnect: qcom: sm6115: mark the QoS ports AP-owned
+
+The driver describes the QoS of 21 BIMC and SNoC ports, with the same
+ports, priorities and urgent forwarding as Qualcomm's bengal driver in
+the Air X's stock 5.15 kernel (qnoc-bengal.ko, whose 22nd port is UFS),
+but marks none of them ap_owned. icc-rpm programs QoS registers only
+for ap_owned nodes, so the table was never written and the ports kept
+what the boot chain left. Read back on a MANGMI Air X:
+
+  BIMC  apps_proc  BKE on, priority 0         (table: fixed, 0)
+        qnm_gpu    BKE off                    (table: fixed, 0)
+        tcu_0      BKE off                    (table: fixed, 6)
+  SNoC  every port default priority 0         (table: 2 to 4)
+        camera_nrt, venus_cpu, pimem, crypto
+                   urgent forwarding on       (table: off)
+
+So display and camera requests had no more priority than SD, USB or
+QUP traffic, and SMMU table walks none over the GPU.
+
+Mark every port with a QoS description ap_owned, as qcm2290.c does for
+the same NoCs and as Qualcomm's 4.19 bus driver marked them. icc-rpm
+then writes the registers at probe with the SNoC interface clocks on.
+The stock 5.15 driver programs a port only after its first bandwidth
+vote, and its BIMC writes pass regmap_update_bits() the mask and value
+swapped, so there a priority of 0 writes nothing.
+
+As on qcm2290, AP-owned nodes no longer send their own master bandwidth
+to the RPM (apps_proc, snoc_bimc, crypto, qup0, ipa, sdc1, sdc2); the
+bus clocks are still voted from the aggregated bandwidth of every node.
+
+Tested on a MANGMI Air X: every register matches the table after boot
+and after three suspends to vmin. With the GPU and four big cores both
+copying, the GPU got 2.80-2.91 GB/s against 2.77-2.78 before and the
+cores 5.8-6.0 against 5.4-5.7; SD (85-88 MB/s) and eMMC reads unchanged.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/interconnect/qcom/sm6115.c | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/drivers/interconnect/qcom/sm6115.c b/drivers/interconnect/qcom/sm6115.c
+index e1cd898..d91968f 100644
+--- a/drivers/interconnect/qcom/sm6115.c
++++ b/drivers/interconnect/qcom/sm6115.c
+@@ -128,6 +128,7 @@ static struct qcom_icc_node apps_proc = {
+ 	.id = SM6115_MASTER_AMPSS_M0,
+ 	.channels = 1,
+ 	.buswidth = 16,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 0,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.prio_level = 0,
+@@ -147,6 +148,7 @@ static struct qcom_icc_node mas_snoc_bimc_rt = {
+ 	.id = SM6115_MASTER_SNOC_BIMC_RT,
+ 	.channels = 1,
+ 	.buswidth = 16,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 2,
+ 	.qos.qos_mode = NOC_QOS_MODE_BYPASS,
+ 	.qos.areq_prio = 0,
+@@ -162,6 +164,7 @@ static struct qcom_icc_node mas_snoc_bimc_nrt = {
+ 	.id = SM6115_MASTER_SNOC_BIMC_NRT,
+ 	.channels = 1,
+ 	.buswidth = 16,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 3,
+ 	.qos.qos_mode = NOC_QOS_MODE_BYPASS,
+ 	.qos.areq_prio = 0,
+@@ -177,6 +180,7 @@ static struct qcom_icc_node mas_snoc_bimc = {
+ 	.id = SM6115_MASTER_SNOC_BIMC,
+ 	.channels = 1,
+ 	.buswidth = 16,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 6,
+ 	.qos.qos_mode = NOC_QOS_MODE_BYPASS,
+ 	.qos.areq_prio = 0,
+@@ -192,6 +196,7 @@ static struct qcom_icc_node qnm_gpu = {
+ 	.id = SM6115_MASTER_GRAPHICS_3D,
+ 	.channels = 1,
+ 	.buswidth = 32,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 1,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.prio_level = 0,
+@@ -207,6 +212,7 @@ static struct qcom_icc_node tcu_0 = {
+ 	.id = SM6115_MASTER_TCU_0,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 4,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.prio_level = 6,
+@@ -241,6 +247,7 @@ static struct qcom_icc_node crypto_c0 = {
+ 	.id = SM6115_MASTER_CRYPTO_CORE0,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 22,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -331,6 +338,7 @@ static struct qcom_icc_node qnm_camera_nrt = {
+ 	.id = SM6115_MASTER_CAMNOC_SF,
+ 	.channels = 1,
+ 	.buswidth = 32,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 4,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 3,
+@@ -345,6 +353,7 @@ static struct qcom_icc_node qxm_venus0 = {
+ 	.id = SM6115_MASTER_VIDEO_P0,
+ 	.channels = 1,
+ 	.buswidth = 16,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 9,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 3,
+@@ -360,6 +369,7 @@ static struct qcom_icc_node qxm_venus_cpu = {
+ 	.id = SM6115_MASTER_VIDEO_PROC,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 13,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 4,
+@@ -378,6 +388,7 @@ static struct qcom_icc_node qnm_camera_rt = {
+ 	.id = SM6115_MASTER_CAMNOC_HF,
+ 	.channels = 1,
+ 	.buswidth = 32,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 10,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 3,
+@@ -393,6 +404,7 @@ static struct qcom_icc_node qxm_mdp0 = {
+ 	.id = SM6115_MASTER_MDP_PORT0,
+ 	.channels = 1,
+ 	.buswidth = 16,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 5,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 3,
+@@ -433,6 +445,7 @@ static struct qcom_icc_node qhm_tic = {
+ 	.id = SM6115_MASTER_TIC,
+ 	.channels = 1,
+ 	.buswidth = 4,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 8,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -483,6 +496,7 @@ static struct qcom_icc_node qxm_pimem = {
+ 	.id = SM6115_MASTER_PIMEM,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 20,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -497,6 +511,7 @@ static struct qcom_icc_node qhm_qdss_bam = {
+ 	.id = SM6115_MASTER_QDSS_BAM,
+ 	.channels = 1,
+ 	.buswidth = 4,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 2,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -522,6 +537,7 @@ static struct qcom_icc_node qhm_qup0 = {
+ 	.id = SM6115_MASTER_QUP_0,
+ 	.channels = 1,
+ 	.buswidth = 4,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 0,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -536,6 +552,7 @@ static struct qcom_icc_node qxm_ipa = {
+ 	.id = SM6115_MASTER_IPA,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 3,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -550,6 +567,7 @@ static struct qcom_icc_node xm_qdss_etr = {
+ 	.id = SM6115_MASTER_QDSS_ETR,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 12,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -564,6 +582,7 @@ static struct qcom_icc_node xm_sdc1 = {
+ 	.id = SM6115_MASTER_SDCC_1,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 17,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -578,6 +597,7 @@ static struct qcom_icc_node xm_sdc2 = {
+ 	.id = SM6115_MASTER_SDCC_2,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 23,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
+@@ -592,6 +612,7 @@ static struct qcom_icc_node xm_usb3_0 = {
+ 	.id = SM6115_MASTER_USB3,
+ 	.channels = 1,
+ 	.buswidth = 8,
++	.qos.ap_owned = true,
+ 	.qos.qos_port = 24,
+ 	.qos.qos_mode = NOC_QOS_MODE_FIXED,
+ 	.qos.areq_prio = 2,
