@@ -259,6 +259,8 @@ with open(os.path.join(os.path.dirname(CALLS), "oom"), "a") as f:
     f.write(json.dumps(["boot" if "wineboot" in sys.argv else "game", open("/proc/self/oom_score_adj").read().strip(),
                         open(f"/proc/{os.getppid()}/oom_score_adj").read().strip()]) + "\n")
 w = os.environ.get("FAKE_WATCH")
+with open(os.path.join(os.path.dirname(CALLS), "vram"), "w") as f:
+    f.write(" ".join(k for k in os.environ if "VRAM_REPORT_LIMIT" in k))
 call({**{k: os.environ.get(k) for k in ("UMU_ID", "STORE", "PROTONFIXES_DISABLE")}, **({"watch": os.path.exists(w)} if w else {})}, os.environ.get("STEAM_FEX_TSOENABLED", ""), os.environ.get("STEAM_COMPAT_INSTALL_PATH", ""), os.environ.get("STEAM_COMPAT_LIBRARY_PATHS", ""),
      os.getcwd(), os.environ.get("STEAM_COMPAT_DATA_PATH", ""), os.environ.get("STEAM_COMPAT_CLIENT_INSTALL_PATH", ""),
      os.environ.get("STEAM_COMPAT_TOOL_PATHS", ""))
@@ -822,6 +824,11 @@ json.dump({"gog-1": {"tso": "off"}}, open(choices, "w"))
 reset_calls()
 store("gog", "launch", "1")
 ok(game_run(calls())[-7] == "0", "off when the player turned it off for the game", str(game_run(calls())[-7:]))
+reset_calls()
+store("gog", "launch", "1", env={"ENABLE_MESA_VRAM_REPORT_LIMIT": "1", "VK_VRAM_REPORT_LIMIT_HEAP_SIZE": "512",
+                                 "VK_VRAM_REPORT_LIMIT_DEVICE_ID": "0x5143:0x06010000"})
+vram = open(os.path.join(os.path.dirname(CALLS), "vram")).read()
+ok(game_run(calls()) and vram == "", "not with the shell's VRAM report limit (OGUI's environment: DXVK saw a 512 MiB heap)", repr(vram))
 valve = os.path.join(HOME, "no-steam", "steamapps", "common", "Proton Experimental (ARM64)")
 os.makedirs(valve)
 open(os.path.join(valve, "proton"), "w").close()

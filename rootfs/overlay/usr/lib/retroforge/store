@@ -102,6 +102,14 @@ import zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "python"))  # /usr/lib/retroforge/python
 import chromium_setup  # noqa: E402
 import chromium_signin  # noqa: E402
+from launch_common import VRAM_REPORT_LIMIT_VARS  # noqa: E402
+
+# The shell's VRAM report stays the shell's: OGUI starts this with its environment, mesa's
+# vram-report-limit layer on (a 512 MiB heap on a board under 4 GiB, retroforge-session), and every
+# Proton run here starts from this environment, so a game's DXVK saw that heap. retroforge-launch and
+# /usr/bin/steam drop the same three.
+for _name in VRAM_REPORT_LIMIT_VARS:
+    os.environ.pop(_name, None)
 
 DATA_HOME = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
 CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
