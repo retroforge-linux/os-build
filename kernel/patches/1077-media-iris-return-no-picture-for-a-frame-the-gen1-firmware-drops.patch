@@ -1,0 +1,41 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 12:27:47 -0800
+Subject: [PATCH 2/3] media: iris: return no picture for a frame the gen1
+ firmware drops
+
+For a frame that is decoded but not shown, such as a VP9 alt-ref frame
+packed in a superframe, the gen1 firmware returns the OUTPUT2 buffer with
+HFI_BUFFERFLAG_DROP_FRAME and the filled length of a whole picture
+(3133440 bytes at 1080p). iris flagged the buffer V4L2_BUF_FLAG_ERROR
+but kept that length and the timestamp. Chromium's stateful decoder
+outputs every CAPTURE buffer whose bytesused is not zero and does not
+look at the error flag.
+
+venus returns such a buffer with no payload and no timestamp, and
+msm_vidc with no payload. Do the same. Valve's startup_machine.webm, a
+clip the Steam client plays, has 11 hidden frames in 94 packets.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+index bfd7495bf44f..b28617469123 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+@@ -519,8 +519,12 @@ static void iris_hfi_gen1_session_ftb_done(struct iris_inst *inst, void *packet)
+ 	if (hfi_flags & HFI_BUFFERFLAG_DATACORRUPT)
+ 		flags |= V4L2_BUF_FLAG_ERROR;
+ 
+-	if (hfi_flags & HFI_BUFFERFLAG_DROP_FRAME)
++	/* A frame not to be shown (VP9 hidden frame): no picture, as on venus */
++	if (hfi_flags & HFI_BUFFERFLAG_DROP_FRAME) {
+ 		flags |= V4L2_BUF_FLAG_ERROR;
++		buf->data_size = 0;
++		buf->timestamp = 0;
++	}
+ 
+ 	buf->flags |= flags;
+ 

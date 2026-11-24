@@ -1,0 +1,167 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 12:27:47 -0800
+Subject: [PATCH 3/3] media: iris: keep a gen1 decoder session across a seek
+
+When a video loops or seeks, Chromium drains the decoder (DEC_CMD_STOP,
+the LAST buffer, DEC_CMD_START), restarts both queues (it does that
+after every drain, for venus), and for the seek stops and starts both
+queues again. With the CAPTURE queue already stopped, iris's gen1 stop
+sent HFI STOP and RELEASE_RESOURCES, and the next STREAMON rebuilt the
+session: properties, internal buffers, LOAD_RESOURCES, START.
+
+AR50_LITE's firmware does not decode again after that. With the input
+internal buffers set a second time beside the ones it still held it
+crashed (session error 0x1004, then a sys error); with them released
+first it accepted buffers and never parsed another frame. The video in
+the Steam client stopped after its first pass, at 94 of 300 frames.
+
+Do as venus and msm_vidc do:
+ - on stop, flush a loaded session and keep it, and release it (STOP,
+   RELEASE_RESOURCES) at close;
+ - on STREAMON of the input queue, only resume such a session;
+ - when its CAPTURE queue restarts, send SESSION_CONTINUE before the DPB
+   buffers are queued, as venus's vdec_start_capture() does;
+ - give gen1 a session_resume_drain, SESSION_CONTINUE, so DEC_CMD_START
+   after a drain resumes the firmware (msm_vidc sends it on every start).
+
+Only gen1 sets IRIS_INST_SUB_LOAD_RESOURCES, so gen2 is unchanged.
+
+Tested on a MANGMI Air X (SM6115, venus-6.0) in the Steam client with
+startup_machine.webm (1080p VP9) looping: 282-296 of 300 frames in 10 s,
+0-2 dropped, no firmware errors, against 300 in software; the web
+helper used 92-99% of a core against 120-128% in software. ffmpeg
+decodes H.264, HEVC and VP9 bit-exact. SM8250 takes the same path and is
+untested.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ .../qcom/iris/iris_hfi_gen1_command.c         | 47 ++++++++++---------
+ drivers/media/platform/qcom/iris/iris_vdec.c  | 17 +++++++
+ 2 files changed, 43 insertions(+), 21 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+index f6e9cbfccd09..3688361c67e0 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+@@ -143,6 +143,23 @@ static int iris_hfi_gen1_session_close(struct iris_inst *inst)
+ {
+ 	struct hfi_session_pkt packet;
+ 
++	if (inst->domain == DECODER &&
++	    inst->sub_state & IRIS_INST_SUB_LOAD_RESOURCES) {
++		reinit_completion(&inst->completion);
++		iris_hfi_gen1_packet_session_cmd(inst, &packet, HFI_CMD_SESSION_STOP);
++		if (!iris_hfi_queue_cmd_write(inst->core, &packet, packet.shdr.hdr.size))
++			iris_wait_for_session_response(inst, false);
++
++		reinit_completion(&inst->completion);
++		iris_hfi_gen1_packet_session_cmd(inst, &packet,
++						 HFI_CMD_SESSION_RELEASE_RESOURCES);
++		if (!iris_hfi_queue_cmd_write(inst->core, &packet, packet.shdr.hdr.size))
++			iris_wait_for_session_response(inst, false);
++
++		iris_inst_change_sub_state(inst, IRIS_INST_SUB_LOAD_RESOURCES, 0);
++		reinit_completion(&inst->completion);
++	}
++
+ 	iris_hfi_gen1_packet_session_cmd(inst, &packet, HFI_CMD_SYS_SESSION_END);
+ 
+ 	return iris_hfi_queue_cmd_write(inst->core, &packet, packet.shdr.hdr.size);
+@@ -194,7 +211,14 @@ static int iris_hfi_gen1_session_stop(struct iris_inst *inst, u32 plane)
+ 	int ret = 0;
+ 
+ 	if (inst->domain == DECODER) {
+-		if (inst->state == IRIS_INST_STREAMING) {
++		/*
++		 * Keep a loaded session across a stop of both queues (a seek), as
++		 * venus and msm_vidc do: flush it. A session stopped and released
++		 * here does not decode again after LOAD_RESOURCES and START on
++		 * AR50_LITE's gen1 firmware; it is released at close instead.
++		 */
++		if (inst->state == IRIS_INST_STREAMING ||
++		    inst->sub_state & IRIS_INST_SUB_LOAD_RESOURCES) {
+ 			if (V4L2_TYPE_IS_OUTPUT(plane))
+ 				flush_type = HFI_FLUSH_ALL;
+ 			else if (V4L2_TYPE_IS_CAPTURE(plane))
+@@ -212,26 +236,6 @@ static int iris_hfi_gen1_session_stop(struct iris_inst *inst, u32 plane)
+ 				inst->flush_responses_pending++;
+ 				ret = iris_wait_for_session_response(inst, true);
+ 			}
+-		} else if (inst->sub_state & IRIS_INST_SUB_LOAD_RESOURCES) {
+-			reinit_completion(&inst->completion);
+-			iris_hfi_gen1_packet_session_cmd(inst, &pkt, HFI_CMD_SESSION_STOP);
+-			ret = iris_hfi_queue_cmd_write(core, &pkt, pkt.shdr.hdr.size);
+-			if (!ret)
+-				ret = iris_wait_for_session_response(inst, false);
+-
+-			reinit_completion(&inst->completion);
+-			iris_hfi_gen1_packet_session_cmd(inst, &pkt,
+-							 HFI_CMD_SESSION_RELEASE_RESOURCES);
+-			ret = iris_hfi_queue_cmd_write(core, &pkt, pkt.shdr.hdr.size);
+-			if (!ret)
+-				ret = iris_wait_for_session_response(inst, false);
+-
+-			iris_inst_change_sub_state(inst, IRIS_INST_SUB_LOAD_RESOURCES, 0);
+-
+-			iris_helper_buffers_done(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE,
+-						 VB2_BUF_STATE_ERROR);
+-			iris_helper_buffers_done(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE,
+-						 VB2_BUF_STATE_ERROR);
+ 		}
+ 	} else {
+ 		if (inst->state == IRIS_INST_STREAMING ||
+@@ -1128,6 +1132,7 @@ static const struct iris_hfi_session_ops iris_hfi_gen1_session_ops = {
+ 	.session_queue_buf = iris_hfi_gen1_session_queue_buffer,
+ 	.session_release_buf = iris_hfi_gen1_session_unset_buffers,
+ 	.session_resume_drc = iris_hfi_gen1_session_continue,
++	.session_resume_drain = iris_hfi_gen1_session_continue,
+ 	.session_stop = iris_hfi_gen1_session_stop,
+ 	.session_drain = iris_hfi_gen1_session_drain,
+ 	.session_close = iris_hfi_gen1_session_close,
+diff --git a/drivers/media/platform/qcom/iris/iris_vdec.c b/drivers/media/platform/qcom/iris/iris_vdec.c
+index 9357ac1894aa..90564eb92654 100644
+--- a/drivers/media/platform/qcom/iris/iris_vdec.c
++++ b/drivers/media/platform/qcom/iris/iris_vdec.c
+@@ -358,6 +358,12 @@ int iris_vdec_streamon_input(struct iris_inst *inst)
+ {
+ 	int ret;
+ 
++	/* A session kept loaded across a seek (gen1) only resumes */
++	if (inst->sub_state & IRIS_INST_SUB_LOAD_RESOURCES) {
++		inst->frame_counter = 0;
++		return iris_process_streamon_input(inst);
++	}
++
+ 	ret = iris_set_properties(inst, V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE);
+ 	if (ret)
+ 		return ret;
+@@ -388,6 +394,7 @@ int iris_vdec_streamon_input(struct iris_inst *inst)
+ int iris_vdec_streamon_output(struct iris_inst *inst)
+ {
+ 	const struct iris_hfi_session_ops *hfi_ops = inst->hfi_session_ops;
++	bool resume;
+ 	int ret;
+ 
+ 	ret = hfi_ops->session_set_config_params(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
+@@ -404,10 +411,20 @@ int iris_vdec_streamon_output(struct iris_inst *inst)
+ 	if (ret)
+ 		return ret;
+ 
++	resume = inst->sub_state & IRIS_INST_SUB_LOAD_RESOURCES &&
++		 !(inst->sub_state & (IRIS_INST_SUB_FIRST_IPSC | IRIS_INST_SUB_DRC));
++
+ 	ret = iris_process_streamon_output(inst);
+ 	if (ret)
+ 		goto error;
+ 
++	/* A gen1 session kept across a seek resumes before it gets its DPB, as on venus */
++	if (resume) {
++		ret = hfi_ops->session_resume_drc(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
++		if (ret)
++			goto error;
++	}
++
+ 	ret = iris_queue_internal_buffers(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
+ 	if (ret)
+ 		goto error;
