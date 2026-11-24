@@ -1,0 +1,54 @@
+From 8cd6fc4f5f09cd0c63774221fa2632fd87ffe43e Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 03:10:46 -0800
+Subject: [PATCH] freedreno/a6xx: demote UBWC images that shaders write
+
+Before a7xx (no supports_uav_ubwc), shader stores into a UBWC image are
+far slower than into a tiled one. Turnip never compresses storage images
+on these GPUs; freedreno kept UBWC unless the shader declared the image
+coherent or volatile.
+
+Megabonk (Unity, Post Processing v2 multi-scale ambient obscurance) on
+A610 at 1280x720: its first compute pass writes R16F atlases, sixteen
+layers, a layer per thread, plus a full-size R16F linear depth. Freedreno
+gives R16F UBWC, and that one dispatch takes 12.1 ms of a ~56 ms frame;
+uncompressed it takes 2.0 ms (FD_MESA_DEBUG=noubwc, same shader alone).
+
+Demote such an image once, at its first bind for shader writes, the way
+coherent/volatile images already are.
+---
+ .../drivers/freedreno/a6xx/fd6_image.cc        | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/src/gallium/drivers/freedreno/a6xx/fd6_image.cc b/src/gallium/drivers/freedreno/a6xx/fd6_image.cc
+index 12d6b9dbd40..f0dd95b5c04 100644
+--- a/src/gallium/drivers/freedreno/a6xx/fd6_image.cc
++++ b/src/gallium/drivers/freedreno/a6xx/fd6_image.cc
+@@ -442,6 +442,24 @@ fd6_set_shader_images(struct pipe_context *pctx, mesa_shader_stage shader,
+ 
+             fd_resource_uncompress(ctx, rsc, linear);
+          }
++      } else if (rsc->layout.ubwc &&
++                 (buf->shader_access & PIPE_IMAGE_ACCESS_WRITE) &&
++                 !ctx->screen->info->props.supports_uav_ubwc) {
++         /* Before UAV UBWC support (a7xx), shader stores into a UBWC image
++          * are many times slower than into a tiled one: Unity's MSVO pass,
++          * writing R16F atlases a layer per thread, takes 12.1 ms on A610
++          * against 2.0 ms uncompressed. Demote it once, as turnip never
++          * compresses storage images on these GPUs.
++          */
++         bool linear =
++               fd6_check_valid_format(rsc, buf->format) == DEMOTE_TO_LINEAR;
++
++         perf_debug_ctx(ctx,
++                        "%" PRSC_FMT ": demoted to %suncompressed due to shader writes as %s",
++                        PRSC_ARGS(&rsc->b.b), linear ? "linear+" : "",
++                        util_format_short_name(buf->format));
++
++         fd_resource_uncompress(ctx, rsc, linear);
+       } else {
+          fd6_validate_format(ctx, rsc, buf->format);
+       }
+-- 
+2.56.1
+

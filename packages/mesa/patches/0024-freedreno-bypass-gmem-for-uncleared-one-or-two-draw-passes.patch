@@ -1,0 +1,46 @@
+From cd1863c749aae4b92c8c348a3db030acea1f4240 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 03:14:34 -0800
+Subject: [PATCH] freedreno: bypass GMEM for uncleared one- or two-draw passes
+
+A batch with nothing cleared has GMEM load every attachment into every
+bin and store it again, on top of replaying its draws per bin. One or
+two draws that pass about one sample per pixel (a full-screen pass) read
+and write less than that in sysmem, but the autotune's draw cost grows
+with the samples passed, so such a pass always went to GMEM.
+
+Megabonk (Unity) on A610: a one-draw pass over its 1280x720 RGBA16F +
+Z24S8 target, depth test on and nothing cleared, took 6.1 ms in 90 bins,
+0.9 ms of it loading color, depth and stencil.
+
+Use sysmem for a batch with history, nothing cleared, at most two draws
+and at most 1.5 samples passed per pixel.
+---
+ src/gallium/drivers/freedreno/freedreno_autotune.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/src/gallium/drivers/freedreno/freedreno_autotune.c b/src/gallium/drivers/freedreno/freedreno_autotune.c
+index aa8bf9afdcb..8543c7b64ad 100644
+--- a/src/gallium/drivers/freedreno/freedreno_autotune.c
++++ b/src/gallium/drivers/freedreno/freedreno_autotune.c
+@@ -208,6 +208,17 @@ fd_autotune_use_bypass(struct fd_autotune *at, struct fd_batch *batch)
+       if (avg_samples < 500.0f)
+          return true;
+ 
++      /* Nothing cleared means GMEM loads every attachment into every bin
++       * and stores it again, on top of replaying the draws per bin. One or
++       * two draws that touch each pixel about once (a full-screen pass)
++       * read and write less than that in sysmem: Megabonk's one-draw pass
++       * over its 1280x720 RGBA16F + Z24S8 target took 6.1 ms in 90 bins on
++       * A610, the loads alone 0.9 ms.
++       */
++      if (!batch->cleared && batch->num_draws <= 2 &&
++          avg_samples <= 1.5f * pfb->width * pfb->height)
++         return true;
++
+       /* Cost-per-sample is an estimate for the average number of reads+
+        * writes for a given passed sample.
+        */
+-- 
+2.56.1
+

@@ -158,3 +158,18 @@ board builds the same code as before.
   the hang, so any cheaper variant needs the same HL2 A/B (`dmesg | grep -c hangcheck`).
 
 **HW check owed here:** not run on our Odin 3. A GL title on it, `dmesg | grep -c hangcheck` after.
+
+## Megabonk GPU hot paths (0023, 0024), added 2026-11-24
+
+Found on the MANGMI Air X (A610, 1050 MHz) in Megabonk (Unity, GL through FEX's thunk), 15 fps in a
+Forest run with the GPU the limit: freedreno's u_trace (`MESA_GPU_TRACES=print_csv`) put ~56 ms of GPU
+work in a frame. Both patches are ours, not posted upstream.
+
+- **0023-freedreno-a6xx-demote-ubwc-images-that-shaders-write.patch** — Unity's Post Processing v2
+  ambient obscurance (MSVO) spent 22 ms a frame in compute, 12 ms in its first pass alone: it writes
+  two R16F 16-layer atlases (a layer per thread) and a full-size R16F linear depth, and freedreno
+  gives R16F UBWC. Shader stores into UBWC images are that slow before a7xx (`supports_uav_ubwc`);
+  Turnip never compresses storage images there, freedreno only demoted coherent/volatile ones. Now
+  an image a shader writes is demoted once, at its first bind, on GPUs without `supports_uav_ubwc`
+  (every a6xx). The pass alone: 12.1 -> 2.0 ms. In game, interleaved: 14.6, 13.9 fps stock ->
+  17.4, 16.7 fps (+20%).
