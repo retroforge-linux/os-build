@@ -846,7 +846,9 @@ reset_calls()
 store("gog", "launch", "1", env={"ENABLE_MESA_VRAM_REPORT_LIMIT": "1", "VK_VRAM_REPORT_LIMIT_HEAP_SIZE": "512",
                                  "VK_VRAM_REPORT_LIMIT_DEVICE_ID": "0x5143:0x06010000"})
 vram = open(os.path.join(os.path.dirname(CALLS), "vram")).read()
-ok(game_run(calls()) and vram == "", "not with the shell's VRAM report limit (OGUI's environment: DXVK saw a 512 MiB heap)", repr(vram))
+ok(game_run(calls()) and sorted(vram.split()) == ["ENABLE_MESA_VRAM_REPORT_LIMIT", "VK_VRAM_REPORT_LIMIT_DEVICE_ID",
+                                                  "VK_VRAM_REPORT_LIMIT_HEAP_SIZE"],
+   "with the shell's VRAM report limit, as Steam's games (mesa patch 0025)", repr(vram))
 valve = os.path.join(HOME, "no-steam", "steamapps", "common", "Proton Experimental (ARM64)")
 os.makedirs(valve)
 open(os.path.join(valve, "proton"), "w").close()

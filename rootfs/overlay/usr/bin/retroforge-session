@@ -366,8 +366,11 @@ fi
 #   MemTotal <= 6 GiB   1 GiB     (447 MiB on the same board)
 #   above               unchanged: the RAM is there
 # The layer only changes what is REPORTED; Godot reads the budget for statistics, never to refuse
-# an allocation. Gamescope, Xwayland and mangoapp do not get it, and retroforge-launch drops it from
-# every emulator's environment. Needs device-env's RETROFORGE_GPU_CHIP_ID: the layer matches one id.
+# an allocation. Steam's and the stores' games get the same report (OGUI's environment, and the
+# boot-time Steam client's below): the layer scales the usage it reports with the budget (mesa patch
+# 0025), so an engine that checks one against the other sees the real pressure. Gamescope, Xwayland
+# and mangoapp do not get it, and retroforge-launch drops it from every emulator's environment, which
+# gets its own. Needs device-env's RETROFORGE_GPU_CHIP_ID: the layer matches one id.
 : "${RETROFORGE_MEMINFO:=/proc/meminfo}"
 shell_vram_mib() {
   _kb=$(sed -n 's/^MemTotal:[[:space:]]*\([0-9]*\) kB$/\1/p' "$RETROFORGE_MEMINFO" 2>/dev/null)
@@ -377,8 +380,10 @@ shell_vram_mib() {
   else return 1
   fi
 }
+_vram_env=""
 if [ -n "${RETROFORGE_GPU_CHIP_ID:-}" ] && _mib=$(shell_vram_mib); then
-  RETROFORGE_SESSION_CMD="env ENABLE_MESA_VRAM_REPORT_LIMIT=1 VK_VRAM_REPORT_LIMIT_HEAP_SIZE=$_mib VK_VRAM_REPORT_LIMIT_DEVICE_ID=$RETROFORGE_GPU_CHIP_ID $RETROFORGE_SESSION_CMD"
+  _vram_env="ENABLE_MESA_VRAM_REPORT_LIMIT=1 VK_VRAM_REPORT_LIMIT_HEAP_SIZE=$_mib VK_VRAM_REPORT_LIMIT_DEVICE_ID=$RETROFORGE_GPU_CHIP_ID"
+  RETROFORGE_SESSION_CMD="env $_vram_env $RETROFORGE_SESSION_CMD"
 fi
 
 # The shell's renderer. A low-memory board's profile makes OpenGL the default
@@ -415,8 +420,8 @@ exec 3<&-
 # finds the kept client running (Megabonk's window 44 s after its launch instead of 57 s, MANGMI Air X,
 # 2026-11-23). /usr/bin/steam decides with RETROFORGE_STEAM_PRESTART=1 (Steam Client installed, its
 # sign-in remembered, "Keep Steam running" on, not running yet), on gamescope's second Xwayland, where
-# OGUI starts games. RETROFORGE_STEAM_PRESTART_DELAY s (30) after the shell; `off` leaves it to the first
-# launch.
+# OGUI starts games, with the shell's VRAM report (above) as a client OGUI starts has.
+# RETROFORGE_STEAM_PRESTART_DELAY s (30) after the shell; `off` leaves it to the first launch.
 case "${RETROFORGE_STEAM_PRESTART_DELAY:=30}" in
   off) ;;
   *)
@@ -425,7 +430,7 @@ case "${RETROFORGE_STEAM_PRESTART_DELAY:=30}" in
       _games_display=":$((${_games_display%%.*} + 1))"
       ( sleep "$RETROFORGE_STEAM_PRESTART_DELAY"
         kill -0 "$CLIENT_PID" 2>/dev/null || exit 0
-        DISPLAY="$_games_display" RETROFORGE_STEAM_PRESTART=1 exec steam -gamepadui -steamos3 -steampal -steamdeck -silent
+        DISPLAY="$_games_display" RETROFORGE_STEAM_PRESTART=1 exec env $_vram_env steam -gamepadui -steamos3 -steampal -steamdeck -silent
       ) </dev/null >/dev/null &
     fi ;;
 esac

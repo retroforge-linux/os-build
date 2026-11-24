@@ -608,17 +608,29 @@ CASE="Steam started in the background"
 if [ -e /etc/retroforge/session.conf ] || [ -e /usr/lib/retroforge/device-env ]; then
   ok "skipped: this host has RetroForge's session.conf/device-env, which would override the fakes"
 else
-  printf '#!/bin/bash\necho "steam DISPLAY=$DISPLAY PRESTART=${RETROFORGE_STEAM_PRESTART-} args=$*" >> "%s/log"\n' "$T" >"$T/bin/steam"
+  printf '#!/bin/bash\necho "steam DISPLAY=$DISPLAY PRESTART=${RETROFORGE_STEAM_PRESTART-} vram=${ENABLE_MESA_VRAM_REPORT_LIMIT-}:${VK_VRAM_REPORT_LIMIT_HEAP_SIZE-}:${VK_VRAM_REPORT_LIMIT_DEVICE_ID-} args=$*" >> "%s/log"\n' "$T" >"$T/bin/steam"
   chmod +x "$T/bin/steam"
-  PRESTART_DELAY=0.3 run_session
+  PRESTART_DELAY=0.3 RETROFORGE_GPU_CHIP_ID= run_session
   if waitfor 'grep -q "^steam " "$T/log"'; then
-    grep -qx "steam DISPLAY=:2 PRESTART=1 args=-gamepadui -steamos3 -steampal -steamdeck -silent" "$T/log" \
+    grep -qx "steam DISPLAY=:2 PRESTART=1 vram=:: args=-gamepadui -steamos3 -steampal -steamdeck -silent" "$T/log" \
       && ok "RETROFORGE_STEAM_PRESTART_DELAY s after the shell: steam, RETROFORGE_STEAM_PRESTART=1, on the games' Xwayland" \
       || bad "$(grep '^steam ' "$T/log")"
   else
     bad "no background steam: $(tail -3 "$T/session.out")"
   fi
   touch "$T/client-exit"; waitfor "! kill -0 $spid 2>/dev/null"; wait "$spid" 2>/dev/null
+  # The shell's VRAM report (next case) goes to this client too, as to one OGUI starts: its games
+  # get it (mesa patch 0025 keeps the usage they are shown in step with the budget).
+  printf 'MemTotal:       3386492 kB\n' > "$T/meminfo"
+  PRESTART_DELAY=0.3 RETROFORGE_MEMINFO="$T/meminfo" RETROFORGE_GPU_CHIP_ID=0x5143:0x06010000 run_session
+  if waitfor 'grep -q "^steam " "$T/log"'; then
+    grep -qx "steam DISPLAY=:2 PRESTART=1 vram=1:512:0x5143:0x06010000 args=-gamepadui -steamos3 -steampal -steamdeck -silent" "$T/log" \
+      && ok "with the shell's VRAM report, as a client OGUI starts" || bad "$(grep '^steam ' "$T/log")"
+  else
+    bad "no background steam: $(tail -3 "$T/session.out")"
+  fi
+  touch "$T/client-exit"; waitfor "! kill -0 $spid 2>/dev/null"; wait "$spid" 2>/dev/null
+  rm -f "$T/meminfo"
   PRESTART_DELAY=1 run_session
   waitfor 'grep -qx client-up "$T/log"'; touch "$T/client-exit"
   waitfor "! kill -0 $spid 2>/dev/null"; wait "$spid" 2>/dev/null; sleep 1.5
@@ -632,9 +644,9 @@ fi
 
 # -------------------------------------------------------------------------------------------------
 CASE="the shell's VRAM report"
-# OGUI (Godot's VMA) reserves blocks sized from the reported heap, so the shell alone gets mesa's
-# vram-report-limit layer: 512 MiB below 4 GiB of RAM, 1 GiB up to 6 GiB, nothing above, and
-# nothing without device-env's GPU chip id (the layer matches one id).
+# OGUI (Godot's VMA) reserves blocks sized from the reported heap, so the shell (and the games it
+# starts, not gamescope) gets mesa's vram-report-limit layer: 512 MiB below 4 GiB of RAM, 1 GiB up
+# to 6 GiB, nothing above, and nothing without device-env's GPU chip id (the layer matches one id).
 if [ -e /etc/retroforge/session.conf ] || [ -e /usr/lib/retroforge/device-env ]; then
   ok "skipped: this host has RetroForge's session.conf/device-env, which would override the fakes"
 else

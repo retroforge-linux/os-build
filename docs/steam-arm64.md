@@ -811,10 +811,15 @@ That out-of-memory was not the thunk's (2026-11-23, Air X). No Vulkan call faile
 plentiful: Unity stops using a memory type once its usage passes ~92% of the budget it is shown, and
 it was shown a 512 MiB heap. The shell's VRAM report limit (`retroforge-session` starts OGUI with
 mesa's vram-report-limit layer on) reached the game: OGUI's environment was `/usr/bin/steam`'s, a
-client started there copied it, and the host side's loader loads the arm64 layer (the x86 guest has
-none, so x86 Turnip was spared). With the layer off for the host side, Megabonk ran on the thunk
-past the 2-minute test. `/usr/bin/steam` now drops the three variables, as `retroforge-launch` does
-for emulators; Proton's DXVK had the same 512 MiB heap whenever they came through.
+client started there copied it, and the host side's loader loads the arm64 layer. With the layer off
+for the host side, Megabonk ran on the thunk past the 2-minute test. The fault was the layer's: it
+scaled the budget down to the reported heap but passed the driver's usage through, so a game saw
+its heap fuller than it was by the same ratio (about 6.6 times here). Mesa patch 0025 scales the
+usage too (2026-11-24). Air X, the same launch with the 512 MiB report: the image's layer, out of
+memory ~40 s in; 0025's, still running at 165 s. So the variables reach Steam's and the stores' games
+again, as the shell's report, and the client the session starts at boot gets them as well
+(`/usr/bin/steam` and `store` had dropped them from 2026-11-23); Proton's DXVK sees the same 512 MiB
+heap. `retroforge-launch` still drops them for emulators, which get their own report.
 
 So Vulkan now goes through the thunk too, by default (2026-11-24), for 64-bit programs (Valve's tool
 has no 32-bit Vulkan guest library): `retroforge-steam-direct fex` adds the Vulkan entry to the

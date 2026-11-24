@@ -450,8 +450,9 @@ def save_game_setting(appid, key, value):
 # Frame layers, which do not exist here; one HostEnv per JSON block, so through AppOverrides "*").
 # Megabonk on Vulkan (-force-vulkan, Air X, 2026-11-24): menu 108-111% of a core against 116-118% on
 # x86 Turnip, a run 207-233% against 237-244%, 19-20 frames a second against 18, and it gets the
-# gamescope WSI layer, which the x86 driver does not. (Its earlier out-of-memory was the shell's VRAM
-# report limit reaching it; /usr/bin/steam drops that now.)
+# gamescope WSI layer, which the x86 driver does not. (Its earlier out-of-memory was mesa's VRAM report
+# limit layer with the shell's limit, which reported the real usage against a scaled budget; mesa
+# patch 0025 scales both.)
 # FEX TSO goes in the same file (TSOEnabled): the player's choice, else Valve's hint for the game
 # (appinfo common/steam_frame_compatibility/configuration/tso_enable), as Valve's client sets it on the
 # Steam Frame; neither, and FEX's own default (on) stays. An x86 game never starts without the client,

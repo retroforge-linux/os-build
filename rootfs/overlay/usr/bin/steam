@@ -53,12 +53,12 @@ MAGIC_RESTART_EXITCODE=42
 
 log() { echo "steam: $*" >&2; }
 
-# The shell's VRAM report is the shell's. retroforge-session starts OGUI with mesa's vram-report-limit
-# layer on (a 512 MiB heap on a board under 4 GiB), and OGUI's environment is this script's. A game
-# started without the client gets this script's environment, and a client started here hands it to
-# every game it runs (kept_start copies it), so their native Vulkan (DXVK in Proton, an x86 game's
-# Vulkan through FEX's thunk) saw a 512 MiB heap. retroforge-launch drops the same three for emulators.
-unset ENABLE_MESA_VRAM_REPORT_LIMIT VK_VRAM_REPORT_LIMIT_HEAP_SIZE VK_VRAM_REPORT_LIMIT_DEVICE_ID
+# The shell's VRAM report limit reaches Steam's games on purpose: retroforge-session starts OGUI and the
+# boot-time client with mesa's vram-report-limit layer on (a 512 MiB heap on a board under 4 GiB), a game
+# started without the client gets this script's environment, and a client started here hands it to every
+# game it runs (kept_start copies it). The layer scales the usage it reports along with the budget (mesa
+# patch 0025), so Unity no longer saw itself out of memory on Vulkan through FEX's thunk (Megabonk).
+# retroforge-launch drops the three for emulators, which get their own report.
 
 # Steam Client's install (steam-install) holds its lock until it is done, and Steam does not start
 # before then: a Steam opened in between (Main menu > Steam showed once the client and its x86 guest
