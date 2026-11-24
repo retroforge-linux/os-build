@@ -7,7 +7,6 @@
 # <sha256|commit>  <kind>  <url>  <release>/<asset>  <from | bytes | dir frag pkg>
 4e4e438eac7b840a9383988cbb7c08dad8041da544b9319fc26d319fa7348961 file https://archive.mesa3d.org/mesa-26.3.1.tar.xz sources/mesa-26.3.1.tar.xz mesa
 8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990 file https://cdn.kernel.org/pub/linux/kernel/v7.x/linux-7.3.5.tar.xz sources/linux-7.3.5.tar.xz kernel/SOURCE.pin
-ac2ac757f5942d318a311a54b0c80b5ef295f299c2a73c632f6bfb1ff49cc6da file https://download.gnome.org/sources/gtk+/2.24/gtk+-2.24.33.tar.xz sources/gtk_-2.24.33.tar.xz gtk2
 bb91d0bb0b5e2a4da61910d752769d4580cacffb4b7338cee57c932351c67e7b file https://files.pythonhosted.org/packages/2e/f3/4f90a0b5e86635d741111084eaa4d4c65fcab2f461edb8c9efa502e4c630/pygame_ce-2.5.8-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl prebuilt/pygame_ce-2.5.8-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.whl packages/pygame-ce/prebuilt.pin
 ce54275b7793f97391583ede33c1d87590901d8da20cce604b1f07a029aefc67 file https://github.com/AltraMayor/f3/archive/v10.0.tar.gz sources/f3-10.0.tar.gz f3
 a68869e23f56ac4f2e28f1783002810ddbf10f95e1af9b48b2912fb169f46994 file https://github.com/Hummer12007/brightnessctl/archive/0.5.1.tar.gz sources/brightnessctl-0.5.1.tar.gz brightnessctl

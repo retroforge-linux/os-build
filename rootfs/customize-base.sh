@@ -191,7 +191,6 @@ BOOTSTRAP_PKGS=(base)
 #   gtk2                steamui.so links libgtk-x11-2.0 and libgdk_pixbuf-2.0. Back in the root for
 #                       it (dropped 2026-10-03): ~96 MiB installed with its new deps before the trim
 #                       (gtk2 38, glycin 17, librsvg 10, adwaita-fonts 7), measured 2026-10-17.
-#                       Our own build since mash-20260704.1.pvt dropped it (packages/gtk2, #55).
 #   libibus             steamwebhelper (CEF) links libibus-1.0.so.5: without it the helper does not
 #                       load at all (tested 2026-10-17 under qemu; Nova-Deck saw the same). The library
 #                       alone, 3.7 MiB and no new deps; `ibus` itself would bring gtk3, gtk4 and

@@ -3,7 +3,7 @@
 # /usr/lib/retroforge/store downloads them at the first Sign in, checks each against its sha256 and
 # unpacks them into the player's home. Fields: repo, file, sha256, size in bytes.
 # 20 packages, 196 MB to download.
-snapshot: https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/mash-20260704.1.pvt
+snapshot: https://holo-packages.steamos.cloud/archlinux-deckard/archlinux/mash-20260704.2.pvt
 package: extra adwaita-cursors-50.0-1-any.pkg.tar.zst 895066c2404a301eade011fe252681919939f2ba6a1b16c66f1c6c7dec23bf14 573484
 package: extra adwaita-icon-theme-50.0-1-any.pkg.tar.zst 39bf76835780f01b82df1502c37c0ffc26d5319e834fc288e84ea7a6f7360d53 251377
 package: extra adwaita-icon-theme-legacy-46.2-3-any.pkg.tar.zst c14690d14e1d8a67e6b5570a2b28a2da6de4ebeb592a629b2a70e41411bafc5a 2275676
