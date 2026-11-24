@@ -291,7 +291,7 @@ lz4 1:1.10.0-2 aarch64 snapshot af5d44c36259e2257ba033b623ef6104dcc2a552271264b6
 lzo 2.10-5 aarch64 snapshot ff11d9a5060ae28fbece3faad126724314232747cc09b836157f02ee09d3869a
 mangohud 0.8.4-1.1 aarch64 retroforge 8fbd2b463ab0206484e65710e39fb4c4cae2dfede727e88a84f9949b61e6e843
 mdadm 4.6-2 aarch64 snapshot 9389e0c8957902aa29c3199bb4074dfd1f316411c3371cd759851fabdecd152a
-mesa 1:26.3.1-1.1 aarch64 retroforge 3068ec5372960051b526e4fdd8d1b948258277ccd18e393e5a47b46cb2529319
+mesa 1:26.3.1-1.1 aarch64 retroforge 0bfebb6ce1f87b568988c9da9c569256f895684ca098a094361764b94d78faf2
 mesa-utils 9.0.0-7 aarch64 snapshot a60c4f3f824758269fff11df48bdb92f39e55b5f432a4451fa8cbe032835ece8
 mobile-broadband-provider-info 20251101-1 any snapshot 1b0146d8b72f6ffc3edcccd5709d8de42798c4827a5fccd994c389584d60c56c
 mpdecimal 4.0.1-3 aarch64 snapshot 93a0e16603858a8d78c4ab3a924ff2ccd9554cd2019c1f65d411c5276334cb86
@@ -382,10 +382,10 @@ upterm 0.41.1-1.1 aarch64 retroforge d64f59282079c539951b720b80bfeac2e68ab2acdde
 util-linux 2.42.2-1 aarch64 snapshot 51823181d1ee1e16c255c7554e99af44b665746cb317cf99baeb2abbbe86468c
 util-linux-libs 2.42.2-1 aarch64 snapshot 5f6f032d03fb81c1d2a8358c5dfd87d867294009398ac70c095203eabccbf3fc
 volume_key 0.3.12-12 aarch64 snapshot 9ffff52f6be0342278fcf4b8071d25634c85c3592bd0ecd4277fad9b5b2ec6df
-vulkan-freedreno 1:26.3.1-1.1 aarch64 retroforge 3068ec5372960051b526e4fdd8d1b948258277ccd18e393e5a47b46cb2529319
+vulkan-freedreno 1:26.3.1-1.1 aarch64 retroforge 0bfebb6ce1f87b568988c9da9c569256f895684ca098a094361764b94d78faf2
 vulkan-icd-loader 1.4.350.1-1 aarch64 snapshot 9417370c39570768c5b5897de9f573e0ebf1f52bd458cbf8a9e939c4f7cd930b
-vulkan-mesa-device-select 1:26.3.1-1.1 aarch64 retroforge 3068ec5372960051b526e4fdd8d1b948258277ccd18e393e5a47b46cb2529319
-vulkan-mesa-layers 1:26.3.1-1.1 aarch64 retroforge 3068ec5372960051b526e4fdd8d1b948258277ccd18e393e5a47b46cb2529319
+vulkan-mesa-device-select 1:26.3.1-1.1 aarch64 retroforge 0bfebb6ce1f87b568988c9da9c569256f895684ca098a094361764b94d78faf2
+vulkan-mesa-layers 1:26.3.1-1.1 aarch64 retroforge 0bfebb6ce1f87b568988c9da9c569256f895684ca098a094361764b94d78faf2
 vulkan-tools 1.4.350.1-1 aarch64 snapshot 9eb9eb2fe3a45cbb84a4fb3cfe188cb3cfc873b7f8ab5b899ba19c49cf0b939e
 wayland 1.25.0-1 aarch64 snapshot ea612c6392dd9e4c1498b5cfebf28b4508029b9c54a0e47e4c5bd1e1e9e79e0f
 webrtc-audio-processing-1 1.3-5 aarch64 snapshot 22350ba4701c4fb56f354408d24048cd9667aa04cebfc9f883c33a12f8e3f3c5

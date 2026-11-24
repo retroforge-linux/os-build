@@ -21,6 +21,10 @@ Dropped.
   the extension, now upstream's.
 - **0015, 0016** (`tu/autotune: Track binning pass for RP duration`, `Stabilize RP hash for
   replays`) — dropped at 26.3.1 as planned: they were backports of `79e16e72329` and `af16b1ceb1e`.
+- **0024-freedreno-bypass-gmem-for-uncleared-one-or-two-draw-passes.patch** — dropped 2026-11-24, a
+  day after it was added: sysmem for passes that clear nothing, have one or two draws and touch each
+  pixel about once saved ~2.9 ms of GPU a frame in Megabonk (Air X), but no frame rate (17.9 against
+  17.9 fps), and it changes the GMEM choice for every a6xx/a7xx GL game.
 
 - **0002-freedreno-ir3-vulkan-disable-bindless-ubo-const-lowering.patch** — dropped 2026-08-19
   (this file's history has the full write-up). It was a ROCKNIX-origin workaround (added there
@@ -173,3 +177,16 @@ work in a frame. The patch is ours, not posted upstream.
   an image a shader writes is demoted once, at its first bind, on GPUs without `supports_uav_ubwc`
   (every a6xx). The pass alone: 12.1 -> 2.0 ms. In game, interleaved: 14.6, 13.9 fps stock ->
   17.4, 16.7 fps (+20%).
+
+## VRAM report limit layer (0025), added 2026-11-24
+
+- **0025-vulkan-vram-report-limit-scale-heap-usage-with-the-budget.patch** — ours, not posted
+  upstream. The vram-report-limit layer (an implicit layer here, see `../PKGBUILD`) reports a smaller
+  heap and scales each heap's budget down by the same ratio, but passed the driver's usage through, so
+  an app comparing usage with budget saw the heap fuller than it was by the inverse of that ratio.
+  The shell's report (512 MiB of Turnip's 3.3 GiB on the Air X, `retroforge-session`) reaches
+  Steam's and the stores' games, and Unity, which stops using a memory type past ~92% of its budget,
+  logged `Vulkan - Out of memory! (allocating memory for buffer)` and crashed: Megabonk on Vulkan
+  through FEX's thunk, ~40 s in. The usage is now scaled by the same ratio. Air X, same launch, the
+  image's layer against this one: out of memory at ~40 s, against still running at 165 s, none
+  logged. The x86 guest's copy (`../../mesa-x86`) is built from this list too.

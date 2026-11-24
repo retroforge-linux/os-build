@@ -9,8 +9,9 @@
 #   * html-docs=disabled    — no Sphinx HTML docs in the image.
 #   * vram-report-limit is an IMPLICIT layer (upstream installs it explicit), gated on
 #                             ENABLE_MESA_VRAM_REPORT_LIMIT=1 / DISABLE_MESA_VRAM_REPORT_LIMIT=1,
-#                             the shape Valve ships it in on the Steam Frame. Nothing turns it on
-#                             but the emulator environment retroforge-launch builds.
+#                             the shape Valve ships it in on the Steam Frame. retroforge-session
+#                             turns it on for the shell and the Steam and store games it starts,
+#                             retroforge-launch for emulators (their own report).
 # Everything else (arch-meson invocation, --auto-features=enabled behaviour, the rest of the meson
 # options, the kept makedepends, and the package split for the components we DO build) mirrors
 # upstream. LLVM/clang stay ON, exactly as upstream ships mesa.
