@@ -443,8 +443,12 @@ command: the tool when it runs on the same runtime; the launch option's executab
 its working folder, the arguments in place of those of the entry Steam ran (the player's own launch
 options after them stay); `STEAM_FEX_TSOENABLED`, which Proton writes into the
 game's `proton-fex-config.json` (its default, `files/share/fex-emu/Config.json`, is on; the arm64 client sets no
-FEX settings itself, and Valve's appinfo hint `common/steam_frame_compatibility/configuration/tso_enable` is shown
-beside the row); the resolution (below). The launch options are the ones
+FEX settings itself): the player's choice, else Valve's appinfo hint
+`common/steam_frame_compatibility/configuration/tso_enable`, as Valve's client sets it on the Steam
+Frame, else nothing (shown beside the row; Hades, hint off, Air X 2026-11-24: its menu 181-185% of a
+core against 188-189% with TSO on, the same 59-60 frames a second). An x86 game, which never starts
+without the client, gets the same choice through its FEX app config (`TSOEnabled`, below); a Proton
+game the client starts gets neither; the resolution (below). The launch options are the ones
 Steam's dialog offers on a Steam Deck, as the client runs with `-steamdeck`: Windows, 64-bit, not
 `type none`, not another branch's (`BetaKey`), not `steamdeck 0`. Hades offers two, DirectX and
 "Vulkan - Steam Deck". A launch through the client does not use them.
@@ -807,8 +811,17 @@ mesa's vram-report-limit layer on) reached the game: OGUI's environment was `/us
 client started there copied it, and the host side's loader loads the arm64 layer (the x86 guest has
 none, so x86 Turnip was spared). With the layer off for the host side, Megabonk ran on the thunk
 past the 2-minute test. `/usr/bin/steam` now drops the three variables, as `retroforge-launch` does
-for emulators; Proton's DXVK had the same 512 MiB heap whenever they came through. The Vulkan thunk
-is still not turned on for games.
+for emulators; Proton's DXVK had the same 512 MiB heap whenever they came through.
+
+So Vulkan now goes through the thunk too, by default (2026-11-24), for 64-bit programs (Valve's tool
+has no 32-bit Vulkan guest library): `retroforge-steam-direct fex` adds the Vulkan entry to the
+game's `ThunksDB.json`, writes `retroforge-vulkan-icd.json` (the host's Turnip manifest with the
+library under `/run/host`) beside it, and each program's app config names it (`HostEnv
+VK_DRIVER_FILES`) and empties `VK_INSTANCE_LAYERS` on the host side (`AppOverrides "*"`, one
+`HostEnv` per block). Megabonk on Vulkan, Air X: its menu 108-111% of a core against 116-118% on x86
+Turnip, a run 207-233% against 237-244%, 19-20 frames a second against 18; it also gets the gamescope
+WSI layer, which x86 Turnip does not load. Game settings > Graphics driver > x86 Mesa puts GL and
+Vulkan back on the guest's driver; the same app config carries the game's FEX TSO either way.
 
 ## Proton-CachyOS arm64, and DXVK-Sarek for the Adreno 610/613 (downloaded, not shipped)
 

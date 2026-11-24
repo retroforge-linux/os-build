@@ -94,6 +94,8 @@ apps = {
             "13": {"executable": "Desk\\Hades.exe", "config": {"steamdeck": "0"}},
             "15": {"executable": "Deck\\Hades.exe", "description": "Deck", "description_loc": {"english": "Hades (Steam Deck)"},
                    "config": {"oslist": "windows", "osarch": "64", "steamdeck": "1"}}}}}},
+    3405340: {"appinfo": {"appid": 3405340, "common": {"name": "Megabonk", "type": "Game",
+                                                       "steam_frame_compatibility": {"configuration": {"tso_enable": 1}}}}},
     891390: {"appinfo": {"appid": 891390, "common": {"name": "SteamPlay 2.0 Manifests", "type": "Config"}, "extended": {
         "app_compat_configs": {"2310": {"appid": 2310, "config": "oldglstr", "comment": "QUAKE"},
                                "1145360": {"appid": 1145360, "config": "gamedrive,heapdelayfree", "comment": "test"}}}}},
@@ -144,10 +146,11 @@ fresh_log() {  # the client's log as it was after Hades's launches, nothing kept
   echo "[2026-10-22 10:08:43] Game process removed: AppID 1145360 \"$HADES_CMD\", ProcID 8833" >>"$SLOG"
 }
 
+printf '{"ICD": {"api_version": "1.4.363", "library_arch": "64", "library_path": "/usr/lib/libvulkan_freedreno.so"}, "file_format_version": "1.0.1"}\n' >"$T/turnip_icd.json"
 DENV=(env -u RETROFORGE_STEAM_ROOT -u XDG_DATA_HOME -u XDG_CONFIG_HOME -u XDG_CACHE_HOME -u RETROFORGE_STEAM_DIRECT
       -u SteamAppId -u STEAM_COMPAT_CONFIG -u STEAM_COMPAT_DATA_PATH -u DISPLAY -u RETROFORGE_GAMESCOPE_NESTED_W
       -u RETROFORGE_GAMESCOPE_NESTED_H HOME="$H" RETROFORGE_PROC="$T/proc"
-      RETROFORGE_STEAM_LIBRARY="$LIBRARY")
+      RETROFORGE_STEAM_LIBRARY="$LIBRARY" RETROFORGE_VULKAN_ICD="$T/turnip_icd.json")
 direct() {  # direct [VAR=value...] -- args...
   local -a vars=()
   while [ "$1" != -- ]; do vars+=("$1"); shift; done; shift
@@ -368,10 +371,10 @@ direct -- run 1145360
 grep -qxF "$GAME/x64/Hades.exe" "$T/ran.args" && grep -qxF "$PROTON/proton" "$T/ran.args" && [ "$(cat "$T/ran.cwd")" = "$GAME/x64" ] \
   && ok "run: the chosen launch option, from its own working folder, with the Proton Steam logged" || bad "args=$(grep -E 'proton|Hades' "$T/ran.args") cwd=$(cat "$T/ran.cwd")"
 [ -z "$(ran_env PROTON_DXVK_SAREK)" ] && ok "run: no PROTON_DXVK_SAREK (the tool's user_settings.py decides)" || bad "sarek=$(ran_env PROTON_DXVK_SAREK)"
-[ -z "$(ran_env STEAM_FEX_TSOENABLED)" ] && ok "run: FEX TSO left to Proton by default" || bad "tso=$(ran_env STEAM_FEX_TSOENABLED)"
-direct -- game 1145360 set tso off; fresh_log; reset_run
+[ "$(ran_env STEAM_FEX_TSOENABLED)" = 0 ] && ok "run: FEX TSO by default as Valve runs the game on the Steam Frame (Hades: off)" || bad "tso=$(ran_env STEAM_FEX_TSOENABLED)"
+direct -- game 1145360 set tso on; fresh_log; reset_run
 direct -- run 1145360
-[ "$(ran_env STEAM_FEX_TSOENABLED)" = 0 ] && ok "run: FEX TSO off for this game (STEAM_FEX_TSOENABLED, Proton's FEX config)" || bad "tso=$(ran_env STEAM_FEX_TSOENABLED)"
+[ "$(ran_env STEAM_FEX_TSOENABLED)" = 1 ] && ok "run: the player's choice over Valve's (STEAM_FEX_TSOENABLED, Proton's FEX config)" || bad "tso=$(ran_env STEAM_FEX_TSOENABLED)"
 direct -- game 1145360 set tso default
 direct -- game 1145360 set launch 4; fresh_log; reset_run; mkdir "$GAME/Odd"
 direct -- run 1145360
@@ -410,25 +413,44 @@ elf "$MB/arm/native" 64 183 1; elf "$MB/data/plain" 64 62 1; chmod -x "$MB/data/
 mkdir -p "$FX/AppConfig"; echo '{"ThunksDB": {"GL": 0}}' >"$FX/AppConfig/Steam_3405340_tool32.json"
 direct -- fex 3405340
 cfg() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(json.dumps(d.get("ThunksDB")), "ours" if d.get("RetroForge") else "theirs")' "$FX/AppConfig/Steam_3405340_$1.json" 2>&1; }
-[ "$RC" = 0 ] && [ "$(cfg Megabonk.x86_64)" = '{"GL": 1} ours' ] && [ "$(ls "$FX/AppConfig")" = "$(printf 'Steam_3405340_Megabonk.x86_64.json\nSteam_3405340_tool32.json')" ] \
-  && ok "native by default: FEX's GL thunk on for each x86 program, by app id and program (not its library, not arm64)" || bad "rc=$RC $(ls "$FX/AppConfig") $(cfg Megabonk.x86_64) err=$ERR"
+jget() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1]))
+for k in sys.argv[2:]: d = d.get(k, {}) if isinstance(d, dict) else {}
+print(d if d != {} else "")' "$@" 2>&1; }
+[ "$RC" = 0 ] && [ "$(cfg Megabonk.x86_64)" = '{"GL": 1, "Vulkan": 1} ours' ] && [ "$(ls "$FX/AppConfig")" = "$(printf 'Steam_3405340_Megabonk.x86_64.json\nSteam_3405340_tool32.json')" ] \
+  && ok "native by default: FEX's GL and Vulkan thunks on for each x86 program, by app id and program (not its library, not arm64)" || bad "rc=$RC $(ls "$FX/AppConfig") $(cfg Megabonk.x86_64) err=$ERR"
 [ "$(cfg tool32)" = '{"GL": 0} theirs' ] && ok "a file of the player's own is left as it is" || bad "$(cfg tool32)"
-python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); o = d["DB"]["GL"]["Overlay"]; assert d["DB"]["GL"]["Library"] == "libGL-guest.so"; assert "/run/gfx/main/usr/lib/libGL.so.1" in o and "/usr/lib/pressure-vessel/overrides/lib/x86_64-linux-gnu/libGL.so.1" in o and "/run/gfx/main/usr/lib32/libGL.so.1" in o; assert "Vulkan" not in d["DB"]; assert not any("@PREFIX_LIB@" in p for p in o)' "$FX/ThunksDB.json" \
-  && ok "and a thunk database naming the container's own library paths (not @PREFIX_LIB@), GL only" || bad "$(head -c 300 "$FX/ThunksDB.json")"
-grep -q "app 3405340: GL through the device's own driver" <<<"$ERR" && ok "it says so" || bad "err=$ERR"
+M="$FX/AppConfig/Steam_3405340_Megabonk.x86_64.json"
+[ "$(jget "$M" Config HostEnv)" = "VK_DRIVER_FILES=$FX/retroforge-vulkan-icd.json" ] && [ "$(jget "$M" AppOverrides '*' HostEnv)" = "VK_INSTANCE_LAYERS=" ] \
+  && [ "$(jget "$FX/retroforge-vulkan-icd.json" ICD library_path)" = /run/host/usr/lib/libvulkan_freedreno.so ] \
+  && ok "the host side gets the device's Turnip (its manifest under /run/host) and none of Steam's x86 layers" || bad "$(cat "$M") $(cat "$FX/retroforge-vulkan-icd.json" 2>&1)"
+[ "$(jget "$M" Config TSOEnabled)" = 1 ] && ok "FEX TSO as Valve runs the game on the Steam Frame (its hint: on)" || bad "$(cat "$M")"
+python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); o = d["DB"]["GL"]["Overlay"]; assert d["DB"]["GL"]["Library"] == "libGL-guest.so"; assert "/run/gfx/main/usr/lib/libGL.so.1" in o and "/usr/lib/pressure-vessel/overrides/lib/x86_64-linux-gnu/libGL.so.1" in o and "/run/gfx/main/usr/lib32/libGL.so.1" in o; assert not any("@PREFIX_LIB@" in p for p in o)
+v = d["DB"]["Vulkan"]; assert v["Library"] == "libvulkan-guest.so"; assert "/usr/lib/x86_64-linux-gnu/libvulkan.so.1" in v["Overlay"]; assert not any("i386" in p or "lib32" in p for p in v["Overlay"]), v' "$FX/ThunksDB.json" \
+  && ok "and a thunk database naming the container's own library paths (not @PREFIX_LIB@), Vulkan 64-bit only" || bad "$(head -c 400 "$FX/ThunksDB.json")"
+grep -q "app 3405340: GL and Vulkan through the device's own driver" <<<"$ERR" && grep -q "FEX TSO on" <<<"$ERR" && ok "it says so" || bad "err=$ERR"
 direct -- fex 3405340
 [ "$RC" = 0 ] && [ -z "$ERR" ] && ok "again: nothing to change, nothing said" || bad "rc=$RC err=$ERR"
 direct -- game 3405340
-python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["x86"] is True and d["settings"]["driver"] == "default", d' "$OUT" \
-  && ok "game: an x86 game, its driver at its default" || bad "out=$OUT"
+python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["x86"] is True and d["settings"]["driver"] == "default" and d["tso_hint"] == "1", d' "$OUT" \
+  && ok "game: an x86 game, its driver at its default, Valve's TSO shown" || bad "out=$OUT"
+direct -- game 3405340 set tso off; direct -- fex 3405340
+[ "$(jget "$M" Config TSOEnabled)" = 0 ] && ok "the player's TSO choice over Valve's" || bad "$(cat "$M")"
+direct -- game 3405340 set tso default
 direct -- game 3405340 set driver x86
 direct -- fex 3405340
-[ "$(ls "$FX/AppConfig")" = Steam_3405340_tool32.json ] && [ ! -e "$FX/ThunksDB.json" ] && grep -q "GL through the x86 driver in FEX's guest" <<<"$ERR" \
-  && ok "x86: our files gone, the player's kept" || bad "$(ls "$FX" "$FX/AppConfig") err=$ERR"
+[ "$(ls "$FX/AppConfig")" = "$(printf 'Steam_3405340_Megabonk.x86_64.json\nSteam_3405340_tool32.json')" ] && [ ! -e "$FX/ThunksDB.json" ] \
+  && [ ! -e "$FX/retroforge-vulkan-icd.json" ] && [ "$(cfg Megabonk.x86_64)" = 'null ours' ] && [ "$(jget "$M" Config TSOEnabled)" = 1 ] \
+  && grep -q "through the x86 driver in FEX's guest, FEX TSO on" <<<"$ERR" \
+  && ok "x86: no thunks, the TSO setting stays (an x86 game has no other way to get it), the player's file kept" || bad "$(ls "$FX" "$FX/AppConfig") $(cat "$M" 2>&1) err=$ERR"
 direct -- game 3405340 set driver vulkan
 [ "$RC" = 2 ] && ok "set: a driver that is not a choice is refused" || bad "rc=$RC"
 rm "$FX/AppConfig/Steam_3405340_tool32.json"; direct -- game 3405340 set driver native; direct -- fex 3405340
-[ "$(cfg tool32)" = '{"GL": 1} ours' ] || bad "tool32: $(cfg tool32)"
+[ "$(cfg tool32)" = '{"GL": 1, "Vulkan": 1} ours' ] || bad "tool32: $(cfg tool32)"
+direct RETROFORGE_VULKAN_ICD="$T/none.json" -- fex 3405340
+[ "$(cfg Megabonk.x86_64)" = '{"GL": 1} ours' ] && [ -z "$(jget "$M" Config HostEnv)" ] && [ ! -e "$FX/retroforge-vulkan-icd.json" ] \
+  && python3 -c 'import json, sys; assert "Vulkan" not in json.load(open(sys.argv[1]))["DB"]' "$FX/ThunksDB.json" \
+  && ok "no Turnip manifest on the device: GL only, the Vulkan files gone" || bad "$(cat "$M") $(ls "$FX")"
+direct -- fex 3405340
 rm "$MB/bin/tool32"; direct -- fex 3405340
 [ ! -e "$FX/AppConfig/Steam_3405340_tool32.json" ] && [ -e "$FX/AppConfig/Steam_3405340_Megabonk.x86_64.json" ] \
   && ok "a program gone from the game: our file for it goes" || bad "$(ls "$FX/AppConfig")"

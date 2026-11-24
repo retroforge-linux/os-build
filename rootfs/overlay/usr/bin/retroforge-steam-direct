@@ -442,13 +442,24 @@ def save_game_setting(appid, key, value):
 #                  folder: FEX keys app configs by app id and program, so pressure-vessel's own x86
 #                  probes keep the x86 driver
 # Megabonk on the Air X (2026-11-23): the same frame rate (the A610 is its limit), ~20% less of the
-# CPU, its load ~2.5 s shorter. Vulkan stays on the guest's x86 Turnip: through FEX's Vulkan thunk
-# (with the device's Turnip named for the host side and Valve's x86-only layers dropped there) Megabonk
-# found the GPU, then died a minute in ("Vulkan - Out of memory! (allocating memory for buffer)"): the
-# shell's 512 MiB VRAM report limit had reached it (/usr/bin/steam drops it now; docs/steam-arm64.md).
+# CPU, its load ~2.5 s shorter.
+# Vulkan goes through FEX's Vulkan thunk too (64-bit only: Valve's tool has no 32-bit Vulkan guest
+# library). The host side's loader sees only the container's manifests, so the program's file also
+# names the device's Turnip for it (HostEnv VK_DRIVER_FILES -> retroforge-vulkan-icd.json, the host's
+# manifest with the library under /run/host) and empties Steam's VK_INSTANCE_LAYERS there (Valve's
+# Frame layers, which do not exist here; one HostEnv per JSON block, so through AppOverrides "*").
+# Megabonk on Vulkan (-force-vulkan, Air X, 2026-11-24): menu 108-111% of a core against 116-118% on
+# x86 Turnip, a run 207-233% against 237-244%, 19-20 frames a second against 18, and it gets the
+# gamescope WSI layer, which the x86 driver does not. (Its earlier out-of-memory was the shell's VRAM
+# report limit reaching it; /usr/bin/steam drops that now.)
+# FEX TSO goes in the same file (TSOEnabled): the player's choice, else Valve's hint for the game
+# (appinfo common/steam_frame_compatibility/configuration/tso_enable), as Valve's client sets it on the
+# Steam Frame; neither, and FEX's own default (on) stays. An x86 game never starts without the client,
+# so this file is the only way a TSO choice reaches it.
 # Native is the default; x86 removes our files. A file without our "RetroForge" key is the player's own
 # and stays. Proton games (a pfx in their compat data) and games with no x86 program are left alone.
-# TEST SEAM: RETROFORGE_STEAM_FEX_DEPTH (how deep the game's folder is searched, 3).
+# TEST SEAMS: RETROFORGE_STEAM_FEX_DEPTH (how deep the game's folder is searched, 3);
+# RETROFORGE_VULKAN_ICD (the device's Turnip manifest; none there: GL only).
 MARK = "written by retroforge-steam-direct for the game's graphics driver (Game settings)"
 FEX_DIRS = {
     64: ("/usr/lib/pressure-vessel/overrides/lib/x86_64-linux-gnu", "/usr/lib/x86_64-linux-gnu",
@@ -458,11 +469,45 @@ FEX_DIRS = {
 }
 
 
-def thunk_db():
-    def paths(names):
-        return [f"{d}/{n}" for bits in (64, 32) for d in FEX_DIRS[bits] for n in names]
-    return {"RetroForge": MARK, "DB": {
-        "GL": {"Library": "libGL-guest.so", "Overlay": paths(["libGL.so", "libGL.so.1", "libGL.so.1.2.0", "libGL.so.1.7.0"])}}}
+VULKAN_ICD = os.environ.get("RETROFORGE_VULKAN_ICD", "/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json")
+ICD_NAME = "retroforge-vulkan-icd.json"  # in the game's FEX folder; only ever ours
+
+
+def thunk_db(vulkan):
+    def paths(names, sizes=(64, 32)):
+        return [f"{d}/{n}" for bits in sizes for d in FEX_DIRS[bits] for n in names]
+    db = {"GL": {"Library": "libGL-guest.so", "Overlay": paths(["libGL.so", "libGL.so.1", "libGL.so.1.2.0", "libGL.so.1.7.0"])}}
+    if vulkan:  # Valve's entry adds Steam's own pinned copy, which FEX expands
+        db["Vulkan"] = {"Library": "libvulkan-guest.so", "Overlay": paths(["libvulkan.so", "libvulkan.so.1"], (64,))
+                        + ["@HOME@/.local/share/Steam/ubuntu12_32/steam-runtime/pinned_libs_64/libvulkan.so.1"]}
+    return {"RetroForge": MARK, "DB": db}
+
+
+def host_vulkan_icd():
+    """The device's Turnip manifest as the host side sees it in the container (/run/host), else None."""
+    try:
+        with open(VULKAN_ICD, encoding="utf-8") as f:
+            icd = json.load(f)
+        path = icd["ICD"]["library_path"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(path, str) or not path.startswith("/"):
+        return None
+    icd["ICD"]["library_path"] = "/run/host" + path
+    return icd
+
+
+def fex_tso(appid):
+    """TSOEnabled for an x86 game: "1"/"0" from the player's choice, else Valve's hint, else ""."""
+    choice = game_settings(appid)["tso"]
+    if choice in ("on", "off"):
+        return "1" if choice == "on" else "0"
+    sl = steam_library()
+    try:
+        app = sl.read_app_nodes(os.path.join(STEAM_ROOT, "appcache", "appinfo.vdf"), {appid}).get(appid, {})
+    except (OSError, sl.Unreadable):
+        return ""
+    return tso_hint(app)
 
 
 def x86_programs(folder):
@@ -544,22 +589,51 @@ def fex_driver(appid):
         return
     folder, programs = game
     native = game_settings(appid)["driver"] in ("default", "native")
+    icd = host_vulkan_icd() if native else None
+    icd_path = os.path.join(folder, ICD_NAME)
+    tso = fex_tso(appid)
     changed = False
     if native:
-        changed |= write_json(os.path.join(folder, "ThunksDB.json"), thunk_db())
+        changed |= write_json(os.path.join(folder, "ThunksDB.json"), thunk_db(icd is not None))
+        config = {"RetroForge": MARK, "ThunksDB": {"GL": 1}}
+        if icd:
+            text = json.dumps(icd, indent=1) + "\n"
+            try:
+                with open(icd_path, encoding="utf-8") as f:
+                    same = f.read() == text
+            except OSError:
+                same = False
+            if not same:
+                os.makedirs(folder, exist_ok=True)
+                with open(icd_path + ".part", "w", encoding="utf-8") as f:
+                    f.write(text)
+                os.replace(icd_path + ".part", icd_path)
+                changed = True
+            config = {"RetroForge": MARK, "Config": {"HostEnv": f"VK_DRIVER_FILES={icd_path}"},
+                      "AppOverrides": {"*": {"HostEnv": "VK_INSTANCE_LAYERS="}}, "ThunksDB": {"GL": 1, "Vulkan": 1}}
+        if tso:
+            config.setdefault("Config", {})["TSOEnabled"] = tso
+        for name in programs:
+            changed |= write_json(os.path.join(folder, "AppConfig", f"Steam_{appid}_{name}.json"), config)
+    elif tso:
         for name in programs:
             changed |= write_json(os.path.join(folder, "AppConfig", f"Steam_{appid}_{name}.json"),
-                                  {"RetroForge": MARK, "ThunksDB": {"GL": 1}})
+                                  {"RetroForge": MARK, "Config": {"TSOEnabled": tso}})
     for path in glob.glob(os.path.join(glob.escape(folder), "AppConfig", f"Steam_{appid}_*.json")) \
             + [os.path.join(folder, "ThunksDB.json")]:
         name = os.path.basename(path)[len(f"Steam_{appid}_"):-len(".json")]
-        keep = native and (path.endswith("/ThunksDB.json") or name in programs)
+        keep = (native and path.endswith("/ThunksDB.json")) or (name in programs and (native or bool(tso)))
         if not keep and ours(path):
             os.remove(path)
             changed = True
+    if not icd and os.path.exists(icd_path):
+        os.remove(icd_path)
+        changed = True
     if changed:
-        log(f"app {appid}: " + (f"GL through the device's own driver (FEX's thunk) for {', '.join(programs)}"
-                                if native else "GL through the x86 driver in FEX's guest"))
+        what = "GL and Vulkan" if icd else "GL"
+        log(f"app {appid}: " + (f"{what} through the device's own driver (FEX's thunks) for {', '.join(programs)}"
+                                if native else "GL and Vulkan through the x86 driver in FEX's guest")
+            + (f", FEX TSO {'on' if tso == '1' else 'off'}" if tso else ""))
 
 
 def beta_key(sl, appid):
@@ -718,8 +792,12 @@ def plan(appid):
     }
     if config:
         env["STEAM_COMPAT_CONFIG"] = config
-    if choice["tso"] in ("on", "off"):  # Proton's FEX config for the game (proton-fex-config.json)
-        env["STEAM_FEX_TSOENABLED"] = "1" if choice["tso"] == "on" else "0"
+    # Proton's FEX config for the game (proton-fex-config.json): the player's choice, else Valve's hint, as
+    # Valve's client sets it on the Steam Frame. Hades (hint off), Air X, 2026-11-24: its menu 181-185% of
+    # a core against 188-189% with TSO on, the same 59-60 frames a second.
+    tso = {"on": "1", "off": "0"}.get(choice["tso"]) or tso_hint(appinfo.get(appid, {}))
+    if tso:
+        env["STEAM_FEX_TSOENABLED"] = tso
     return {"command": command, "env": env, "workdir": workdir, "stamp": stamp, "waiting": bool(flags & 2)}
 
 
