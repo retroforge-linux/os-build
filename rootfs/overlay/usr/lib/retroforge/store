@@ -407,9 +407,13 @@ def runtime_dir(progress=None):
     return ours
 
 
-def proton_dir(store=None, gid=None, progress=None):
+def proton_dir(store=None, gid=None, progress=None, update=False):
     """The game's chosen Proton (game_choice "proton"), else the one steam-compat-tools keeps for this
-    CPU, installed when it is missing; progress(done, total) follows its download when given."""
+    CPU: as installed, and installed when it is missing; with update, brought to its newest release
+    first (a store's install). progress(done, total) follows a download when given.
+    A launch does not update it: `install` asks GitHub at every run, and a release out meant a ~356 MB
+    download and unpack before the game started. Steam's launches without the client leave updates
+    to Apps > Proton and Steam's start too."""
     name = game_choice(store, gid, "proton") if store else ""
     for base in ("compatibilitytools.d", os.path.join("steamapps", "common")):
         folder = os.path.join(STEAM_ROOT, base, name)
@@ -418,6 +422,14 @@ def proton_dir(store=None, gid=None, progress=None):
     if name:
         log(f"{store} {gid}: no Proton {name!r}; the default one")
     env = dict(os.environ, RETROFORGE_STEAM_ROOT=STEAM_ROOT)
+    if not update:
+        try:  # `status` never touches the network
+            res = subprocess.run([COMPAT_TOOLS, "status"], env=env, text=True, capture_output=True, timeout=30)
+            have = json.loads(res.stdout).get("path") if res.returncode == 0 else None
+        except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
+            have = None
+        if isinstance(have, str) and os.path.isfile(os.path.join(have, "proton")):
+            return have
     stop = threading.Event()
 
     def follow():
@@ -1439,7 +1451,7 @@ def main(argv):
             # finds the game there and fetches only the rest.
             install_tries(lambda: store.install(rest[0], percent_printer(0, 80)))
             runtime_dir(percent_printer(80, 85))
-            proton_dir(progress=percent_printer(85, 99))
+            proton_dir(progress=percent_printer(85, 99), update=True)
             umu_database()
             print("100%", flush=True)
         elif verb == "uninstall":

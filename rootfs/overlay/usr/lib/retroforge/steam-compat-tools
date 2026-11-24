@@ -12,7 +12,8 @@
 #                               retroforge-proton, which need the tool when it ends)
 #   steam-compat-tools status   print (JSON) the tool this device takes and what is installed of it:
 #                               {"name", "display_name", "author", "homepage", "installed": tag or
-#                               null, "armv8": true on an ARMv8.0 CPU}. Never touches the network.
+#                               null, "path": its complete folder or null, "armv8": true on an ARMv8.0
+#                               CPU}. Never touches the network (the store's launches use it so).
 #
 # WHICH GPUS NEED SAREK. The a6xx_gen1_low Adreno 610 (SM6115) and 613 (SM4450): no hardware
 # multiview, so no multiViewport, which every upstream DXVK requires; Turnip fakes it only under
@@ -760,7 +761,8 @@ def status(pin):
     return {"name": pin["name"], "display_name": pin["display_name"],
             "author": m.group(1) if m else None,
             "homepage": f"https://github.com/{m.group(1)}/{m.group(2)}" if m else None,
-            "installed": have["tag"] if have and have["tag"] else None, "armv8": lacks_atomics()}
+            "installed": have["tag"] if have and have["tag"] else None, "path": final if have else None,
+            "armv8": lacks_atomics()}
 
 
 def main(argv):

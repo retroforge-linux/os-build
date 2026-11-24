@@ -810,14 +810,15 @@ field() { python3 -c 'import json, sys; v = json.loads(sys.argv[1]).get(sys.argv
 CASE="proton: status"
 proton 0 status
 [ "$CRC" = 0 ] && [ "$(field "$COUT" installed)" = "$R2" ] && [ "$(field "$COUT" name)" = proton-cachyos-arm64 ] \
-  && [ "$(field "$COUT" display_name)" = "$SHOWN" ] && [ "$(field "$COUT" armv8)" = false ] \
-  && ok "the tool, its name and the installed release, as JSON" || bad "rc=$CRC out=$COUT err=$CERR"
+  && [ "$(field "$COUT" display_name)" = "$SHOWN" ] && [ "$(field "$COUT" armv8)" = false ] && [ "$(field "$COUT" path)" = "$TOOL" ] \
+  && ok "the tool, its name, the installed release and its folder, as JSON" || bad "rc=$CRC out=$COUT err=$CERR"
 rm -rf "$SROOT"
 proton 0 status
-[ "$(field "$COUT" installed)" = null ] && ok "installed null on a fresh card" || bad "out=$COUT"
+[ "$(field "$COUT" installed)" = null ] && [ "$(field "$COUT" path)" = null ] && ok "installed and path null on a fresh card" || bad "out=$COUT"
 mkdir -p "$TOOL"; touch "$TOOL/proton" "$TOOL/toolmanifest.vdf" "$TOOL/compatibilitytool.vdf"; printf 'tag: x\n' >"$TOOL/.retroforge-pin"
 proton 0 status
-[ "$(field "$COUT" installed)" = null ] && ok "installed null for a folder RetroForge did not install" || bad "out=$COUT"
+[ "$(field "$COUT" installed)" = null ] && [ "$(field "$COUT" path)" = null ] \
+  && ok "installed and path null for a folder RetroForge did not install" || bad "out=$COUT"
 rm -rf "$SROOT"
 OUT8="$("${NOPROXY[@]}" HOME="$T/home8" RETROFORGE_STEAM_ROOT="$S8" RETROFORGE_STEAM_PINS="$PINS8" RETROFORGE_CPUINFO="$T/cpuinfo-v80" \
         RETROFORGE_STEAM_COMPAT_TOOLS="$HELPER" bash "$CCLI" status 2>&1)"

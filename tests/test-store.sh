@@ -273,7 +273,15 @@ sys.exit(int(os.environ.get("FAKE_GAME_RC", "0")))
 PROTON = os.path.join(FAKE, "proton-x")
 os.makedirs(PROTON)
 open(os.path.join(PROTON, "proton"), "w").close()
-COMPAT = script("compat-tools", f"print({PROTON!r})\n")
+COMPAT_LOG = os.path.join(FAKE, "compat-tools.log")  # its arguments, a line a run
+COMPAT = script("compat-tools", f"""
+open({COMPAT_LOG!r}, "a").write(" ".join(sys.argv[1:]) + "\\n")
+if sys.argv[1:] == ["status"]:  # what is installed, from the card: FAKE_NO_PROTON, none
+    have = not os.environ.get("FAKE_NO_PROTON")
+    print(json.dumps({{"name": "proton-cachyos-arm64", "installed": "x" if have else None, "path": {PROTON!r} if have else None}}))
+else:
+    print({PROTON!r})
+""")
 RUNTIME = os.path.join(FAKE, "runtime")
 os.makedirs(RUNTIME)
 
@@ -703,6 +711,13 @@ ok(os.path.isfile(gog_cover + ".missing"), "one the store does not have is marke
 
 
 # ---- install -------------------------------------------------------------------------------------
+def compat_calls():
+    try:
+        return open(COMPAT_LOG).read().splitlines()
+    except FileNotFoundError:
+        return []
+
+
 def percents(out):
     return [int(line[:-1]) for line in out.split() if line.endswith("%")]
 
@@ -718,6 +733,9 @@ ok(os.path.isfile(os.path.join(DATA, "umu-database.csv")) and [s[0] for s in SEE
    "the umu-database is cached, for a first launch offline")
 r = store("epic", "games")
 ok({g["id"]: g["installed"] for g in json.loads(r.stdout)}["Fortnite2"] is True, "installed in the library")
+open(COMPAT_LOG, "w").close()
+store("epic", "install", "Fortnite4")
+ok(compat_calls() == ["install --wait"], "an install brings Proton to its newest release", str(compat_calls()))
 
 CASE = "install, the first one downloads Proton"
 COMPAT_SLOW = script("compat-tools-slow", f"""
@@ -845,6 +863,24 @@ os.remove(choices)
 reset_calls()
 store("gog", "launch", "1")
 ok(not [c for c in calls() if c[0] == "runner" and "wineboot" in c], "the prefix is set up once")
+
+CASE = "launch, Proton as installed"
+open(COMPAT_LOG, "w").close()
+reset_calls()
+store("gog", "launch", "1")
+ok(compat_calls() == ["status"] and game_run(calls())[4] == os.path.join(PROTON, "proton"),
+   "the installed one: no update check, no download before the game", str(compat_calls()))
+open(COMPAT_LOG, "w").close()
+reset_calls()
+store("gog", "launch", "1", env={"FAKE_NO_PROTON": "1"})
+ok(compat_calls() == ["status", "install --wait"] and game_run(calls())[4] == os.path.join(PROTON, "proton"),
+   "none installed: installed first", str(compat_calls()))
+open(COMPAT_LOG, "w").close()
+reset_calls()
+store("gog", "launch", "1", env={"RETROFORGE_STEAM_COMPAT_TOOLS": script("compat-tools-old", f"""
+print(json.dumps({{"installed": "x"}}) if sys.argv[1:] == ["status"] else {PROTON!r})
+""")})
+ok(game_run(calls())[4] == os.path.join(PROTON, "proton"), "a status without the folder: install finds it")
 
 CASE = "gog conflict"
 store("gog", "launch", "1", env={"FAKE_CONFLICT": "1"})
