@@ -448,7 +448,10 @@ FEX settings itself): the player's choice, else Valve's appinfo hint
 Frame, else nothing (shown beside the row; Hades, hint off, Air X 2026-11-24: its menu 181-185% of a
 core against 188-189% with TSO on, the same 59-60 frames a second). An x86 game, which never starts
 without the client, gets the same choice through its FEX app config (`TSOEnabled`, below); a Proton
-game the client starts gets neither; the resolution (below). The launch options are the ones
+game the client starts gets it through `compatdata/<appid>/user_settings.py`, which `/usr/bin/steam`
+has `retroforge-steam-direct fex` write before such a launch and which our Proton-CachyOS reads before
+it writes the game's FEX config (Valve's Proton 11 reads only its own `user_settings.py`); the
+resolution (below). The launch options are the ones
 Steam's dialog offers on a Steam Deck, as the client runs with `-steamdeck`: Windows, 64-bit, not
 `type none`, not another branch's (`BetaKey`), not `steamdeck 0`. Hades offers two, DirectX and
 "Vulkan - Steam Deck". A launch through the client does not use them.

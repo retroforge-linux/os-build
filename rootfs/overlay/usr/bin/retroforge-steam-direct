@@ -582,6 +582,49 @@ def write_json(path, value):
     return True
 
 
+# A Proton game the client starts gets no STEAM_FEX_TSOENABLED from us (a launch without the client
+# does, plan() below), and the arm64 client sets none. Our Proton (Proton-CachyOS) reads a per-game
+# compatdata/<appid>/user_settings.py before it writes the game's FEX config (Valve's Proton 11 reads
+# only its own), so that file carries the same choice: the player's, else Valve's hint. /usr/bin/steam
+# asks for it before a launch through the client. A user_settings.py that is not one of ours is the
+# player's and is left alone.
+TSO_SETTINGS = """\
+# Written by retroforge-steam-direct: FEX TSO for this game when Steam starts it (Game settings > FEX
+# TSO, else Valve's setting for the game on the Steam Frame). Edit it and it is yours.
+user_settings = {{
+    "STEAM_FEX_TSOENABLED": "{}",
+}}
+"""
+
+
+def proton_tso(appid):
+    """A Proton game's FEX TSO for launches through the client (compatdata/<appid>/user_settings.py)."""
+    found = manifest(steam_library(), appid)
+    if not found:
+        return
+    data = os.path.join(found[0], "steamapps", "compatdata", str(appid))
+    if not os.path.isdir(os.path.join(data, "pfx")):
+        return
+    path = os.path.join(data, "user_settings.py")
+    tso = fex_tso(appid)
+    want = TSO_SETTINGS.format(tso) if tso else None
+    try:
+        with open(path, encoding="utf-8") as f:
+            have = f.read()
+    except OSError:
+        have = None
+    if have == want or (have is not None and have not in (TSO_SETTINGS.format("0"), TSO_SETTINGS.format("1"))):
+        return
+    if want:
+        with open(path + ".part", "w", encoding="utf-8") as f:
+            f.write(want)
+        os.replace(path + ".part", path)
+    else:
+        os.remove(path)
+    log(f"app {appid}: FEX TSO " + ({"1": "on", "0": "off"}[tso] if tso else "as Proton has it")
+        + " when Steam starts it")
+
+
 def fex_driver(appid):
     """Give an x86 game the driver chosen for it (native: GL and Vulkan through FEX's thunks)."""
     game = x86_game(appid)
@@ -1025,6 +1068,7 @@ def main(argv):
     if cmd == "fex" and len(argv) == 2 and argv[1].isdigit():
         try:
             fex_driver(int(argv[1]))
+            proton_tso(int(argv[1]))
         except OSError as err:
             log(f"app {argv[1]}: could not set its graphics driver: {err}")
             return 1

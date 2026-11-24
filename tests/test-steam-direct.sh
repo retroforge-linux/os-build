@@ -464,6 +464,29 @@ direct -- fex 999
 [ "$RC" = 0 ] && ok "a game that is not installed: nothing, exit 0" || bad "rc=$RC err=$ERR"
 rm -rf "$MB" "$S/steamapps/appmanifest_3405340.acf" "$GAMES"
 
+CASE="fex: a Proton game's FEX TSO when the client starts it"
+US="$S/steamapps/compatdata/1145360/user_settings.py"; mkdir -p "$S/steamapps/compatdata/1145360/pfx"
+usv() { python3 -c 'import runpy, sys; print(runpy.run_path(sys.argv[1])["user_settings"]["STEAM_FEX_TSOENABLED"])' "$1" 2>&1; }
+direct -- fex 1145360
+[ "$RC" = 0 ] && [ "$(usv "$US")" = 0 ] && grep -q "app 1145360: FEX TSO off when Steam starts it" <<<"$ERR" \
+  && ok "Valve's hint (Hades: off) in the per-game user_settings.py our Proton reads" || bad "rc=$RC $(cat "$US" 2>&1) err=$ERR"
+direct -- fex 1145360
+[ -z "$ERR" ] && ok "again: nothing to change, nothing said" || bad "err=$ERR"
+direct -- game 1145360 set tso on; direct -- fex 1145360
+[ "$(usv "$US")" = 1 ] && ok "the player's choice over Valve's" || bad "$(cat "$US")"
+direct -- game 1145360 set tso default
+printf 'user_settings = {"PROTON_LOG": "1"}\n' >"$US"; direct -- fex 1145360
+[ "$(cat "$US")" = 'user_settings = {"PROTON_LOG": "1"}' ] && ok "a user_settings.py of the player's own is left as it is" || bad "$(cat "$US")"
+acf "$S" 4000 Other 4; mkdir -p "$S/steamapps/compatdata/4000/pfx"; O4="$S/steamapps/compatdata/4000/user_settings.py"
+direct -- fex 4000
+[ ! -e "$O4" ] && ok "no hint, no choice: no file (Proton's own default, on)" || bad "$(cat "$O4")"
+direct -- game 4000 set tso off; direct -- fex 4000
+[ "$(usv "$O4")" = 0 ] || bad "$(cat "$O4" 2>&1)"
+direct -- game 4000 set tso default; direct -- fex 4000
+[ ! -e "$O4" ] && grep -q "app 4000: FEX TSO as Proton has it when Steam starts it" <<<"$ERR" \
+  && ok "back to default with no hint: our file goes" || bad "$(ls "$S/steamapps/compatdata/4000") err=$ERR"
+rm -rf "$S/steamapps/compatdata/1145360" "$S/steamapps/compatdata/4000" "$S/steamapps/appmanifest_4000.acf" "$GAMES"
+
 CASE="run: Steam's game resolution"
 mkdir -p "$S/config" "$S/userdata/12345/config"
 printf '"users"\n{\n\t"76561197960278073"\n\t{\n\t\t"AccountName"\t\t"x"\n\t\t"MostRecent"\t\t"1"\n\t}\n}\n' >"$S/config/loginusers.vdf"
@@ -592,7 +615,9 @@ EOF
 chmod +x "$W/bin/systemctl"
 cat >"$W/stub-direct" <<EOF
 #!/usr/bin/env bash
-echo "\$*" >>"$W/direct.calls"; exit 1
+echo "\$*" >>"$W/direct.calls"
+case "\$1" in check|run) [ -n "\${STUB_ACCEPT:-}" ] && exit 0 ;; esac
+exit 1
 EOF
 cat >"$W/guest" <<EOF
 #!/usr/bin/env bash
@@ -714,8 +739,11 @@ wrap -- -silent steam://rungameid/1145360
   && ok "a game the helper refuses: asked once (and to set its graphics driver), then the client" || bad "direct: $(cat "$W/direct.calls" 2>&1)"
 mkdir -p "$S/steamapps/compatdata/1145360/pfx"
 wrap -- -silent steam://rungameid/1145360
-[ "$(cat "$W/direct.calls")" = "$(printf 'check 1145360\nremember')" ] \
-  && ok "a game Proton runs (a prefix in its compat data): its graphics driver not asked" || bad "direct: $(cat "$W/direct.calls" 2>&1)"
+[ "$(cat "$W/direct.calls")" = "$(printf 'check 1145360\nfex 1145360\nremember')" ] \
+  && ok "a game Proton runs (a prefix in its compat data), through the client: asked (its FEX TSO for our Proton)" || bad "direct: $(cat "$W/direct.calls" 2>&1)"
+wrap STUB_ACCEPT=1 -- -silent steam://rungameid/1145360
+grep -qx "check 1145360" "$W/direct.calls" && ! grep -q "^fex" "$W/direct.calls" \
+  && ok "the same game without the client: not asked (its launch sets TSO itself; Python's start is ~0.2 s)" || bad "direct: $(cat "$W/direct.calls" 2>&1)"
 rm -rf "$S/steamapps/compatdata/1145360"
 
 echo
