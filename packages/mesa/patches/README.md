@@ -159,11 +159,11 @@ board builds the same code as before.
 
 **HW check owed here:** not run on our Odin 3. A GL title on it, `dmesg | grep -c hangcheck` after.
 
-## Megabonk GPU hot paths (0023, 0024), added 2026-11-24
+## Megabonk GPU hot path (0023), added 2026-11-24
 
 Found on the MANGMI Air X (A610, 1050 MHz) in Megabonk (Unity, GL through FEX's thunk), 15 fps in a
 Forest run with the GPU the limit: freedreno's u_trace (`MESA_GPU_TRACES=print_csv`) put ~56 ms of GPU
-work in a frame. Both patches are ours, not posted upstream.
+work in a frame. The patch is ours, not posted upstream.
 
 - **0023-freedreno-a6xx-demote-ubwc-images-that-shaders-write.patch** — Unity's Post Processing v2
   ambient obscurance (MSVO) spent 22 ms a frame in compute, 12 ms in its first pass alone: it writes
