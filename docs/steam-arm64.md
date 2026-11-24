@@ -1054,18 +1054,19 @@ paths (VR streaming, pairing over the Frame's own hotspot, echo cancellation) sw
   virtual Xbox Elite 2 pad.
 - **Hardware decode.** The client decodes H.264/HEVC through its own stateful V4L2 decoder
   (`CV4L2Accel`): it probes `/dev/video-dec0..99` and `/dev/video0..99` for a mem2mem device, so
-  Iris (SM8250/8550/8650) and venus (SM6115, `VIDEO_QCOM_VENUS=m`) need no package in the image.
-  `70-retroforge-video-codec.rules` links `/dev/video-enc0`, and `/dev/video-dec0` on venus only:
-  the UI's Chromium decodes on the codec only when `/dev/video-dec0` exists, and on iris that is
-  slower and hotter than its CPU decode (four cores at 95 C on the Pocket FIT at its first sign-in,
-  2026-10-29; Nova-Deck measured the same and ships no link). On the SM6115 venus decodes the UI's
-  video up to its 1920x1088 frame limit, which `kernel/patches/1097` makes it report (larger video,
-  such as Steam's 1920x1200 startup movies, stays in software). Chromium reads every decoded frame
-  on the CPU, so `1098` maps venus's frames cached: uncached, a 1080p30 VP9 clip in Steam's UI
+  iris (every SoC; SM6115 and SM4450 since 2026-11-23 through `kernel/patches/1095`, venus before)
+  needs no package in the image. `70-retroforge-video-codec.rules` links `/dev/video-enc0`, and
+  `/dev/video-dec0` on the SM6115 only: the UI's Chromium decodes on the codec only when
+  `/dev/video-dec0` exists, and on SM8250/8550/8650 that is slower and hotter than its CPU decode
+  (four cores at 95 C on the Pocket FIT at its first sign-in, 2026-10-29; Nova-Deck measured the
+  same and ships no link). The SM4450 gets none until measured. On the SM6115 the codec decodes the
+  UI's video up to its 1920x1088 frame limit, which `kernel/patches/1097` makes it report (larger
+  video, such as Steam's 1920x1200 startup movies, stays in software). Chromium reads every decoded
+  frame on the CPU, so `1098` maps the frames cached: uncached, a 1080p30 VP9 clip in Steam's UI
   showed 180-188 of 300 frames at 167-175% CPU, worse than software; cached, 297-298 at 106-112%,
-  against software's 300 at 161-170% (MANGMI Air X, 2026-11-22). Iris may have the same uncached
-  cost, which nobody has measured yet. Without a decoder the client falls back to software (FFmpeg 8
-  in `libvideo.so`).
+  against software's 300 at 161-170% (venus on the MANGMI Air X, 2026-11-22; the iris ports of both
+  patches are not measured yet). Without a decoder the client falls back to software (FFmpeg 8 in
+  `libvideo.so`).
 - **Network.** The image has no firewall: discovery (UDP broadcast on 27036) and the stream
   (UDP 27031-27036, TCP 27036-27037) are open. A firewall added later must keep those open.
 - **Audio** goes through pipewire-pulse, as for everything else.

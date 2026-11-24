@@ -164,9 +164,11 @@ qca/htnv20.bin             qca/htnv20.bin           a4c0cbafc102998805679a2947aa
 # ---------------------------------------------------------------------------------------
 # Adreno 610 GPU microcode — the A610 runs the A630 SQE firmware.
 qcom/a630_sqe.fw           qcom/a630_sqe.fw           1c21b527d9183487cc550dabbb3f43e555df5a977a461934fc61f0635a9aa90c
-# Venus 6.0 video firmware, for VIDEO_QCOM_VENUS=m (kernel/kernel.config; on since 2026-10-16), which
-# loads it at probe. Qualcomm-signed for QCM2290: whether MANGMI's loader accepts it is a dmesg line on
-# the first boot, not yet seen. If it is refused, the vendor's venus.mbn goes in qcom-firmwares.
+# AR50_LITE Gen1 video firmware, which the Air X base DTS names in firmware-name. Driven by iris
+# since 2026-11-23 (kernel/patches/1095; venus before), which loads it at probe. Qualcomm-signed
+# for QCM2290, and the Air X accepts it: under venus the Steam UI decoded video on it
+# (rootfs/overlay/usr/lib/udev/rules.d/70-retroforge-video-codec.rules). The Air Y is untested;
+# if it refuses the image, the vendor's venus.mbn goes in qcom-firmwares.
 qcom/venus-6.0/venus.mbn   qcom/venus-6.0/venus.mbn   602d18992dbc11c7141472d4c68778d49277491ca7452ebf6115be0e6119572a
 # ---------------------------------------------------------------------------------------
 # SM4450 (Snapdragon G1 Gen 2) — Retroid Pocket Classic (all revisions) and Anbernic RG 55G1.
@@ -179,3 +181,8 @@ qcom/venus-6.0/venus.mbn   qcom/venus-6.0/venus.mbn   602d18992dbc11c7141472d4c6
 # ---------------------------------------------------------------------------------------
 ath10k/WCN3990/hw1.0/board-2.bin     ath10k/WCN3990/hw1.0/board-2.bin     c49d2f1894de6edc0ab0c8c9a17ca0328703747c49b6e9428f1de501c2c02c1d
 ath10k/WCN3990/hw1.0/firmware-5.bin  ath10k/WCN3990/hw1.0/firmware-5.bin  fef6539e0127579536bc977be57a90d018b83f2931fedc3a8870fbe38d6c4127
+# AR50_LITE Gen2 video firmware (VIDEO.VPU.2.6.2-0005), named by both boards' video node
+# (firmware-name) for iris (kernel/patches/1095). A real file in WHENCE, not a link. Added
+# 2026-11-23; its signature is Qualcomm's for QCM2290, and whether SM4450's loader accepts it is
+# not yet seen. If refused, the device's own gen2 image (venus_v7) is the fallback.
+qcom/vpu/ar50lt_p1_gen2_s6.mbn       qcom/vpu/ar50lt_p1_gen2_s6.mbn       a6dca0e79d1b072a223fb9b968f0f5f9b891de4f88d4f1bc24d17e5c3bc73d4b

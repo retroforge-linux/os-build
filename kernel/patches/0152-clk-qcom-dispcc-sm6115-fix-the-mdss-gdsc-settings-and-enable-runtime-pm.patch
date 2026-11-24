@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 02:00:00 -0800
+Subject: [PATCH] clk: qcom: dispcc-sm6115: fix the MDSS GDSC settings and
+ enable runtime PM
+
+The SM6115 MDSS GDSC sits at the same register as the QCM2290 one
+(0x5f03000 in both vendor trees), and gets the fixes Qualcomm made for
+QCM2290 in v7.3:
+
+ 08cfbfd81dd6 clk: qcom: qcm2290: Update DISPCC and GPUCC GDSC *wait_val values
+ 6b0044bc75b0 clk: qcom: qcm2290: Set POLL_CFG_GDSCR flag for DISPCC and GPUCC GDSCs
+ 899dfd90229e clk: qcom: qcm2290: Add RETAIN_FF_ENABLE flag for DISPCC and GPUCC GDSCs
+ 11345cbf17ca clk: qcom: dispcc-qcm2290: Enable runtime PM support
+
+Wait values: the hardware defaults, 0x2/0x2/0xf. Without them gdsc.c
+writes its own defaults (EN_FEW 0x8, CLK_DIS 0x2), which per the QCM2290
+commit can stall the GDSC state machine. The vendor bengal kernel never
+writes these fields, so it runs on the hardware defaults too.
+POLL_CFG_GDSCR: the GDSCR status bit may not show the real state.
+RETAIN_FF_ENABLE: register context is kept across GDSC collapse.
+use_rpm: the DT now puts DISPCC on VDD_CX (our 1173); with runtime PM its
+vote is dropped when no display clock is in use instead of held for good.
+
+Not posted. Not HW-tested.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/clk/qcom/dispcc-sm6115.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/dispcc-sm6115.c b/drivers/clk/qcom/dispcc-sm6115.c
+index 4abe2bd9aea3..79ac03d27275 100644
+--- a/drivers/clk/qcom/dispcc-sm6115.c
++++ b/drivers/clk/qcom/dispcc-sm6115.c
+@@ -520,11 +520,14 @@ static const struct qcom_reset_map disp_cc_sm6115_resets[] = {
+ 
+ static struct gdsc mdss_gdsc = {
+ 	.gdscr = 0x3000,
++	.en_rest_wait_val = 0x2,
++	.en_few_wait_val = 0x2,
++	.clk_dis_wait_val = 0xf,
+ 	.pd = {
+ 		.name = "mdss_gdsc",
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+-	.flags = HW_CTRL,
++	.flags = HW_CTRL | POLL_CFG_GDSCR | RETAIN_FF_ENABLE,
+ };
+ 
+ static struct gdsc *disp_cc_sm6115_gdscs[] = {
+@@ -572,6 +575,7 @@ static const struct qcom_cc_desc disp_cc_sm6115_desc = {
+ 	.num_resets = ARRAY_SIZE(disp_cc_sm6115_resets),
+ 	.gdscs = disp_cc_sm6115_gdscs,
+ 	.num_gdscs = ARRAY_SIZE(disp_cc_sm6115_gdscs),
++	.use_rpm = true,
+ };
+ 
+ static const struct of_device_id disp_cc_sm6115_match_table[] = {
+-- 
+2.47.0
+

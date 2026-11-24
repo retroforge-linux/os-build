@@ -1,0 +1,33 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 02:20:00 -0800
+Subject: [PATCH] arm64: dts: qcom: sm6115: add the CX power domain to DISPCC
+
+The same as 26d7b23caa4b ("arm64: dts: qcom: agatti: Add missing CX power
+domain to DISPCC") for SM6115: put DISPCC on VDD_CX, so the genpd
+performance votes of its MDSS GDSC reach the CX rail. DISPCC takes runtime
+PM with it (our 0152), so the vote goes away when no display clock is in
+use. After 1172 (both edit the DISPCC node).
+
+Not posted. Not HW-tested.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ arch/arm64/boot/dts/qcom/sm6115.dtsi | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/arch/arm64/boot/dts/qcom/sm6115.dtsi b/arch/arm64/boot/dts/qcom/sm6115.dtsi
+index bdab343bd4a5..10b9f8422ba1 100644
+--- a/arch/arm64/boot/dts/qcom/sm6115.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6115.dtsi
+@@ -2188,6 +2188,7 @@ dispcc: clock-controller@5f00000 {
+ 				 <&mdss_dsi0_phy DSI_PIXEL_PLL_CLK>,
+ 				 <&gcc GCC_DISP_GPLL0_DIV_CLK_SRC>,
+ 				 <&rpmcc RPM_SMD_XO_A_CLK_SRC>;
++			power-domains = <&rpmpd SM6115_VDDCX>;
+ 			#clock-cells = <1>;
+ 			#reset-cells = <1>;
+ 			#power-domain-cells = <1>;
+-- 
+2.47.0
+

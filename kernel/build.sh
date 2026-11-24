@@ -207,16 +207,12 @@ fi
   #       A declared invariant that nothing checks is not a guard -- so check it here.
   #   =y  SQUASHFS + OVERLAY_FS: the /etc overlay mounts a squashfs seed. Losing either leaves
   #       a root that boots with an empty or read-only /etc.
-  #   =m  VIDEO_QCOM_IRIS: the video decoder on SM8250, SM8550 and SM8650, and the hinge of an
-  #       interlock that is invisible from either side on its own. venus/core.c hides its
-  #       qcom,sm8250-venus entry behind #if !IS_ENABLED(CONFIG_VIDEO_QCOM_IRIS), so with iris
-  #       enabled it is the sole claimant of that node and firmware/LINUX_FW.pin ships the blob
-  #       under IRIS's name (qcom/vpu/vpu20_p4.mbn). Drop iris to =n and venus silently takes
-  #       the node back, asks for qcom/vpu-1.0/venus.mbn, and finds nothing. Either way the only
-  #       symptom is video decode quietly not working on a device with no console.
-  #   =m  VIDEO_QCOM_VENUS: the SM6115's decoder (its qcom,qcm2290-venus fallback is not behind
-  #       that #if). Lose it and the SM6115 has no /dev/video* -- Steam's Remote Play client then
-  #       falls back to software decode on four A73s, again with no other symptom.
+  #   =m  VIDEO_QCOM_IRIS: the video codec on every SoC we ship (SM6115 and SM4450 through
+  #       patch 1095's AR50_LITE support), and venus is off. venus/core.c hides its
+  #       qcom,sm8250-venus and qcom,qcm2290-venus entries behind
+  #       #if !IS_ENABLED(CONFIG_VIDEO_QCOM_IRIS), and firmware/LINUX_FW.pin ships the blobs
+  #       under iris's names. Lose iris and no SoC has a /dev/video*: Steam's Remote Play
+  #       client and the Steam UI fall back to software decode, with no other symptom.
   #   =y  NETFILTER_NETLINK: no prompt of its own, so it is here only through NF_TABLES' select.
   #       Without it systemd execs modprobe at every unit start and waits (kernel.config, nfnetlink),
   #       a boot-time cost with no failure anywhere to show it.
@@ -228,7 +224,7 @@ fi
   #       cost with no other symptom. defconfig had CPU_IDLE only through ACPI's select.
   #   =y  USB_STORAGE + USB_UAS: a root on a USB drive. With UAS a module, usb-storage refuses a
   #       UAS drive and the initramfs, which loads no modules, never sees it.
-  for pair in CFG80211=m MAC80211=m TOUCHSCREEN_CHIPONE_TDDI=m VIDEO_QCOM_IRIS=m VIDEO_QCOM_VENUS=m \
+  for pair in CFG80211=m MAC80211=m TOUCHSCREEN_CHIPONE_TDDI=m VIDEO_QCOM_IRIS=m \
               NETFILTER_NETLINK=y EFI_ZBOOT=y KERNEL_GZIP=y RD_ZSTD=y CPU_IDLE=y ARM_PSCI_CPUIDLE=y \
               USB_STORAGE=y USB_UAS=y \
               BLK_DEV_DM=y DM_VERITY=y VFAT_FS=y BLK_DEV_LOOP=y \

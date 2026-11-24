@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 23 Nov 2026 12:30:00 -0800
+Subject: [PATCH] clk: qcom: gcc-sm4450: Set HW_CTRL_TRIGGER for video GDSC
+
+The iris video driver uses dev_pm_genpd_set_hwmode() to switch the
+vcodec0 GDSC between HW and SW control at runtime, which needs the
+domain to have HW_CTRL_TRIGGER. HW_CTRL instead puts it in HW mode for
+good at every enable, and genpd then refuses the switch, so iris could
+not start its core.
+
+The same change upstream made for gcc-sm6115 (ab171a6afd4e) and
+gcc-qcm2290 (972380704660), which share the SM4450's AR50_LITE core.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/clk/qcom/gcc-sm4450.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/clk/qcom/gcc-sm4450.c b/drivers/clk/qcom/gcc-sm4450.c
+index 2001ed54c9c5..16fda714eac4 100644
+--- a/drivers/clk/qcom/gcc-sm4450.c
++++ b/drivers/clk/qcom/gcc-sm4450.c
+@@ -2591,7 +2591,7 @@ static struct gdsc gcc_vcodec0_gdsc = {
+ 		.name = "gcc_vcodec0_gdsc",
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+-	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | HW_CTRL,
++	.flags = POLL_CFG_GDSCR | RETAIN_FF_ENABLE | HW_CTRL_TRIGGER,
+ };
+ 
+ static struct gdsc gcc_venus_gdsc = {
+-- 
+2.47.0
+

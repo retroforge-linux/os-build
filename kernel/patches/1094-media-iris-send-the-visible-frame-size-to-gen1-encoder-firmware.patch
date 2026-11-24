@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 10:29:33 -0800
+Subject: [PATCH] media: iris: send the visible frame size to gen1 encoder
+ firmware
+
+The gen1 encoder sent the firmware the padded source (fmt_src: width
+aligned to 128, height to 32) as the input frame size, and the CAPTURE
+format as the output size. When the two differ the firmware sets up a
+scale. At 1280x720 the input is 1280x736 and the output 1280x720, and on
+AR50_LITE (QCM2290/SM6115), which has no scaler, the firmware rejects the
+session with HFI_ERR_SESSION_UNSUPPORTED_PROPERTY for
+HFI_PROPERTY_PARAM_VPE_ROTATION (0x3007001):
+
+  qcom-iris 5a00000.video-codec: session error for command: 3007001,
+  event id:1007
+
+On a MANGMI Air X (SM6115, venus-6.0 gen1 firmware), H.264 and HEVC at
+1280x720 and at 854x480 (padded to 896x480) failed this way. 1920x1080
+and 1280x768 encoded, 1920x1080 as a 1920x1088 picture with the padding
+rows in it.
+
+Send the visible size, enc_raw_*, as the input and the requested size,
+enc_scale_*, as the output, as Qualcomm's msm_vidc driver does on both
+SM8250 and SM6115 (msm_venc_set_frame_size() sends the client's unpadded
+sizes) and as the gen2 path does with HFI_PROP_RAW_RESOLUTION. The padding
+still reaches the firmware through
+HFI_PROPERTY_PARAM_UNCOMPRESSED_PLANE_ACTUAL_INFO (stride and scanlines),
+and the firmware crops the coded size in the SPS.
+
+With this, all four sizes encode on the Air X for both codecs: 1920x1080
+is now 1920x1080 coded as 1088 (PSNR 51.0 dB H.264, 41.3 dB HEVC against
+the source), 1280x720 HEVC is coded as 736, 854x480 as 864x480, and the
+pictures are intact. SM8250 takes the same path and is untested.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ .../qcom/iris/iris_hfi_gen1_command.c         | 23 +++++++++++++------
+ 1 file changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+index f6e9cbfccd09..15e0fca282d6 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+@@ -794,20 +794,29 @@ static int iris_hfi_gen1_set_resolution(struct iris_inst *inst, u32 plane)
+ 
+ 	if (!iris_drc_pending(inst) && !(inst->sub_state & IRIS_INST_SUB_FIRST_IPSC)) {
+ 		fs.buffer_type = HFI_BUFFER_INPUT;
+-		fs.width = inst->fmt_src->fmt.pix_mp.width;
+-		fs.height = inst->fmt_src->fmt.pix_mp.height;
++		if (inst->domain == ENCODER) {
++			/* The visible size: the padding is in the plane info */
++			fs.width = inst->enc_raw_width;
++			fs.height = inst->enc_raw_height;
++		} else {
++			fs.width = inst->fmt_src->fmt.pix_mp.width;
++			fs.height = inst->fmt_src->fmt.pix_mp.height;
++		}
+ 
+ 		ret = hfi_gen1_set_property(inst, ptype, &fs, sizeof(fs));
+ 		if (ret)
+ 			return ret;
+ 	}
+-	if (inst->domain == DECODER)
++	if (inst->domain == DECODER) {
+ 		fs.buffer_type = HFI_BUFFER_OUTPUT2;
+-	else
++		fs.width = inst->fmt_dst->fmt.pix_mp.width;
++		fs.height = inst->fmt_dst->fmt.pix_mp.height;
++	} else {
++		/* Not the coded size, or the firmware takes it for a scale */
+ 		fs.buffer_type = HFI_BUFFER_OUTPUT;
+-
+-	fs.width = inst->fmt_dst->fmt.pix_mp.width;
+-	fs.height = inst->fmt_dst->fmt.pix_mp.height;
++		fs.width = inst->enc_scale_width;
++		fs.height = inst->enc_scale_height;
++	}
+ 
+ 	return hfi_gen1_set_property(inst, ptype, &fs, sizeof(fs));
+ }

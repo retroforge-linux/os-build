@@ -1,0 +1,106 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Loic Poulain <loic.poulain@oss.qualcomm.com>
+Date: Tue, 17 Nov 2026 11:46:53 +0100
+Subject: [PATCH] media: qcom: iris: venc: fix encoder crop handling
+
+All three patches of Loic Poulain's v2
+<20261117-iris-fixes-v2-0-0b21201ab137@oss.qualcomm.com>, applied with
+git am onto v7.3.5, so the hunks are his byte for byte. Not yet in
+linux-next (next-20261123):
+
+ 1/3 media: qcom: iris: venc: keep the crop rectangle in visible resolution space
+ 2/3 media: qcom: iris: venc: detect scaling against the visible resolution
+ 3/3 media: qcom: iris: venc: reject encoder crop rectangles larger than the source
+
+The encoder keeps the source size twice: fmt_src is the padded buffer
+(width aligned to 128, height to 32), enc_raw_* the visible size. The
+crop rectangle, the scaling check and the S_SELECTION bound used the
+padded one. On gen2 (the SM4450 here) a 1280x720 session sent a bottom
+crop offset of 720 - 736, which wraps; on gen1 a 1280x720 CAPTURE format
+was taken for a 736 -> 720 scale. Our 1094 sends enc_raw_* and
+enc_scale_* to the gen1 firmware, the sizes this series keeps visible.
+
+Tested by the author on QCS8300 (gen2). v2 splits the crop and scale
+fixes as Bryan O'Donoghue asked in his review of v1.
+
+Fixes: d9967fa37ca9 ("media: qcom: iris: Improve format alignment for encoder")
+Signed-off-by: Loic Poulain <loic.poulain@oss.qualcomm.com>
+---
+ drivers/media/platform/qcom/iris/iris_venc.c | 24 ++++++++++++++----------
+ drivers/media/platform/qcom/iris/iris_vidc.c |  4 ++--
+ 2 files changed, 16 insertions(+), 12 deletions(-)
+diff --git a/drivers/media/platform/qcom/iris/iris_venc.c b/drivers/media/platform/qcom/iris/iris_venc.c
+index a945992f63aa..d6404630676b 100644
+--- a/drivers/media/platform/qcom/iris/iris_venc.c
++++ b/drivers/media/platform/qcom/iris/iris_venc.c
+@@ -223,14 +223,18 @@ static int iris_venc_s_fmt_output(struct iris_inst *inst, struct v4l2_format *f)
+ 	 * If output format size != input format size,
+ 	 * it is considered a scaling case,
+ 	 * and the scaled size needs to be saved.
++	 * Compare against the visible source resolution.
+ 	 */
+-	if (f->fmt.pix_mp.width != inst->fmt_src->fmt.pix_mp.width ||
+-	    f->fmt.pix_mp.height != inst->fmt_src->fmt.pix_mp.height) {
++	if (f->fmt.pix_mp.width != inst->enc_raw_width ||
++	    f->fmt.pix_mp.height != inst->enc_raw_height) {
+ 		inst->enc_scale_width = f->fmt.pix_mp.width;
+ 		inst->enc_scale_height = f->fmt.pix_mp.height;
+-		fmt->fmt.pix_mp.width = ALIGN(f->fmt.pix_mp.width, codec_align);
+-		fmt->fmt.pix_mp.height = ALIGN(f->fmt.pix_mp.height, codec_align);
+ 	}
++
++	/* The CAPTURE queue reports the coded size, in whole macroblocks. */
++	fmt->fmt.pix_mp.width = ALIGN(f->fmt.pix_mp.width, codec_align);
++	fmt->fmt.pix_mp.height = ALIGN(f->fmt.pix_mp.height, codec_align);
++
+ 	fmt->fmt.pix_mp.num_planes = 1;
+ 	fmt->fmt.pix_mp.plane_fmt[0].bytesperline = 0;
+ 	fmt->fmt.pix_mp.plane_fmt[0].sizeimage = iris_get_buffer_size(inst, BUF_OUTPUT);
+@@ -276,8 +280,8 @@ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
+ 	fmt->fmt.pix_mp.quantization = f->fmt.pix_mp.quantization;
+ 
+ 	output_fmt = inst->fmt_dst;
+-	output_fmt->fmt.pix_mp.width = fmt->fmt.pix_mp.width;
+-	output_fmt->fmt.pix_mp.height = fmt->fmt.pix_mp.height;
++	output_fmt->fmt.pix_mp.width = f->fmt.pix_mp.width;
++	output_fmt->fmt.pix_mp.height = f->fmt.pix_mp.height;
+ 	output_fmt->fmt.pix_mp.colorspace = fmt->fmt.pix_mp.colorspace;
+ 	output_fmt->fmt.pix_mp.xfer_func = fmt->fmt.pix_mp.xfer_func;
+ 	output_fmt->fmt.pix_mp.ycbcr_enc = fmt->fmt.pix_mp.ycbcr_enc;
+@@ -295,8 +299,8 @@ static int iris_venc_s_fmt_input(struct iris_inst *inst, struct v4l2_format *f)
+ 	    f->fmt.pix_mp.height != inst->crop.height) {
+ 		inst->crop.top = 0;
+ 		inst->crop.left = 0;
+-		inst->crop.width = fmt->fmt.pix_mp.width;
+-		inst->crop.height = fmt->fmt.pix_mp.height;
++		inst->crop.width = f->fmt.pix_mp.width;
++		inst->crop.height = f->fmt.pix_mp.height;
+ 
+ 		iris_venc_s_fmt_output(inst, output_fmt);
+ 	}
+@@ -359,8 +363,8 @@ int iris_venc_s_selection(struct iris_inst *inst, struct v4l2_selection *s)
+ 		s->r.left = 0;
+ 		s->r.top = 0;
+ 
+-		if (s->r.width > inst->fmt_src->fmt.pix_mp.width ||
+-		    s->r.height > inst->fmt_src->fmt.pix_mp.height)
++		if (s->r.width > inst->enc_raw_width ||
++		    s->r.height > inst->enc_raw_height)
+ 			return -EINVAL;
+ 
+ 		inst->crop.left = s->r.left;
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+index f1d7f186002d..ce5aea4583bc 100644
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -504,8 +504,8 @@ static int iris_g_selection(struct file *filp, void *fh, struct v4l2_selection *
+ 		switch (s->target) {
+ 		case V4L2_SEL_TGT_CROP_BOUNDS:
+ 		case V4L2_SEL_TGT_CROP_DEFAULT:
+-			s->r.width = inst->fmt_src->fmt.pix_mp.width;
+-			s->r.height = inst->fmt_src->fmt.pix_mp.height;
++			s->r.width = inst->enc_raw_width;
++			s->r.height = inst->enc_raw_height;
+ 			break;
+ 		case V4L2_SEL_TGT_CROP:
+ 			s->r.width = inst->crop.width;

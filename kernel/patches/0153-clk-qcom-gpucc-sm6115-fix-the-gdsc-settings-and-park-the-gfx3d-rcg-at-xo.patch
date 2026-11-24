@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 02:10:00 -0800
+Subject: [PATCH] clk: qcom: gpucc-sm6115: fix the GDSC settings and park the
+ GFX3D RCG at XO
+
+The SM6115 GPU CX and GX GDSCs sit at the same registers as the QCM2290
+ones (0x599106c and 0x599100c in both vendor trees), and get the fixes
+Qualcomm made for QCM2290 in v7.3:
+
+ 08cfbfd81dd6 clk: qcom: qcm2290: Update DISPCC and GPUCC GDSC *wait_val values
+ 6b0044bc75b0 clk: qcom: qcm2290: Set POLL_CFG_GDSCR flag for DISPCC and GPUCC GDSCs
+ 899dfd90229e clk: qcom: qcm2290: Add RETAIN_FF_ENABLE flag for DISPCC and GPUCC GDSCs
+ ab46b5fb668b clk: qcom: gpucc-qcm2290: Park RCG's clk source at XO during disable
+
+Wait values 0x2/0x2/0x2, the hardware defaults, except the CX clock
+disable wait: the vendor bengal kernel programs 8 there
+(qcom,clk-dis-wait-val in bengal-gdsc.dtsi), and that is kept.
+POLL_CFG_GDSCR on GX only; CX reports through gds_hw_ctrl.
+RETAIN_FF_ENABLE on both. The GFX3D RCG uses the shared ops, so it is
+parked at XO while disabled, as the hardware team asks for QCM2290.
+
+Kept as SM6115 has them: VOTABLE on GX (QCM2290's GX has none), and no
+AON_RESET (vendor scuba resets the GX AON logic, vendor bengal does not).
+
+Not posted. Not HW-tested.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/clk/qcom/gpucc-sm6115.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/clk/qcom/gpucc-sm6115.c b/drivers/clk/qcom/gpucc-sm6115.c
+index 08f2635b0c20..7ef1e7604d58 100644
+--- a/drivers/clk/qcom/gpucc-sm6115.c
++++ b/drivers/clk/qcom/gpucc-sm6115.c
+@@ -230,7 +230,7 @@ static struct clk_rcg2 gpu_cc_gx_gfx3d_clk_src = {
+ 		.parent_data = gpu_cc_parent_data_1,
+ 		.num_parents = ARRAY_SIZE(gpu_cc_parent_data_1),
+ 		.flags = CLK_SET_RATE_PARENT | CLK_OPS_PARENT_ENABLE,
+-		.ops = &clk_rcg2_ops,
++		.ops = &clk_rcg2_shared_ops,
+ 	},
+ };
+ 
+@@ -397,11 +397,14 @@ static struct clk_branch gpu_cc_hlos1_vote_gpu_smmu_clk = {
+ static struct gdsc gpu_cx_gdsc = {
+ 	.gdscr = 0x106c,
+ 	.gds_hw_ctrl = 0x1540,
++	.en_rest_wait_val = 0x2,
++	.en_few_wait_val = 0x2,
++	.clk_dis_wait_val = 0x8,
+ 	.pd = {
+ 		.name = "gpu_cx_gdsc",
+ 	},
+ 	.pwrsts = PWRSTS_OFF_ON,
+-	.flags = VOTABLE,
++	.flags = RETAIN_FF_ENABLE | VOTABLE,
+ };
+ 
+ static struct gdsc gpu_gx_gdsc = {
+@@ -409,12 +412,15 @@ static struct gdsc gpu_gx_gdsc = {
+ 	.clamp_io_ctrl = 0x1508,
+ 	.resets = (unsigned int []){ GPU_GX_BCR },
+ 	.reset_count = 1,
++	.en_rest_wait_val = 0x2,
++	.en_few_wait_val = 0x2,
++	.clk_dis_wait_val = 0x2,
+ 	.pd = {
+ 		.name = "gpu_gx_gdsc",
+ 	},
+ 	.parent = &gpu_cx_gdsc.pd,
+ 	.pwrsts = PWRSTS_OFF_ON,
+-	.flags = CLAMP_IO | SW_RESET | VOTABLE,
++	.flags = RETAIN_FF_ENABLE | POLL_CFG_GDSCR | CLAMP_IO | SW_RESET | VOTABLE,
+ };
+ 
+ static struct clk_regmap *gpu_cc_sm6115_clocks[] = {
+-- 
+2.47.0
+

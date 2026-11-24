@@ -1,23 +1,27 @@
-# retroforge video codec links — /dev/video-enc0 for the hardware encoder; /dev/video-dec0 on venus only.
+# retroforge video codec links — /dev/video-enc0 for the hardware encoder; /dev/video-dec0 on SM6115 only.
 #
-# The SoCs' video block is a stateful V4L2 mem2mem device: qcom-iris on SM8250/SM8550/SM8650, venus
-# on SM6115 (kernel/kernel.config). Its nodes are /dev/videoN with N in probe order.
+# The SoCs' video block is a stateful V4L2 mem2mem device, driven by qcom-iris on every SoC we ship
+# (SM6115 and SM4450 since 2026-11-23, kernel/patches/1095; venus before). Its nodes are
+# /dev/videoN with N in probe order.
 #
 # The Steam UI's Chromium (libcef) decodes video through V4L2 only when /dev/video-dec0 exists.
-# Iris gets no decoder link, deliberately (user, 2026-10-29): there that path is worse than its CPU
-# decode. The Steam UI ran four cores near 100% at 95 C on the KONKR Pocket FIT (SM8650) at its
-# first sign-in, two of them its V4L2Dev threads; Nova-Deck measured it slower and ~2.5x the total
-# CPU on SM8250 and no gain on SM8650 (its docs/video-decode.md), and ships no such link either.
-# Venus gets one (2026-11-22), with two kernel patches. 1097: its frames are limited to 8160
+# SM8250/SM8550/SM8650 get no decoder link, deliberately (user, 2026-10-29): there that path is
+# worse than their CPU decode. The Steam UI ran four cores near 100% at 95 C on the KONKR Pocket FIT
+# (SM8650) at its first sign-in, two of them its V4L2Dev threads; Nova-Deck measured it slower and
+# ~2.5x the total CPU on SM8250 and no gain on SM8650 (its docs/video-decode.md), and ships no such
+# link either. SM4450 gets none until someone measures it (user, 2026-11-23).
+# The SM6115 gets one (2026-11-22), with two kernel patches, measured under venus and ported to
+# iris for AR50_LITE (2026-11-23, not yet measured there). 1097: its frames are limited to 8160
 # macroblocks (1920x1088), which it now reports, so Chromium sends larger video (Steam's 1920x1200
-# startup movies) to software instead of to a decoder that returns no frame. 1098: its decoded
-# frames are mapped cached; Chromium reads each one on the CPU, and uncached it showed 180-188 of
-# 300 frames of a 1080p30 VP9 clip at 167-175% CPU, worse than software. With both, in Steam's UI
-# on the MANGMI Air X: 297-298 of 300 frames, none dropped, 106-112% CPU, against software's 300
-# at 161-170%. Steam's Remote Play client (streaming_client, CV4L2Accel) probes /dev/video0..99 as well as
-# video-dec0..99, so it finds either decoder with or without a link.
-# The names are each driver's video_device name (iris_probe.c, venus vdec.c/venc.c, 7.2.10); the
-# nodes keep systemd's root:video 0660, and the session user is in `video`.
+# startup movies) to software. 1098: its decoded frames are mapped cached; Chromium reads each one
+# on the CPU, and uncached it showed 180-188 of 300 frames of a 1080p30 VP9 clip at 167-175% CPU,
+# worse than software. With both, in Steam's UI on the MANGMI Air X: 297-298 of 300 frames, none
+# dropped, 106-112% CPU, against software's 300 at 161-170%.
+# The SM6115 is told apart by its platform device's modalias, which lists the node's compatibles
+# ("of:Nvideo-codecT(null)Cqcom,sm6115-venusCqcom,qcm2290-venus"); the SM4450 shares only the
+# qcm2290 fallback. Steam's Remote Play client (streaming_client, CV4L2Accel) probes
+# /dev/video0..99 as well as video-dec0..99, so it finds the decoder with or without a link.
+# The names are iris's video_device names (iris_probe.c); the nodes keep systemd's root:video 0660,
+# and the session user is in `video`.
 SUBSYSTEM=="video4linux", ATTR{name}=="qcom-iris-encoder", SYMLINK+="video-enc0"
-SUBSYSTEM=="video4linux", ATTR{name}=="qcom-venus-encoder", SYMLINK+="video-enc0"
-SUBSYSTEM=="video4linux", ATTR{name}=="qcom-venus-decoder", SYMLINK+="video-dec0"
+SUBSYSTEM=="video4linux", ATTR{name}=="qcom-iris-decoder", ATTRS{modalias}=="*Cqcom,sm6115-venusC*", SYMLINK+="video-dec0"

@@ -1,0 +1,118 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 23 Nov 2026 12:20:00 -0800
+Subject: [PATCH] media: iris: give decoded frames a cached CPU mapping on
+ AR50_LITE
+
+The SM6115's video core is not cache-coherent, so its MMAP CAPTURE
+buffers are mapped uncached, and a client that reads a decoded frame on
+the CPU reads DRAM without the cache. Chromium's V4L2 decoder does, for
+every frame: with venus on the SM6115 (Cortex-A73) a 1080p30 VP9 stream
+showed 180-188 of 300 frames, dropped 55-62 and used 167-175% CPU, worse
+than its software decoder (300 frames at 161-170%).
+
+On platforms that set cached_dec_capture (only AR50_LITE here), let the
+decoder's CAPTURE queue take cache hints and ask for non-coherent memory
+for its MMAP buffers, so vb2 allocates them cached and cleans and
+invalidates them at QBUF and DQBUF. With venus the same stream then
+showed 297-298 of 300 frames with none dropped at 106-112% CPU.
+
+The same change as our venus patch of 2026-11-22, which this replaces now
+that iris drives the SM6115. On a cache-coherent core (the SM4450's) vb2
+syncs nothing and the flag changes nothing.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/iris/iris_platform_common.h     |    2 
+ drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c |    1 
+ drivers/media/platform/qcom/iris/iris_vidc.c                |   38 +++++++++++-
+ 3 files changed, 39 insertions(+), 2 deletions(-)
+
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -350,6 +350,8 @@ struct iris_platform_data {
+ 	bool no_rpmh;
+ 	/* Report only frame sizes that fit inst_caps->max_mbpf. */
+ 	bool framesizes_fit_mbpf;
++	/* Map decoded MMAP frames cached (non-coherent memory). */
++	bool cached_dec_capture;
+ 	u32 wd_intr_mask;
+ 	u32 icc_ib_multiplier;
+ 	u32 max_session_count;
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
+@@ -109,6 +109,7 @@ const struct iris_platform_data qcm2290_data = {
+ 	.num_vpp_pipe = 1,
+ 	.no_rpmh = true,
+ 	.framesizes_fit_mbpf = true,
++	.cached_dec_capture = true,
+ 	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
+ 	.icc_ib_multiplier = 2,
+ 	.max_session_count = 8,
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -142,6 +142,9 @@ iris_m2m_queue_init(void *priv, struct vb2_queue *src_
+ 	dst_vq->min_reqbufs_allocation = MIN_BUFFERS;
+ 	dst_vq->dev = inst->core->dev;
+ 	dst_vq->lock = &inst->ctx_q_lock;
++	if (inst->domain == DECODER &&
++	    inst->core->iris_platform_data->cached_dec_capture)
++		dst_vq->allow_cache_hints = 1;
+ 
+ 	return vb2_queue_init(dst_vq);
+ }
+@@ -390,8 +393,39 @@ static int iris_g_fmt_vid_mplane(struct file *filp, vo
+ 	mutex_unlock(&inst->lock);
+ 
+ 	return ret;
++}
++
++/*
++ * A client that reads decoded frames on the CPU (Chromium's V4L2 decoder)
++ * reads uncached DRAM on a non-coherent core unless the frames are cached;
++ * vb2 then cleans and invalidates them at QBUF and DQBUF.
++ */
++static int iris_dec_reqbufs(struct file *filp, void *fh,
++			    struct v4l2_requestbuffers *rb)
++{
++	struct iris_inst *inst = iris_get_inst(filp);
++
++	if (inst->core->iris_platform_data->cached_dec_capture &&
++	    rb->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
++	    rb->memory == V4L2_MEMORY_MMAP)
++		rb->flags |= V4L2_MEMORY_FLAG_NON_COHERENT;
++
++	return v4l2_m2m_ioctl_reqbufs(filp, fh, rb);
+ }
+ 
++static int iris_dec_create_bufs(struct file *filp, void *fh,
++				struct v4l2_create_buffers *cb)
++{
++	struct iris_inst *inst = iris_get_inst(filp);
++
++	if (inst->core->iris_platform_data->cached_dec_capture &&
++	    cb->format.type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE &&
++	    cb->memory == V4L2_MEMORY_MMAP)
++		cb->flags |= V4L2_MEMORY_FLAG_NON_COHERENT;
++
++	return v4l2_m2m_ioctl_create_bufs(filp, fh, cb);
++}
++
+ static int iris_enum_framesizes(struct file *filp, void *fh,
+ 				struct v4l2_frmsizeenum *fsize)
+ {
+@@ -700,9 +734,9 @@ static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops
+ 	.vidioc_g_fmt_vid_cap_mplane    = iris_g_fmt_vid_mplane,
+ 	.vidioc_g_fmt_vid_out_mplane    = iris_g_fmt_vid_mplane,
+ 	.vidioc_enum_framesizes         = iris_enum_framesizes,
+-	.vidioc_reqbufs                 = v4l2_m2m_ioctl_reqbufs,
++	.vidioc_reqbufs                 = iris_dec_reqbufs,
+ 	.vidioc_querybuf                = v4l2_m2m_ioctl_querybuf,
+-	.vidioc_create_bufs             = v4l2_m2m_ioctl_create_bufs,
++	.vidioc_create_bufs             = iris_dec_create_bufs,
+ 	.vidioc_prepare_buf             = v4l2_m2m_ioctl_prepare_buf,
+ 	.vidioc_expbuf                  = v4l2_m2m_ioctl_expbuf,
+ 	.vidioc_qbuf                    = v4l2_m2m_ioctl_qbuf,
+-- 
+2.47.0
+

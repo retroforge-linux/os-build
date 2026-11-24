@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 23 Nov 2026 12:10:00 -0800
+Subject: [PATCH] media: iris: report the tallest frame the macroblock limit
+ allows on AR50_LITE
+
+VIDIOC_ENUM_FRAMESIZES reports the platform's width and height limits,
+but AR50_LITE also limits a frame to 8160 macroblocks (1920x1088), which
+a stepwise range cannot express: it reports 128x128 - 1920x1920.
+
+A client that checks only the reported bounds takes the decoder for
+streams it cannot decode. Chromium's V4L2 decoder does: it would send
+Steam's 1920x1200 VP9 startup movies (9000 macroblocks) to the decoder
+instead of to software.
+
+On platforms that set framesizes_fit_mbpf (only AR50_LITE here), report
+the tallest frame that fits at the widest width instead. Portrait frames
+taller than that leave the reported range, although the hardware could
+decode them.
+
+The same change as our venus patch of 2026-11-22, which this replaces now
+that iris drives the SM6115.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/iris/iris_platform_common.h     |    2 ++
+ drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c |    1 +
+ drivers/media/platform/qcom/iris/iris_vidc.c                |   12 ++++++++++++
+ 3 files changed, 15 insertions(+)
+
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -348,6 +348,8 @@ struct iris_platform_data {
+ 	u32 num_vpp_pipe;
+ 	bool no_aon;
+ 	bool no_rpmh;
++	/* Report only frame sizes that fit inst_caps->max_mbpf. */
++	bool framesizes_fit_mbpf;
+ 	u32 wd_intr_mask;
+ 	u32 icc_ib_multiplier;
+ 	u32 max_session_count;
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
+@@ -108,6 +108,7 @@ const struct iris_platform_data qcm2290_data = {
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_ar50lt),
+ 	.num_vpp_pipe = 1,
+ 	.no_rpmh = true,
++	.framesizes_fit_mbpf = true,
+ 	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
+ 	.icc_ib_multiplier = 2,
+ 	.max_session_count = 8,
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -397,6 +397,7 @@ static int iris_enum_framesizes(struct file *filp, voi
+ {
+ 	struct iris_inst *inst = iris_get_inst(filp);
+ 	struct platform_inst_caps *caps;
++	u32 cols, rows;
+ 	int ret = 0;
+ 
+ 	if (fsize->index)
+@@ -419,6 +420,17 @@ static int iris_enum_framesizes(struct file *filp, voi
+ 	fsize->stepwise.min_height = caps->min_frame_height;
+ 	fsize->stepwise.max_height = caps->max_frame_height;
+ 	fsize->stepwise.step_height = STEP_HEIGHT;
++
++	/*
++	 * A stepwise range cannot express the macroblocks-per-frame limit, so
++	 * report the tallest frame that fits it at the widest width.
++	 */
++	if (inst->core->iris_platform_data->framesizes_fit_mbpf) {
++		cols = DIV_ROUND_UP(caps->max_frame_width, 16);
++		rows = caps->max_mbpf / cols;
++		if (rows * 16 < fsize->stepwise.max_height)
++			fsize->stepwise.max_height = rows * 16;
++	}
+ 
+ 	return ret;
+ }
+-- 
+2.47.0
+

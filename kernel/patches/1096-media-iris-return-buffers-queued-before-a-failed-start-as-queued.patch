@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Tue, 24 Nov 2026 10:30:25 -0800
+Subject: [PATCH] media: iris: return buffers queued before a failed start as
+ QUEUED
+
+vb2_start_streaming() hands the queued buffers to buf_queue() before it
+calls start_streaming(). When the instance is already in the error state,
+iris_vb2_buf_queue() completed each of them with VB2_BUF_STATE_ERROR, so
+they sat on the done list when iris_vb2_start_streaming() then failed with
+-EBUSY, and vb2 warned:
+
+  qcom-iris 5a00000.video-codec: session error for command: 3007001,
+  event id:1007
+  WARNING: drivers/media/common/videobuf2/videobuf2-core.c:1821 at
+  vb2_start_streaming+0xdc/0x180, CPU#5: ffmpeg/5354
+
+Seen when the firmware rejected an encoder session after STREAMON on the
+OUTPUT queue and userspace then started the CAPTURE queue.
+
+Before start_streaming() has been called, put the buffer on the m2m queue
+instead; start_streaming() fails on the error state and returns it with
+VB2_BUF_STATE_QUEUED, as vb2 requires.
+
+Tested on a MANGMI Air X (SM6115) with the trigger above: the same
+session error now fails the CAPTURE STREAMON with -EBUSY and no warning.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/iris/iris_vb2.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
+index 8faf709c26c1..620d83642d94 100644
+--- a/drivers/media/platform/qcom/iris/iris_vb2.c
++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
+@@ -300,6 +300,11 @@ void iris_vb2_buf_queue(struct vb2_buffer *vb2)
+ 
+ 	mutex_lock(&inst->lock);
+ 	if (inst->state == IRIS_INST_ERROR) {
++		/* Before start_streaming, which fails and returns it as QUEUED */
++		if (!vb2_start_streaming_called(vb2->vb2_queue)) {
++			v4l2_m2m_buf_queue(inst->m2m_ctx, vbuf);
++			goto exit;
++		}
+ 		ret = -EBUSY;
+ 		goto exit;
+ 	}

@@ -1,0 +1,4028 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 23 Nov 2026 12:00:00 -0800
+Subject: [PATCH] media: iris: backport AR50_LITE support from 7.4
+
+Every iris and venus commit between v7.3 and v7.4-rc4 that v7.3.5 does
+not already carry, in upstream order, all in v7.4-rc1:
+
+ 8921f6da06fd media: venus: Drop session events without an instance
+ 452480931648 media: iris: cancel sys error work on driver removal
+ 6f4eb91fa276 Revert "media: iris: Add Gen2 firmware autodetect and fallback"
+ a9ff61527805 media: iris: Add Gen2 firmware autodetect and fallback
+ aaab46c331c2 media: iris: Skip UBWC configuration when not supported
+ dc518127ff16 media: iris: drop IRIS_FMT_foo enumeration
+ 84663751b845 media: iris: Filter UBWC raw formats based on hardware capabilities
+ 0183b3f5505e media: iris: Introduce set_preset_register as a vpu_op
+ 35f2e53cdb63 media: iris: Introduce interrupt_init as a vpu_op
+ f2a793f2f386 media: iris: add vpu op hook to disable ARP buffer
+ 2623cd6afd01 media: iris: Add platform data field for watchdog interrupt mask
+ f3e7dc02ef40 media: iris: Add platform flag for instantaneous bandwidth voting
+ 857bc9c35eca media: iris: skip PIPE if it is not supported by the platform
+ 92b9674e4754 media: iris: Add framework support for AR50_LITE video core
+ bfe9dfe9dd91 media: iris: add minimal GET_PROPERTY implementation
+ d2375076b540 media: iris: update buffer requirements based on received info
+ e53f8feb2e40 media: iris: implement support for the Agatti platform
+ c60ced8bd1cd media: iris: Introduce buffer size calculations for AR50LT
+ 4278c4e87a2f media: iris: add Gen2 firmware support on the Agatti platform
+ 0016f9cbcf87 media: venus: skip QCM2290 if Iris driver is enabled
+ 49f9ad996ea5 media: iris: constify inst_fw_cap_sm8250_dec
+ f301102c17f2 media: iris: fail firmware boot on invalid uc_region
+ 428e6f95e685 media: iris: take core lock when scanning the instance list
+ 95f9e9fc9336 media: iris: guard against a NULL hfi_sys_ops in the interrupt handler
+ 397ebadcbc21 media: iris: reject open() when the session limit is reached
+ af5f7df6c8b3 media: iris: reference count video instances
+ 1237888922a7 media: iris: cache work mode after computing it in iris_set_stage
+ a6ee1766b3db media: iris: force stage 1 work mode for CBR RC on encoder
+ 5f21cd9a4ae4 media: iris: add support for multi_slice in iris encoder
+ 89a3d2a2237e media: iris: fix 64-bit division in iris_set_slice_count()
+
+They give iris the AR50_LITE core of QCM2290, which the SM6115 (through
+its qcom,qcm2290-venus fallback) and the SM4450 (our video node) share,
+with Gen1 (qcom/venus-6.0/venus.mbn) and Gen2
+(qcom/vpu/ar50lt_p1_gen2_s6.mbn) firmware. With iris built, venus no
+longer claims qcom,qcm2290-venus (0016f9cbcf87).
+
+Not taken: 4dd10fbbeb9c (treewide devm_kmalloc_obj() conversion; 7.3
+has no such API), so iris_probe.c and venus/core.c keep their 7.3
+allocation calls. Seven others are in v7.3.5 already through stable.
+With those two exceptions the iris and venus trees match v7.4-rc4.
+All thirty cherry-pick onto v7.3.5 without conflicts.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/iris/Makefile          |   2 +
+ drivers/media/platform/qcom/iris/iris_core.c       |   6 +
+ drivers/media/platform/qcom/iris/iris_ctrls.c      |  96 +++
+ drivers/media/platform/qcom/iris/iris_ctrls.h      |   1 +
+ drivers/media/platform/qcom/iris/iris_firmware.c   | 119 ++-
+ drivers/media/platform/qcom/iris/iris_hfi_common.c |   7 +-
+ drivers/media/platform/qcom/iris/iris_hfi_common.h |   1 +
+ drivers/media/platform/qcom/iris/iris_hfi_gen1.c   | 406 ++++++++-
+ .../platform/qcom/iris/iris_hfi_gen1_command.c     |  30 +
+ .../platform/qcom/iris/iris_hfi_gen1_defines.h     |  15 +
+ .../platform/qcom/iris/iris_hfi_gen1_response.c    |  82 ++
+ drivers/media/platform/qcom/iris/iris_hfi_gen2.c   | 945 +++++++++++++++++++++
+ .../platform/qcom/iris/iris_hfi_gen2_defines.h     |   2 +
+ .../platform/qcom/iris/iris_hfi_gen2_packet.c      |   3 +
+ .../platform/qcom/iris/iris_hfi_gen2_response.c    |   1 +
+ drivers/media/platform/qcom/iris/iris_instance.h   |  18 +-
+ .../platform/qcom/iris/iris_platform_common.h      |  32 +
+ .../media/platform/qcom/iris/iris_platform_vpu2.c  |  13 +-
+ .../media/platform/qcom/iris/iris_platform_vpu3x.c |  25 +-
+ .../platform/qcom/iris/iris_platform_vpu_ar50lt.c  | 118 +++
+ drivers/media/platform/qcom/iris/iris_probe.c      |   6 +
+ drivers/media/platform/qcom/iris/iris_resources.c  |   2 +
+ drivers/media/platform/qcom/iris/iris_utils.c      |   6 +
+ drivers/media/platform/qcom/iris/iris_utils.h      |   1 +
+ drivers/media/platform/qcom/iris/iris_vb2.c        |   6 +-
+ drivers/media/platform/qcom/iris/iris_vdec.c       |  34 +-
+ drivers/media/platform/qcom/iris/iris_venc.c       |  33 +-
+ drivers/media/platform/qcom/iris/iris_vidc.c       |  44 +-
+ drivers/media/platform/qcom/iris/iris_vpu2.c       |  30 +-
+ drivers/media/platform/qcom/iris/iris_vpu3x.c      |   6 +
+ drivers/media/platform/qcom/iris/iris_vpu4x.c      |   2 +
+ drivers/media/platform/qcom/iris/iris_vpu_ar50lt.c | 130 +++
+ drivers/media/platform/qcom/iris/iris_vpu_buffer.c | 370 ++++++++
+ drivers/media/platform/qcom/iris/iris_vpu_buffer.h |  38 +
+ drivers/media/platform/qcom/iris/iris_vpu_common.c |  45 +-
+ drivers/media/platform/qcom/iris/iris_vpu_common.h |   6 +
+ .../platform/qcom/iris/iris_vpu_register_defines.h |   1 -
+ drivers/media/platform/qcom/venus/core.c           |   4 +-
+ drivers/media/platform/qcom/venus/hfi_msgs.c       |   3 +
+ 39 files changed, 2573 insertions(+), 116 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/Makefile b/drivers/media/platform/qcom/iris/Makefile
+index 48e415cbc439..bbd1f724963e 100644
+--- a/drivers/media/platform/qcom/iris/Makefile
++++ b/drivers/media/platform/qcom/iris/Makefile
+@@ -14,6 +14,7 @@ qcom-iris-objs += iris_buffer.o \
+              iris_hfi_queue.o \
+              iris_platform_vpu2.o \
+              iris_platform_vpu3x.o \
++             iris_platform_vpu_ar50lt.o \
+              iris_power.o \
+              iris_probe.o \
+              iris_resources.o \
+@@ -26,6 +27,7 @@ qcom-iris-objs += iris_buffer.o \
+              iris_vpu2.o \
+              iris_vpu3x.o \
+              iris_vpu4x.o \
++             iris_vpu_ar50lt.o \
+              iris_vpu_buffer.o \
+              iris_vpu_common.o \
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_core.c b/drivers/media/platform/qcom/iris/iris_core.c
+index 8c335dbfce16..d558475986ff 100644
+--- a/drivers/media/platform/qcom/iris/iris_core.c
++++ b/drivers/media/platform/qcom/iris/iris_core.c
+@@ -6,6 +6,7 @@
+ #include <linux/pm_runtime.h>
+ 
+ #include "iris_core.h"
++#include "iris_ctrls.h"
+ #include "iris_firmware.h"
+ #include "iris_state.h"
+ #include "iris_vpu_common.h"
+@@ -51,6 +52,7 @@ static int iris_wait_for_system_response(struct iris_core *core)
+ 
+ int iris_core_init(struct iris_core *core)
+ {
++	const struct vpu_ops *vpu_ops = core->iris_platform_data->vpu_ops;
+ 	int ret;
+ 
+ 	mutex_lock(&core->lock);
+@@ -84,7 +86,11 @@ int iris_core_init(struct iris_core *core)
+ 	if (ret)
+ 		goto error_unload_fw;
+ 
++	if (vpu_ops->disable_arp)
++		vpu_ops->disable_arp(core);
++
+ 	core->iris_firmware_data->init_hfi_ops(core);
++	iris_session_init_caps(core);
+ 
+ 	ret = iris_hfi_core_init(core);
+ 	if (ret)
+diff --git a/drivers/media/platform/qcom/iris/iris_ctrls.c b/drivers/media/platform/qcom/iris/iris_ctrls.c
+index bf17d310eac0..4f2633bbb49f 100644
+--- a/drivers/media/platform/qcom/iris/iris_ctrls.c
++++ b/drivers/media/platform/qcom/iris/iris_ctrls.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
++#include <linux/math64.h>
+ #include <linux/types.h>
+ #include <media/v4l2-mem2mem.h>
+ 
+@@ -156,6 +157,12 @@ static enum platform_inst_fw_cap_type iris_get_cap_id(u32 id)
+ 		return LAYER5_BITRATE_HEVC;
+ 	case V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME:
+ 		return REQUEST_SYNC_FRAME;
++	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE:
++		return SLICE_MODE;
++	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_BYTES:
++		return SLICE_MAX_BYTES;
++	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB:
++		return SLICE_MAX_MB;
+ 	default:
+ 		return INST_FW_CAP_MAX;
+ 	}
+@@ -301,6 +308,12 @@ static u32 iris_get_v4l2_id(enum platform_inst_fw_cap_type cap_id)
+ 		return V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L5_BR;
+ 	case REQUEST_SYNC_FRAME:
+ 		return V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME;
++	case SLICE_MODE:
++		return V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE;
++	case SLICE_MAX_BYTES:
++		return V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_BYTES;
++	case SLICE_MAX_MB:
++		return V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MAX_MB;
+ 	default:
+ 		return 0;
+ 	}
+@@ -523,8 +536,13 @@ int iris_set_stage(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id
+ 	if (inst->domain == DECODER) {
+ 		if (iris_res_is_less_than(width, height, 1280, 720))
+ 			work_mode = STAGE_1;
++	} else if (inst->domain == ENCODER) {
++		if (inst->fw_caps[BITRATE_MODE].value == V4L2_MPEG_VIDEO_BITRATE_MODE_CBR)
++			work_mode = STAGE_1;
+ 	}
+ 
++	inst->fw_caps[cap_id].value = work_mode;
++
+ 	return hfi_ops->session_set_property(inst, hfi_id,
+ 					     HFI_HOST_FLAGS_NONE,
+ 					     iris_get_port_info(inst, cap_id),
+@@ -538,6 +556,9 @@ int iris_set_pipe(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id)
+ 	u32 work_route = inst->fw_caps[PIPE].value;
+ 	u32 hfi_id = inst->fw_caps[cap_id].hfi_id;
+ 
++	if (!hfi_id)
++		return 0;
++
+ 	return hfi_ops->session_set_property(inst, hfi_id,
+ 					     HFI_HOST_FLAGS_NONE,
+ 					     iris_get_port_info(inst, cap_id),
+@@ -1518,6 +1539,81 @@ int iris_set_time_delta_based_rc(struct iris_inst *inst, enum platform_inst_fw_c
+ 					     &value, sizeof(u32));
+ }
+ 
++int iris_set_slice_count(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id)
++{
++	const struct platform_inst_slice_caps *slice_caps =
++		inst->core->iris_platform_data->slice_caps;
++	const struct iris_hfi_session_ops *hfi_ops = inst->hfi_session_ops;
++	u32 output_height = inst->fmt_dst->fmt.pix_mp.height;
++	u32 output_width = inst->fmt_dst->fmt.pix_mp.width;
++	u32 mbpf = NUM_MBS_PER_FRAME(output_height, output_width);
++	u32 max_width, max_height, min_width, min_height;
++	u32 slice_mode = inst->fw_caps[cap_id].value;
++	u32 max_avg_slicesize, hfi_value, hfi_id;
++	u32 rc_type = inst->hfi_rc_type;
++	u32 fps = inst->frame_rate;
++
++	if (slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE) {
++		dev_dbg(inst->core->dev, "slice mode is single slice, ignore setting to fw\n");
++		return 0;
++	}
++	if (fps > slice_caps->max_slice_frame_rate ||
++	    (rc_type != HFI_RC_OFF && rc_type != HFI_RC_CBR_CFR &&
++	    rc_type != HFI_RC_CBR_VFR)) {
++		dev_err(inst->core->dev, "slice unsupported, fps: %u, rc_type: %#x\n",
++			fps, rc_type);
++		return -EINVAL;
++	}
++
++	max_width = (slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB) ?
++			slice_caps->max_mb_slice_width : slice_caps->max_bytes_slice_width;
++	max_height = (slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB) ?
++			slice_caps->max_mb_slice_height : slice_caps->max_bytes_slice_height;
++	min_width = (inst->codec == V4L2_PIX_FMT_HEVC) ?
++			slice_caps->min_hevc_slice_width : slice_caps->min_avc_slice_width;
++	min_height = slice_caps->min_slice_height;
++
++	if (output_width < min_width || output_height < min_height ||
++	    output_width > max_width || output_height > max_height) {
++		dev_err(inst->core->dev, "slice unsupported, codec: %#x wxh: [%dx%d]\n",
++			inst->codec, output_width, output_height);
++		return -EINVAL;
++	}
++
++	if (slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB) {
++		hfi_value = inst->fw_caps[SLICE_MAX_MB].value;
++		hfi_value = max(hfi_value, DIV_ROUND_UP(mbpf, slice_caps->max_slices_per_frame));
++		if (inst->codec == V4L2_PIX_FMT_HEVC)
++			hfi_value = (hfi_value + 3) / 4;
++		hfi_id = inst->fw_caps[SLICE_MAX_MB].hfi_id;
++	} else if (slice_mode == V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES) {
++		hfi_value = inst->fw_caps[SLICE_MAX_BYTES].value;
++		if (rc_type != HFI_RC_OFF) {
++			max_avg_slicesize =
++				DIV_ROUND_UP_ULL(div_u64(inst->fw_caps[BITRATE].value, fps) / 8,
++						 slice_caps->max_slices_per_frame);
++		} else {
++			/*
++			 * No bitrate target exists under RC_OFF, so approximate a
++			 * worst-case frame size the same way size_bin_bitstream_enc()
++			 * does for buffer allocation, to keep the slice count bounded.
++			 */
++			max_avg_slicesize = DIV_ROUND_UP(output_width * output_height * 3,
++							 slice_caps->max_slices_per_frame);
++		}
++		hfi_value = max(hfi_value, max_avg_slicesize);
++		hfi_id = inst->fw_caps[SLICE_MAX_BYTES].hfi_id;
++	} else {
++		return -EINVAL;
++	}
++
++	return hfi_ops->session_set_property(inst, hfi_id,
++					     HFI_HOST_FLAGS_NONE,
++					     iris_get_port_info(inst, cap_id),
++					     HFI_PAYLOAD_U32,
++					     &hfi_value, sizeof(u32));
++}
++
+ int iris_set_properties(struct iris_inst *inst, u32 plane)
+ {
+ 	const struct iris_hfi_session_ops *hfi_ops = inst->hfi_session_ops;
+diff --git a/drivers/media/platform/qcom/iris/iris_ctrls.h b/drivers/media/platform/qcom/iris/iris_ctrls.h
+index 5180d53d3c90..08db80744420 100644
+--- a/drivers/media/platform/qcom/iris/iris_ctrls.h
++++ b/drivers/media/platform/qcom/iris/iris_ctrls.h
+@@ -49,6 +49,7 @@ int iris_set_layer_count_gen2(struct iris_inst *inst, enum platform_inst_fw_cap_
+ int iris_set_layer_bitrate(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_req_sync_frame(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_time_delta_based_rc(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
++int iris_set_slice_count(struct iris_inst *inst, enum platform_inst_fw_cap_type cap_id);
+ int iris_set_properties(struct iris_inst *inst, u32 plane);
+ 
+ #endif
+diff --git a/drivers/media/platform/qcom/iris/iris_firmware.c b/drivers/media/platform/qcom/iris/iris_firmware.c
+index 21cdf1c39835..21f57d37da18 100644
+--- a/drivers/media/platform/qcom/iris/iris_firmware.c
++++ b/drivers/media/platform/qcom/iris/iris_firmware.c
+@@ -15,8 +15,6 @@
+ 
+ #define IRIS_PAS_ID				9
+ 
+-#define MAX_FIRMWARE_NAME_SIZE	128
+-
+ /* Detect Gen2 firmware by scanning the blob for:
+  *   QC_IMAGE_VERSION_STRING=<version>
+  * and then checking:
+@@ -64,52 +62,118 @@ static bool iris_detect_gen2_from_fwdata(const u8 *data, size_t size)
+ 	return false;
+ }
+ 
+-static const struct firmware *iris_detect_firmware(struct iris_core *core,
+-						   const char **fw_name)
++/*
++ * Load the firmware image and return the descriptor that was used to pick the
++ * file. On a platform that provides only one generation, or when no DT
++ * firmware-name override is present, the returned descriptor is final. With a
++ * DT override on a dual-generation platform the returned descriptor is only a
++ * default; iris_detect_firmware() inspects the loaded image to confirm it.
++ */
++static const struct firmware *iris_load_firmware(struct iris_core *core,
++						 const char **fw_name,
++						 const struct iris_firmware_desc **fw_desc)
+ {
++	const struct iris_firmware_desc *desc;
+ 	const struct firmware *firmware;
+ 	bool has_both_gens;
+ 	int ret;
+ 
+ 	*fw_name = NULL;
++	ret = of_property_read_string_index(dev_of_node(core->dev), "firmware-name", 0, fw_name);
++
++	/*
++	 * A platform may support both Gen1 and Gen2 firmware; which one is used
++	 * depends on the firmware image installed on the system, not on the
++	 * hardware. That installed image does not change while the device is
++	 * bound, so the generation is detected only once and the chosen
++	 * descriptor is reused on later core bring-ups (e.g. after a system
++	 * error recovery).
++	 */
++	if (core->iris_firmware_desc) {
++		if (ret)
++			*fw_name = core->iris_firmware_desc->fwname;
++		ret = request_firmware(&firmware, *fw_name, core->dev);
++		if (ret)
++			return ERR_PTR(ret);
++		*fw_desc = core->iris_firmware_desc;
++		return firmware;
++	}
++
++	has_both_gens = core->iris_platform_data->firmware_desc_gen2 &&
++		core->iris_platform_data->firmware_desc_gen1;
++
+ 	if (core->iris_platform_data->firmware_desc_gen2)
+-		core->iris_firmware_desc = core->iris_platform_data->firmware_desc_gen2;
++		desc = core->iris_platform_data->firmware_desc_gen2;
+ 	else if (core->iris_platform_data->firmware_desc_gen1)
+-		core->iris_firmware_desc = core->iris_platform_data->firmware_desc_gen1;
++		desc = core->iris_platform_data->firmware_desc_gen1;
+ 	else
+ 		return ERR_PTR(-EINVAL);
+ 
+-	has_both_gens = core->iris_platform_data->firmware_desc_gen2 &&
+-		core->iris_platform_data->firmware_desc_gen1;
+-
+-	ret = of_property_read_string_index(dev_of_node(core->dev), "firmware-name", 0, fw_name);
+ 	if (ret) {
+-		*fw_name = core->iris_firmware_desc->fwname;
+-		ret = request_firmware(&firmware, *fw_name, core->dev);
++		/* No firmware-name in DT: select by probing Gen2 then Gen1. */
++		*fw_name = desc->fwname;
++		if (has_both_gens)
++			ret = firmware_request_nowarn(&firmware, *fw_name, core->dev);
++		else
++			ret = request_firmware(&firmware, *fw_name, core->dev);
+ 		if (ret && has_both_gens) {
+-			core->iris_firmware_desc = core->iris_platform_data->firmware_desc_gen1;
+-			*fw_name = core->iris_firmware_desc->fwname;
++			desc = core->iris_platform_data->firmware_desc_gen1;
++			*fw_name = desc->fwname;
+ 			ret = request_firmware(&firmware, *fw_name, core->dev);
+ 		}
+-
+-		return ret ? ERR_PTR(ret) : firmware;
++	} else {
++		/* firmware-name given: iris_detect_firmware() picks the gen. */
++		ret = request_firmware(&firmware, *fw_name, core->dev);
+ 	}
+-
+-	ret = request_firmware(&firmware, *fw_name, core->dev);
+ 	if (ret)
+ 		return ERR_PTR(ret);
+ 
+-	if (has_both_gens &&
+-	    !iris_detect_gen2_from_fwdata((const u8 *)firmware->data, firmware->size)) {
+-		dev_info(core->dev, "Gen1 FW detected in %s\n", *fw_name);
+-		core->iris_firmware_desc = core->iris_platform_data->firmware_desc_gen1;
++	*fw_desc = desc;
++	return firmware;
++}
++
++/*
++ * Detect the firmware generation and publish the descriptor. Run only after
++ * qcom_mdt_load() has succeeded, so the driver commits to a HFI generation
++ * only for a firmware image that has actually been loaded.
++ *
++ * The generation is detected from the loaded image (@data / @size point at the
++ * reserved memory region populated by qcom_mdt_load()) rather than from the
++ * request_firmware() blob: for a split .mdt the latter holds only the ELF
++ * headers, while QC_IMAGE_VERSION_STRING lives in the .bNN data segments.
++ *
++ * The descriptor and firmware data are published exactly once, before any
++ * session exists, so the lockless readers in the ioctl paths never observe a
++ * reassignment. Later bring-ups reuse the already published descriptor.
++ */
++static void iris_detect_firmware(struct iris_core *core, const char *fw_name,
++				 const u8 *data, size_t size,
++				 const struct iris_firmware_desc *desc)
++{
++	if (core->iris_firmware_desc)
++		return;
++
++	/*
++	 * With a DT firmware-name override on a dual-generation platform the
++	 * image on disk decides the generation, so inspect it and switch to the
++	 * Gen1 descriptor when a Gen1 image was loaded.
++	 */
++	if (desc == core->iris_platform_data->firmware_desc_gen2 &&
++	    core->iris_platform_data->firmware_desc_gen1 &&
++	    of_property_present(dev_of_node(core->dev), "firmware-name") &&
++	    !iris_detect_gen2_from_fwdata(data, size)) {
++		dev_info(core->dev, "Gen1 FW detected in %s\n", fw_name);
++		desc = core->iris_platform_data->firmware_desc_gen1;
+ 	}
+ 
+-	return firmware;
++	/* Publish iris_firmware_data first, then iris_firmware_desc (the guard). */
++	core->iris_firmware_data = desc->firmware_data;
++	core->iris_firmware_desc = desc;
+ }
+ 
+ static int iris_load_fw_to_memory(struct iris_core *core)
+ {
++	const struct iris_firmware_desc *desc = NULL;
+ 	const struct firmware *firmware = NULL;
+ 	struct device *dev = core->dev;
+ 	struct resource res;
+@@ -127,12 +191,10 @@ static int iris_load_fw_to_memory(struct iris_core *core)
+ 	mem_phys = res.start;
+ 	res_size = resource_size(&res);
+ 
+-	firmware = iris_detect_firmware(core, &fw_name);
++	firmware = iris_load_firmware(core, &fw_name, &desc);
+ 	if (IS_ERR(firmware))
+ 		return PTR_ERR(firmware);
+ 
+-	core->iris_firmware_data = core->iris_firmware_desc->firmware_data;
+-
+ 	fw_size = qcom_mdt_get_size(firmware);
+ 	if (fw_size < 0 || res_size < (size_t)fw_size) {
+ 		ret = -EINVAL;
+@@ -145,9 +207,14 @@ static int iris_load_fw_to_memory(struct iris_core *core)
+ 		goto err_release_fw;
+ 	}
+ 
++	memset(mem_virt, 0, res_size);
++
+ 	ret = qcom_mdt_load(dev, firmware, fw_name,
+ 			    IRIS_PAS_ID, mem_virt, mem_phys, res_size, NULL);
+ 
++	if (!ret)
++		iris_detect_firmware(core, fw_name, mem_virt, res_size, desc);
++
+ 	memunmap(mem_virt);
+ err_release_fw:
+ 	release_firmware(firmware);
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_common.c b/drivers/media/platform/qcom/iris/iris_hfi_common.c
+index 8769ec61f117..dad906d03fdc 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_common.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_common.c
+@@ -109,7 +109,8 @@ irqreturn_t iris_hfi_isr_handler(int irq, void *data)
+ 	iris_vpu_clear_interrupt(core);
+ 	mutex_unlock(&core->lock);
+ 
+-	core->hfi_sys_ops->sys_hfi_response_handler(core);
++	if (core->hfi_sys_ops)
++		core->hfi_sys_ops->sys_hfi_response_handler(core);
+ 
+ 	if (!iris_vpu_watchdog(core, core->intr_status))
+ 		enable_irq(irq);
+@@ -144,6 +145,7 @@ int iris_hfi_pm_suspend(struct iris_core *core)
+ 
+ int iris_hfi_pm_resume(struct iris_core *core)
+ {
++	const struct vpu_ops *vpu_ops = core->iris_platform_data->vpu_ops;
+ 	const struct iris_hfi_sys_ops *ops = core->hfi_sys_ops;
+ 	int ret;
+ 
+@@ -163,6 +165,9 @@ int iris_hfi_pm_resume(struct iris_core *core)
+ 	if (ret)
+ 		goto err_suspend_hw;
+ 
++	if (vpu_ops->disable_arp)
++		vpu_ops->disable_arp(core);
++
+ 	ret = ops->sys_interframe_powercollapse(core);
+ 	if (ret)
+ 		goto err_suspend_hw;
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_common.h b/drivers/media/platform/qcom/iris/iris_hfi_common.h
+index a27447eb2519..16099f9a25b6 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_common.h
++++ b/drivers/media/platform/qcom/iris/iris_hfi_common.h
+@@ -121,6 +121,7 @@ struct iris_hfi_session_ops {
+ 	int (*session_set_property)(struct iris_inst *inst,
+ 				    u32 packet_type, u32 flag, u32 plane, u32 payload_type,
+ 				    void *payload, u32 payload_size);
++	int (*session_get_property)(struct iris_inst *inst, u32 packet_type);
+ 	int (*session_open)(struct iris_inst *inst);
+ 	int (*session_start)(struct iris_inst *inst, u32 plane);
+ 	int (*session_queue_buf)(struct iris_inst *inst, struct iris_buffer *buffer);
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
+index 0f7e7d6b25f4..1f87cef986ef 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1.c
+@@ -13,7 +13,7 @@
+ #define BITRATE_MAX		160000000
+ #define BITRATE_STEP		100
+ 
+-static struct platform_inst_fw_cap inst_fw_cap_sm8250_dec[] = {
++static const struct platform_inst_fw_cap inst_fw_cap_sm8250_dec[] = {
+ 	{
+ 		.cap_id = PIPE,
+ 		/* .max, .min and .value are set via platform data */
+@@ -445,3 +445,407 @@ const struct iris_firmware_data iris_hfi_gen1_data = {
+ 	.enc_ip_int_buf_tbl = sm8250_enc_ip_int_buf_tbl,
+ 	.enc_ip_int_buf_tbl_size = ARRAY_SIZE(sm8250_enc_ip_int_buf_tbl),
+ };
++
++static const struct platform_inst_fw_cap iris_inst_fw_cap_gen1_ar50lt_dec[] = {
++	{
++		.cap_id = STAGE,
++		.min = STAGE_1,
++		.max = STAGE_2,
++		.step_or_mask = 1,
++		.value = STAGE_2,
++		.hfi_id = HFI_PROPERTY_PARAM_WORK_MODE,
++		.set = iris_set_stage,
++	},
++};
++
++static const struct platform_inst_fw_cap inst_fw_cap_gen1_ar50lt_enc[] = {
++	{
++		.cap_id = STAGE,
++		.min = STAGE_1,
++		.max = STAGE_2,
++		.step_or_mask = 1,
++		.value = STAGE_2,
++		.hfi_id = HFI_PROPERTY_PARAM_WORK_MODE,
++		.set = iris_set_stage,
++	},
++	{
++		.cap_id = PROFILE_H264,
++		.min = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE,
++		.max = V4L2_MPEG_VIDEO_H264_PROFILE_MULTIVIEW_HIGH,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_MAIN) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_HIGH) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_STEREO_HIGH) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_MULTIVIEW_HIGH),
++		.value = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH,
++		.hfi_id = HFI_PROPERTY_PARAM_PROFILE_LEVEL_CURRENT,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_profile_level_gen1,
++	},
++	{
++		.cap_id = PROFILE_HEVC,
++		.min = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN,
++		.max = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE),
++		.value = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN,
++		.hfi_id = HFI_PROPERTY_PARAM_PROFILE_LEVEL_CURRENT,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_profile_level_gen1,
++	},
++	{
++		.cap_id = LEVEL_H264,
++		.min = V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
++		.max = V4L2_MPEG_VIDEO_H264_LEVEL_4_2,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1B) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_3) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_2),
++		.value = V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
++		.hfi_id = HFI_PROPERTY_PARAM_PROFILE_LEVEL_CURRENT,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_profile_level_gen1,
++	},
++	{
++		.cap_id = LEVEL_HEVC,
++		.min = V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
++		.max = V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_3) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1),
++		.value = V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
++		.hfi_id = HFI_PROPERTY_PARAM_PROFILE_LEVEL_CURRENT,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_profile_level_gen1,
++	},
++	{
++		.cap_id = HEADER_MODE,
++		.min = V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE,
++		.max = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE) |
++				BIT(V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME),
++		.value = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_SYNC_FRAME_SEQUENCE_HEADER,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_header_mode_gen1,
++	},
++	{
++		.cap_id = BITRATE,
++		.min = BITRATE_MIN,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = BITRATE_STEP,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_TARGET_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_bitrate_gen1,
++	},
++	{
++		.cap_id = BITRATE_MODE,
++		.min = V4L2_MPEG_VIDEO_BITRATE_MODE_VBR,
++		.max = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_BITRATE_MODE_VBR) |
++				BIT(V4L2_MPEG_VIDEO_BITRATE_MODE_CBR),
++		.value = V4L2_MPEG_VIDEO_BITRATE_MODE_VBR,
++		.hfi_id = HFI_PROPERTY_PARAM_VENC_RATE_CONTROL,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_bitrate_mode_gen1,
++	},
++	{
++		.cap_id = FRAME_SKIP_MODE,
++		.min = V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_DISABLED,
++		.max = V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_BUF_LIMIT,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_DISABLED) |
++				BIT(V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_BUF_LIMIT),
++		.value = V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_DISABLED,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++	},
++	{
++		.cap_id = FRAME_RC_ENABLE,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 1,
++	},
++	{
++		.cap_id = GOP_SIZE,
++		.min = 0,
++		.max = (1 << 16) - 1,
++		.step_or_mask = 1,
++		.value = 30,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_INTRA_PERIOD,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_intra_period,
++	},
++	{
++		.cap_id = ENTROPY_MODE,
++		.min = V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CAVLC,
++		.max = V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CABAC,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CAVLC) |
++				BIT(V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CABAC),
++		.value = V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CAVLC,
++		.hfi_id = HFI_PROPERTY_PARAM_VENC_H264_ENTROPY_CONTROL,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_entropy_mode_gen1,
++	},
++	{
++		.cap_id = MIN_FRAME_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++		.hfi_id = HFI_PROPERTY_PARAM_VENC_SESSION_QP_RANGE_V2,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_qp_range,
++	},
++	{
++		.cap_id = MIN_FRAME_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP_HEVC,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++		.hfi_id = HFI_PROPERTY_PARAM_VENC_SESSION_QP_RANGE_V2,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_qp_range,
++	},
++	{
++		.cap_id = MAX_FRAME_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++		.hfi_id = HFI_PROPERTY_PARAM_VENC_SESSION_QP_RANGE_V2,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_qp_range,
++	},
++	{
++		.cap_id = MAX_FRAME_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP_HEVC,
++		.step_or_mask = 1,
++		.value = MAX_QP_HEVC,
++		.hfi_id = HFI_PROPERTY_PARAM_VENC_SESSION_QP_RANGE_V2,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_qp_range,
++	},
++	{
++		.cap_id = IR_TYPE,
++		.min = V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_RANDOM,
++		.max = V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_CYCLIC,
++		.step_or_mask = BIT(V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_RANDOM) |
++			BIT(V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_CYCLIC),
++		.value = V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_RANDOM,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++	},
++	{
++		.cap_id = IR_PERIOD,
++		.min = 0,
++		.max = ((4096 * 2304) >> 8),
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROPERTY_PARAM_VENC_INTRA_REFRESH,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_ir_period_gen1,
++	},
++	{
++		.cap_id = LTR_COUNT,
++		.min = 0,
++		.max = MAX_LTR_FRAME_COUNT_GEN1,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROPERTY_PARAM_VENC_LTRMODE,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_ltr_count_gen1,
++	},
++	{
++		.cap_id = USE_LTR,
++		.min = 0,
++		.max = ((1 << MAX_LTR_FRAME_COUNT_GEN1) - 1),
++		.step_or_mask = 0,
++		.value = 0,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_USELTRFRAME,
++		.flags = CAP_FLAG_INPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_use_ltr,
++	},
++	{
++		.cap_id = MARK_LTR,
++		.min = 0,
++		.max = (MAX_LTR_FRAME_COUNT_GEN1 - 1),
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_MARKLTRFRAME,
++		.flags = CAP_FLAG_INPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_mark_ltr,
++	},
++	{
++		.cap_id = B_FRAME,
++		.min = 0,
++		.max = 3,
++		.step_or_mask = 1,
++		.value = 0,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++	},
++	{
++		.cap_id = LAYER_ENABLE,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 0,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++	},
++	{
++		.cap_id = LAYER_TYPE_H264,
++		.min = V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P,
++		.max = V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P),
++		.value = V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++	},
++	{
++		.cap_id = LAYER_COUNT_H264,
++		.min = 0,
++		.max = MAX_HIER_CODING_LAYER_GEN1,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_HIER_P_ENH_LAYER,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_layer_count_gen1,
++	},
++	{
++		.cap_id = LAYER0_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_TARGET_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_bitrate_gen1,
++	},
++	{
++		.cap_id = LAYER1_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_TARGET_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_bitrate_gen1,
++	},
++	{
++		.cap_id = LAYER2_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_TARGET_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_bitrate_gen1,
++	},
++	{
++		.cap_id = LAYER3_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_TARGET_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_bitrate_gen1,
++	},
++	{
++		.cap_id = LAYER4_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_TARGET_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_bitrate_gen1,
++	},
++	{
++		.cap_id = LAYER5_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_TARGET_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_bitrate_gen1,
++	},
++	{
++		.cap_id = REQUEST_SYNC_FRAME,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROPERTY_CONFIG_VENC_REQUEST_SYNC_FRAME,
++		.flags = CAP_FLAG_INPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_req_sync_frame,
++	},
++};
++
++static const u32 iris_hfi_gen1_ar50lt_dec_ip_int_buf_tbl[] = {
++	BUF_BIN,
++	BUF_SCRATCH_1,
++};
++
++/*
++ * Unlike sm8250, on AR50Lt the internal buffer sizes are provided by the
++ * firmware. Request HFI_PROPERTY_PARAM_BUFFER_SIZE_ACTUAL so that the encoder
++ * queries HFI_PROPERTY_CONFIG_BUFFER_REQUIREMENTS before allocating them.
++ */
++static const u32 iris_hfi_gen1_ar50lt_venc_input_config_param[] = {
++	HFI_PROPERTY_CONFIG_FRAME_RATE,
++	HFI_PROPERTY_PARAM_UNCOMPRESSED_PLANE_ACTUAL_INFO,
++	HFI_PROPERTY_PARAM_FRAME_SIZE,
++	HFI_PROPERTY_PARAM_UNCOMPRESSED_FORMAT_SELECT,
++	HFI_PROPERTY_PARAM_BUFFER_COUNT_ACTUAL,
++	HFI_PROPERTY_PARAM_BUFFER_SIZE_ACTUAL,
++};
++
++const struct iris_firmware_data iris_hfi_gen1_ar50lt_data = {
++	.init_hfi_ops = &iris_hfi_gen1_sys_ops_init,
++
++	.query_buffer_requirements = true,
++
++	.inst_fw_caps_dec = iris_inst_fw_cap_gen1_ar50lt_dec,
++	.inst_fw_caps_dec_size = ARRAY_SIZE(iris_inst_fw_cap_gen1_ar50lt_dec),
++	.inst_fw_caps_enc = inst_fw_cap_gen1_ar50lt_enc,
++	.inst_fw_caps_enc_size = ARRAY_SIZE(inst_fw_cap_gen1_ar50lt_enc),
++
++	.dec_input_config_params_default =
++		sm8250_vdec_input_config_param_default,
++	.dec_input_config_params_default_size =
++		ARRAY_SIZE(sm8250_vdec_input_config_param_default),
++	.enc_input_config_params = iris_hfi_gen1_ar50lt_venc_input_config_param,
++	.enc_input_config_params_size =
++		ARRAY_SIZE(iris_hfi_gen1_ar50lt_venc_input_config_param),
++
++	.dec_ip_int_buf_tbl = iris_hfi_gen1_ar50lt_dec_ip_int_buf_tbl,
++	.dec_ip_int_buf_tbl_size = ARRAY_SIZE(iris_hfi_gen1_ar50lt_dec_ip_int_buf_tbl),
++	.dec_op_int_buf_tbl = sm8250_dec_op_int_buf_tbl,
++	.dec_op_int_buf_tbl_size = ARRAY_SIZE(sm8250_dec_op_int_buf_tbl),
++
++	.enc_ip_int_buf_tbl = sm8250_enc_ip_int_buf_tbl,
++	.enc_ip_int_buf_tbl_size = ARRAY_SIZE(sm8250_enc_ip_int_buf_tbl),
++};
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+index f6e9cbfccd09..47e9147a9b6d 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_command.c
+@@ -973,6 +973,13 @@ static int iris_hfi_gen1_set_bufsize(struct iris_inst *inst, u32 plane)
+ 	struct hfi_buffer_size_actual bufsz;
+ 	int ret;
+ 
++	if (inst->core->iris_firmware_data->query_buffer_requirements) {
++		ret = inst->hfi_session_ops->session_get_property(inst,
++								  HFI_PROPERTY_CONFIG_BUFFER_REQUIREMENTS);
++		if (ret)
++			return ret;
++	}
++
+ 	if (iris_split_mode_enabled(inst)) {
+ 		bufsz.type = HFI_BUFFER_OUTPUT;
+ 		bufsz.size = inst->core->iris_firmware_desc->get_vpu_buffer_size(inst, BUF_DPB);
+@@ -1087,6 +1094,8 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
+ 			iris_hfi_gen1_set_raw_format},
+ 		{HFI_PROPERTY_PARAM_BUFFER_COUNT_ACTUAL,
+ 			iris_hfi_gen1_set_num_bufs},
++		{HFI_PROPERTY_PARAM_BUFFER_SIZE_ACTUAL,
++			iris_hfi_gen1_set_bufsize},
+ 	};
+ 
+ 	if (inst->domain == DECODER) {
+@@ -1120,10 +1129,31 @@ static int iris_hfi_gen1_session_set_config_params(struct iris_inst *inst, u32 p
+ 	return 0;
+ }
+ 
++static int iris_hfi_gen1_session_get_property(struct iris_inst *inst, u32 packet_type)
++{
++	struct hfi_session_get_property_pkt pkt;
++	int ret;
++
++	pkt.shdr.hdr.size = sizeof(pkt);
++	pkt.shdr.hdr.pkt_type = HFI_CMD_SESSION_GET_PROPERTY;
++	pkt.shdr.session_id = inst->session_id;
++	pkt.num_properties = 1;
++	pkt.data = packet_type;
++
++	reinit_completion(&inst->completion);
++
++	ret = iris_hfi_queue_cmd_write(inst->core, &pkt, pkt.shdr.hdr.size);
++	if (ret)
++		return ret;
++
++	return iris_wait_for_session_response(inst, false);
++}
++
+ static const struct iris_hfi_session_ops iris_hfi_gen1_session_ops = {
+ 	.session_open = iris_hfi_gen1_session_open,
+ 	.session_set_config_params = iris_hfi_gen1_session_set_config_params,
+ 	.session_set_property = iris_hfi_gen1_session_set_property,
++	.session_get_property = iris_hfi_gen1_session_get_property,
+ 	.session_start = iris_hfi_gen1_session_start,
+ 	.session_queue_buf = iris_hfi_gen1_session_queue_buffer,
+ 	.session_release_buf = iris_hfi_gen1_session_unset_buffers,
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
+index 275f3fea3d2a..6981e6e84fd8 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_defines.h
+@@ -35,6 +35,7 @@
+ #define HFI_CMD_SESSION_EMPTY_BUFFER			0x211004
+ #define HFI_CMD_SESSION_FILL_BUFFER			0x211005
+ #define HFI_CMD_SESSION_FLUSH				0x211008
++#define HFI_CMD_SESSION_GET_PROPERTY			0x211009
+ #define HFI_CMD_SESSION_RELEASE_BUFFERS			0x21100b
+ #define HFI_CMD_SESSION_RELEASE_RESOURCES		0x21100c
+ #define HFI_CMD_SESSION_CONTINUE			0x21100d
+@@ -113,6 +114,7 @@
+ #define HFI_MSG_SESSION_FLUSH				0x221006
+ #define HFI_MSG_SESSION_EMPTY_BUFFER			0x221007
+ #define HFI_MSG_SESSION_FILL_BUFFER			0x221008
++#define HFI_MSG_SESSION_PROPERTY_INFO			0x221009
+ #define HFI_MSG_SESSION_RELEASE_RESOURCES		0x22100a
+ #define HFI_MSG_SESSION_RELEASE_BUFFERS			0x22100c
+ 
+@@ -206,6 +208,12 @@ struct hfi_session_set_property_pkt {
+ 	u32 data[];
+ };
+ 
++struct hfi_session_get_property_pkt {
++	struct hfi_session_hdr_pkt shdr;
++	u32 num_properties;
++	u32 data;
++};
++
+ struct hfi_sys_pc_prep_pkt {
+ 	struct hfi_pkt_hdr hdr;
+ };
+@@ -575,6 +583,13 @@ struct hfi_msg_session_fbd_uncompressed_plane0_pkt {
+ 	u32 data[];
+ };
+ 
++struct hfi_msg_session_property_info_pkt {
++	struct hfi_session_hdr_pkt shdr;
++	u32 num_properties;
++	u32 property;
++	u8 data[];
++};
++
+ struct hfi_msg_session_release_buffers_done_pkt {
+ 	struct hfi_msg_session_hdr_pkt shdr;
+ 	u32 num_buffers;
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+index bfd7495bf44f..ffa98139f0eb 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen1_response.c
+@@ -533,6 +533,80 @@ static void iris_hfi_gen1_session_ftb_done(struct iris_inst *inst, void *packet)
+ 	dev_err(core->dev, "error in ftb done\n");
+ }
+ 
++static enum iris_buffer_type iris_hfi_gen1_buf_type(struct iris_inst *inst, u32 type)
++{
++	switch (type) {
++	case HFI_BUFFER_INPUT:
++		return BUF_INPUT;
++	case HFI_BUFFER_OUTPUT:
++		if (iris_split_mode_enabled(inst))
++			return BUF_DPB;
++		return BUF_OUTPUT;
++	case HFI_BUFFER_OUTPUT2:
++		if (iris_split_mode_enabled(inst))
++			return BUF_OUTPUT;
++		return BUF_DPB;
++	case HFI_BUFFER_INTERNAL_PERSIST_1:
++		return BUF_PERSIST;
++	case HFI_BUFFER_INTERNAL_SCRATCH:
++		return BUF_BIN;
++	case HFI_BUFFER_INTERNAL_SCRATCH_1:
++		return BUF_SCRATCH_1;
++	case HFI_BUFFER_INTERNAL_SCRATCH_2:
++		return BUF_SCRATCH_2;
++	case HFI_BUFFER_INTERNAL_PERSIST:
++		return BUF_ARP;
++	default:
++		return BUF_TYPE_MAX;
++	}
++}
++
++static void iris_hfi_gen1_session_buffer_requirements(struct iris_inst *inst,
++						      void *data, size_t size)
++{
++	struct hfi_buffer_requirements *req;
++
++	if (!size || size % sizeof(*req))
++		return;
++
++	for (req = data; size; size -= sizeof(*req), req++) {
++		enum iris_buffer_type type = iris_hfi_gen1_buf_type(inst, req->type);
++
++		if (type == BUF_TYPE_MAX)
++			continue;
++
++		/* on relevant platforms hold_count and min_count are swapped */
++		inst->buffers[type].min_count = req->hold_count;
++		inst->buffers[type].size = req->size;
++
++		if (type == BUF_OUTPUT)
++			inst->fw_min_count = req->count_actual;
++	}
++}
++
++static void iris_hfi_gen1_session_property_info(struct iris_inst *inst, void *packet)
++{
++	struct hfi_msg_session_property_info_pkt *pkt = packet;
++
++	if (pkt->num_properties != 1) {
++		dev_warn_ratelimited(inst->core->dev, "%s: expected 1 property, got %u\n",
++				     __func__, pkt->num_properties);
++		goto out;
++	}
++
++	switch (pkt->property) {
++	case HFI_PROPERTY_CONFIG_BUFFER_REQUIREMENTS:
++		iris_hfi_gen1_session_buffer_requirements(inst, pkt->data,
++							  pkt->shdr.hdr.size - sizeof(*pkt));
++		break;
++	default:
++		dev_warn(inst->core->dev, "unknown property id: %x\n", pkt->property);
++	}
++
++out:
++	complete(&inst->completion);
++}
++
+ struct iris_hfi_gen1_response_pkt_info {
+ 	u32 pkt;
+ 	u32 pkt_sz;
+@@ -591,6 +665,10 @@ static const struct iris_hfi_gen1_response_pkt_info pkt_infos[] = {
+ 	 .pkt = HFI_MSG_SESSION_RELEASE_BUFFERS,
+ 	 .pkt_sz = sizeof(struct hfi_msg_session_release_buffers_done_pkt),
+ 	},
++	{
++	 .pkt = HFI_MSG_SESSION_PROPERTY_INFO,
++	 .pkt_sz = sizeof(struct hfi_msg_session_property_info_pkt),
++	},
+ };
+ 
+ static void iris_hfi_gen1_handle_response(struct iris_core *core, void *response)
+@@ -632,6 +710,7 @@ static void iris_hfi_gen1_handle_response(struct iris_core *core, void *response
+ 			mutex_lock(&inst->lock);
+ 			iris_hfi_gen1_session_event_notify(inst, hdr);
+ 			mutex_unlock(&inst->lock);
++			iris_inst_put(inst);
+ 		} else {
+ 			iris_hfi_gen1_sys_event_notify(core, hdr);
+ 		}
+@@ -652,6 +731,8 @@ static void iris_hfi_gen1_handle_response(struct iris_core *core, void *response
+ 			iris_hfi_gen1_session_etb_done(inst, hdr);
+ 		} else if (hdr->pkt_type == HFI_MSG_SESSION_FILL_BUFFER) {
+ 			iris_hfi_gen1_session_ftb_done(inst, hdr);
++		} else if (hdr->pkt_type == HFI_MSG_SESSION_PROPERTY_INFO) {
++			iris_hfi_gen1_session_property_info(inst, hdr);
+ 		} else {
+ 			struct hfi_msg_session_hdr_pkt *shdr;
+ 
+@@ -667,6 +748,7 @@ static void iris_hfi_gen1_handle_response(struct iris_core *core, void *response
+ 			}
+ 		}
+ 		mutex_unlock(&inst->lock);
++		iris_inst_put(inst);
+ 
+ 		break;
+ 	}
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
+index 3b8fbefb8b93..79bbd06ef8d2 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2.c
+@@ -13,6 +13,10 @@
+ #define VIDEO_ARCH_LX 1
+ #define MILOS_BITRATE_MAX			100000000
+ #define BITRATE_MAX				245000000
++#define MAX_SLICE_MB_SIZE         \
++	(((4096 + 15) >> 4) * ((2160 + 15) >> 4))
++#define MAX_SLICE_MB_SIZE_AR50LT         \
++	(((1920 + 15) >> 4) * ((1088 + 15) >> 4))
+ 
+ static const struct platform_inst_fw_cap inst_fw_cap_milos_dec[] = {
+ 	{
+@@ -1782,6 +1786,35 @@ static const struct platform_inst_fw_cap inst_fw_cap_sm8550_enc[] = {
+ 		.flags = CAP_FLAG_INPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
+ 		.set = iris_set_req_sync_frame,
+ 	},
++	{
++		.cap_id = SLICE_MODE,
++		.min = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE,
++		.max = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE) |
++					BIT(V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB) |
++					BIT(V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES),
++		.value = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_slice_count,
++	},
++	{
++		.cap_id = SLICE_MAX_BYTES,
++		.min = 512,
++		.max = BITRATE_MAX >> 3,
++		.step_or_mask = 1,
++		.value = 512,
++		.hfi_id = HFI_PROP_MULTI_SLICE_BYTES_COUNT,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++	},
++	{
++		.cap_id = SLICE_MAX_MB,
++		.min = 1,
++		.max = MAX_SLICE_MB_SIZE,
++		.step_or_mask = 1,
++		.value = 1,
++		.hfi_id = HFI_PROP_MULTI_SLICE_MB_COUNT,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++	},
+ };
+ 
+ static const u32 sm8550_vdec_input_config_params_default[] = {
+@@ -2021,3 +2054,915 @@ const struct iris_firmware_data iris_hfi_milos_data = {
+ 	.enc_op_int_buf_tbl = sm8550_enc_op_int_buf_tbl,
+ 	.enc_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_enc_op_int_buf_tbl),
+ };
++
++static const struct platform_inst_fw_cap inst_fw_cap_gen2_ar50lt_dec[] = {
++	{
++		.cap_id = PROFILE_H264,
++		.min = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE,
++		.max = V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_MAIN) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_HIGH) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH),
++		.value = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH,
++		.hfi_id = HFI_PROP_PROFILE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_u32_enum,
++	},
++	{
++		.cap_id = PROFILE_HEVC,
++		.min = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN,
++		.max = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE),
++		.value = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN,
++		.hfi_id = HFI_PROP_PROFILE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_u32_enum,
++	},
++	{
++		.cap_id = PROFILE_VP9,
++		.min = V4L2_MPEG_VIDEO_VP9_PROFILE_0,
++		.max = V4L2_MPEG_VIDEO_VP9_PROFILE_0,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_VP9_PROFILE_0),
++		.value = V4L2_MPEG_VIDEO_VP9_PROFILE_0,
++		.hfi_id = HFI_PROP_PROFILE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_u32_enum,
++	},
++	{
++		.cap_id = LEVEL_H264,
++		.min = V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
++		.max = V4L2_MPEG_VIDEO_H264_LEVEL_4_2,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1B) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_3) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_2),
++		.value = V4L2_MPEG_VIDEO_H264_LEVEL_4_2,
++		.hfi_id = HFI_PROP_LEVEL,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_u32_enum,
++	},
++	{
++		.cap_id = LEVEL_HEVC,
++		.min = V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
++		.max = V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_3) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1),
++		.value = V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1,
++		.hfi_id = HFI_PROP_LEVEL,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_u32_enum,
++	},
++	{
++		.cap_id = LEVEL_VP9,
++		.min = V4L2_MPEG_VIDEO_VP9_LEVEL_1_0,
++		.max = V4L2_MPEG_VIDEO_VP9_LEVEL_4_1,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_1_0) |
++				BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_1_1) |
++				BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_2_0) |
++				BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_2_1) |
++				BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_3_0) |
++				BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_3_1) |
++				BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_4_0) |
++				BIT(V4L2_MPEG_VIDEO_VP9_LEVEL_4_1),
++		.value = V4L2_MPEG_VIDEO_VP9_LEVEL_4_1,
++		.hfi_id = HFI_PROP_LEVEL,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_u32_enum,
++	},
++	{
++		.cap_id = TIER,
++		.min = V4L2_MPEG_VIDEO_HEVC_TIER_MAIN,
++		.max = V4L2_MPEG_VIDEO_HEVC_TIER_HIGH,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEVC_TIER_MAIN) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_TIER_HIGH),
++		.value = V4L2_MPEG_VIDEO_HEVC_TIER_HIGH,
++		.hfi_id = HFI_PROP_TIER,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_u32_enum,
++	},
++	{
++		.cap_id = INPUT_BUF_HOST_MAX_COUNT,
++		.min = DEFAULT_MAX_HOST_BUF_COUNT,
++		.max = DEFAULT_MAX_HOST_BURST_BUF_COUNT,
++		.step_or_mask = 1,
++		.value = DEFAULT_MAX_HOST_BUF_COUNT,
++		.hfi_id = HFI_PROP_BUFFER_HOST_MAX_COUNT,
++		.flags = CAP_FLAG_INPUT_PORT,
++		.set = iris_set_u32,
++	},
++	{
++		.cap_id = STAGE,
++		.min = STAGE_1,
++		.max = STAGE_2,
++		.step_or_mask = 1,
++		.value = STAGE_2,
++		.hfi_id = HFI_PROP_STAGE,
++		.set = iris_set_stage,
++	},
++	{
++		.cap_id = POC,
++		.min = 0,
++		.max = 2,
++		.step_or_mask = 1,
++		.value = 1,
++		.hfi_id = HFI_PROP_PIC_ORDER_CNT_TYPE,
++	},
++	{
++		.cap_id = CODED_FRAMES,
++		.min = CODED_FRAMES_PROGRESSIVE,
++		.max = CODED_FRAMES_PROGRESSIVE,
++		.step_or_mask = 0,
++		.value = CODED_FRAMES_PROGRESSIVE,
++		.hfi_id = HFI_PROP_CODED_FRAMES,
++	},
++	{
++		.cap_id = BIT_DEPTH,
++		.min = BIT_DEPTH_8,
++		.max = BIT_DEPTH_8,
++		.step_or_mask = 1,
++		.value = BIT_DEPTH_8,
++		.hfi_id = HFI_PROP_LUMA_CHROMA_BIT_DEPTH,
++	},
++	{
++		.cap_id = RAP_FRAME,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 1,
++		.hfi_id = HFI_PROP_DEC_START_FROM_RAP_FRAME,
++		.flags = CAP_FLAG_INPUT_PORT,
++		.set = iris_set_u32,
++	},
++};
++
++static const struct platform_inst_fw_cap inst_fw_cap_gen2_ar50lt_enc[] = {
++	{
++		.cap_id = PROFILE_H264,
++		.min = V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE,
++		.max = V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_PROFILE_BASELINE) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_HIGH) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_CONSTRAINED_BASELINE) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_MAIN) |
++				BIT(V4L2_MPEG_VIDEO_H264_PROFILE_HIGH),
++		.value = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH,
++		.hfi_id = HFI_PROP_PROFILE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_profile,
++	},
++	{
++		.cap_id = PROFILE_HEVC,
++		.min = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN,
++		.max = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE),
++		.value = V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN,
++		.hfi_id = HFI_PROP_PROFILE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_profile,
++	},
++	{
++		.cap_id = LEVEL_H264,
++		.min = V4L2_MPEG_VIDEO_H264_LEVEL_1_0,
++		.max = V4L2_MPEG_VIDEO_H264_LEVEL_4_2,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1B) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_1_3) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_2_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_3_2) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_0) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_1) |
++				BIT(V4L2_MPEG_VIDEO_H264_LEVEL_4_2),
++		.value = V4L2_MPEG_VIDEO_H264_LEVEL_4_2,
++		.hfi_id = HFI_PROP_LEVEL,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_level,
++	},
++	{
++		.cap_id = LEVEL_HEVC,
++		.min = V4L2_MPEG_VIDEO_HEVC_LEVEL_1,
++		.max = V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_3) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1),
++		.value = V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1,
++		.hfi_id = HFI_PROP_LEVEL,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_level,
++	},
++	{
++		.cap_id = STAGE,
++		.min = STAGE_1,
++		.max = STAGE_2,
++		.step_or_mask = 1,
++		.value = STAGE_2,
++		.hfi_id = HFI_PROP_STAGE,
++		.set = iris_set_stage,
++	},
++	{
++		.cap_id = HEADER_MODE,
++		.min = V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE,
++		.max = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEADER_MODE_SEPARATE) |
++				BIT(V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME),
++		.value = V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME,
++		.hfi_id = HFI_PROP_SEQ_HEADER_MODE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_header_mode_gen2,
++	},
++	{
++		.cap_id = PREPEND_SPSPPS_TO_IDR,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 0,
++	},
++	{
++		.cap_id = BITRATE,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_TOTAL_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_bitrate_gen2,
++	},
++	{
++		.cap_id = BITRATE_PEAK,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_TOTAL_PEAK_BITRATE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_peak_bitrate,
++	},
++	{
++		.cap_id = BITRATE_MODE,
++		.min = V4L2_MPEG_VIDEO_BITRATE_MODE_VBR,
++		.max = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_BITRATE_MODE_VBR) |
++				BIT(V4L2_MPEG_VIDEO_BITRATE_MODE_CBR),
++		.value = V4L2_MPEG_VIDEO_BITRATE_MODE_VBR,
++		.hfi_id = HFI_PROP_RATE_CONTROL,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_bitrate_mode_gen2,
++	},
++	{
++		.cap_id = TIME_DELTA_BASED_RC,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROP_TIME_DELTA_BASED_RATE_CONTROL,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_time_delta_based_rc,
++	},
++	{
++		.cap_id = FRAME_SKIP_MODE,
++		.min = V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_DISABLED,
++		.max = V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_BUF_LIMIT,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_DISABLED) |
++				BIT(V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_LEVEL_LIMIT) |
++				BIT(V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_BUF_LIMIT),
++		.value = V4L2_MPEG_VIDEO_FRAME_SKIP_MODE_DISABLED,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++	},
++	{
++		.cap_id = FRAME_RC_ENABLE,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 1,
++	},
++	{
++		.cap_id = GOP_SIZE,
++		.min = 0,
++		.max = INT_MAX,
++		.step_or_mask = 1,
++		.value = 2 * DEFAULT_FPS - 1,
++		.hfi_id = HFI_PROP_MAX_GOP_FRAMES,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_u32,
++	},
++	{
++		.cap_id = ENTROPY_MODE,
++		.min = V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CAVLC,
++		.max = V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CABAC,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CAVLC) |
++				BIT(V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CABAC),
++		.value = V4L2_MPEG_VIDEO_H264_ENTROPY_MODE_CABAC,
++		.hfi_id = HFI_PROP_CABAC_SESSION,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_entropy_mode_gen2,
++	},
++	{
++		.cap_id = MIN_FRAME_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++		.hfi_id = HFI_PROP_MIN_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_min_qp,
++	},
++	{
++		.cap_id = MIN_FRAME_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++		.hfi_id = HFI_PROP_MIN_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_min_qp,
++	},
++	{
++		.cap_id = MAX_FRAME_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++		.hfi_id = HFI_PROP_MAX_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_max_qp,
++	},
++	{
++		.cap_id = MAX_FRAME_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++		.hfi_id = HFI_PROP_MAX_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_max_qp,
++	},
++	{
++		.cap_id = I_FRAME_MIN_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++	},
++	{
++		.cap_id = I_FRAME_MIN_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++	},
++	{
++		.cap_id = P_FRAME_MIN_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++	},
++	{
++		.cap_id = P_FRAME_MIN_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++	},
++	{
++		.cap_id = B_FRAME_MIN_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++	},
++	{
++		.cap_id = B_FRAME_MIN_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MIN_QP_8BIT_AR50LT,
++	},
++	{
++		.cap_id = I_FRAME_MAX_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++	},
++	{
++		.cap_id = I_FRAME_MAX_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++	},
++	{
++		.cap_id = P_FRAME_MAX_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++	},
++	{
++		.cap_id = P_FRAME_MAX_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++	},
++	{
++		.cap_id = B_FRAME_MAX_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++	},
++	{
++		.cap_id = B_FRAME_MAX_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = MAX_QP,
++	},
++	{
++		.cap_id = I_FRAME_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = DEFAULT_QP,
++		.hfi_id = HFI_PROP_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_frame_qp,
++	},
++	{
++		.cap_id = I_FRAME_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = DEFAULT_QP,
++		.hfi_id = HFI_PROP_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_frame_qp,
++	},
++	{
++		.cap_id = P_FRAME_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = DEFAULT_QP,
++		.hfi_id = HFI_PROP_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_frame_qp,
++	},
++	{
++		.cap_id = P_FRAME_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = DEFAULT_QP,
++		.hfi_id = HFI_PROP_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_frame_qp,
++	},
++	{
++		.cap_id = B_FRAME_QP_H264,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = DEFAULT_QP,
++		.hfi_id = HFI_PROP_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_frame_qp,
++	},
++	{
++		.cap_id = B_FRAME_QP_HEVC,
++		.min = MIN_QP_8BIT_AR50LT,
++		.max = MAX_QP,
++		.step_or_mask = 1,
++		.value = DEFAULT_QP,
++		.hfi_id = HFI_PROP_QP_PACKED,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_frame_qp,
++	},
++	{
++		.cap_id = INPUT_BUF_HOST_MAX_COUNT,
++		.min = DEFAULT_MAX_HOST_BUF_COUNT,
++		.max = DEFAULT_MAX_HOST_BURST_BUF_COUNT,
++		.step_or_mask = 1,
++		.value = DEFAULT_MAX_HOST_BUF_COUNT,
++		.hfi_id = HFI_PROP_BUFFER_HOST_MAX_COUNT,
++		.flags = CAP_FLAG_INPUT_PORT,
++		.set = iris_set_u32,
++	},
++	{
++		.cap_id = OUTPUT_BUF_HOST_MAX_COUNT,
++		.min = DEFAULT_MAX_HOST_BUF_COUNT,
++		.max = DEFAULT_MAX_HOST_BURST_BUF_COUNT,
++		.step_or_mask = 1,
++		.value = DEFAULT_MAX_HOST_BUF_COUNT,
++		.hfi_id = HFI_PROP_BUFFER_HOST_MAX_COUNT,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_u32,
++	},
++	{
++		.cap_id = IR_TYPE,
++		.min = V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_RANDOM,
++		.max = V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_RANDOM,
++		.step_or_mask = BIT(V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_RANDOM),
++		.value = V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD_TYPE_RANDOM,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++	},
++	{
++		.cap_id = IR_PERIOD,
++		.min = 0,
++		.max = INT_MAX,
++		.step_or_mask = 1,
++		.value = 0,
++		.flags = CAP_FLAG_OUTPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_ir_period_gen2,
++	},
++	{
++		.cap_id = LTR_COUNT,
++		.min = 0,
++		.max = MAX_LTR_FRAME_COUNT_GEN2,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROP_LTR_COUNT,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_ltr_count_gen2,
++	},
++	{
++		.cap_id = USE_LTR,
++		.min = 0,
++		.max = ((1 << MAX_LTR_FRAME_COUNT_GEN2) - 1),
++		.step_or_mask = 0,
++		.value = 0,
++		.hfi_id = HFI_PROP_LTR_USE,
++		.flags = CAP_FLAG_INPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_use_and_mark_ltr,
++	},
++	{
++		.cap_id = MARK_LTR,
++		.min = INVALID_DEFAULT_MARK_OR_USE_LTR,
++		.max = (MAX_LTR_FRAME_COUNT_GEN2 - 1),
++		.step_or_mask = 1,
++		.value = INVALID_DEFAULT_MARK_OR_USE_LTR,
++		.hfi_id = HFI_PROP_LTR_MARK,
++		.flags = CAP_FLAG_INPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_use_and_mark_ltr,
++	},
++	{
++		.cap_id = B_FRAME,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROP_MAX_B_FRAMES,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++		.set = iris_set_u32,
++	},
++	{
++		.cap_id = LAYER_ENABLE,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 0,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++	},
++	{
++		.cap_id = LAYER_TYPE_H264,
++		.min = V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_B,
++		.max = V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_B) |
++				BIT(V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P),
++		.value = V4L2_MPEG_VIDEO_H264_HIERARCHICAL_CODING_P,
++		.hfi_id = HFI_PROP_LAYER_ENCODING_TYPE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_layer_type,
++	},
++	{
++		.cap_id = LAYER_TYPE_HEVC,
++		.min = V4L2_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_B,
++		.max = V4L2_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_P,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_B) |
++				BIT(V4L2_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_P),
++		.value = V4L2_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_P,
++		.hfi_id = HFI_PROP_LAYER_ENCODING_TYPE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_layer_type,
++	},
++	{
++		.cap_id = LAYER_COUNT_H264,
++		.min = 0,
++		.max = 5,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROP_LAYER_COUNT,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_count_gen2,
++	},
++	{
++		.cap_id = LAYER_COUNT_HEVC,
++		.min = 0,
++		.max = 5,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROP_LAYER_COUNT,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_count_gen2,
++	},
++	{
++		.cap_id = LAYER0_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER1,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER1_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER2,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER2_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER3,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER3_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER4,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER4_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER5,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER5_BITRATE_H264,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER6,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER0_BITRATE_HEVC,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER1,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER1_BITRATE_HEVC,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER2,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER2_BITRATE_HEVC,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER3,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER3_BITRATE_HEVC,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER4,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER4_BITRATE_HEVC,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER5,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = LAYER5_BITRATE_HEVC,
++		.min = 1,
++		.max = BITRATE_MAX_AR50LT,
++		.step_or_mask = 1,
++		.value = BITRATE_DEFAULT_AR50LT,
++		.hfi_id = HFI_PROP_BITRATE_LAYER6,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_INPUT_PORT |
++			CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_layer_bitrate,
++	},
++	{
++		.cap_id = REQUEST_SYNC_FRAME,
++		.min = 0,
++		.max = 1,
++		.step_or_mask = 1,
++		.value = 0,
++		.hfi_id = HFI_PROP_REQUEST_SYNC_FRAME,
++		.flags = CAP_FLAG_INPUT_PORT | CAP_FLAG_DYNAMIC_ALLOWED,
++		.set = iris_set_req_sync_frame,
++	},
++	{
++		.cap_id = SLICE_MODE,
++		.min = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE,
++		.max = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES,
++		.step_or_mask = BIT(V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE) |
++					BIT(V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_MB) |
++					BIT(V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_MAX_BYTES),
++		.value = V4L2_MPEG_VIDEO_MULTI_SLICE_MODE_SINGLE,
++		.flags = CAP_FLAG_OUTPUT_PORT | CAP_FLAG_MENU,
++		.set = iris_set_slice_count,
++	},
++	{
++		.cap_id = SLICE_MAX_BYTES,
++		.min = 512,
++		.max = BITRATE_MAX_AR50LT >> 3,
++		.step_or_mask = 1,
++		.value = 512,
++		.hfi_id = HFI_PROP_MULTI_SLICE_BYTES_COUNT,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++	},
++	{
++		.cap_id = SLICE_MAX_MB,
++		.min = 1,
++		.max = MAX_SLICE_MB_SIZE_AR50LT,
++		.step_or_mask = 1,
++		.value = 1,
++		.hfi_id = HFI_PROP_MULTI_SLICE_MB_COUNT,
++		.flags = CAP_FLAG_OUTPUT_PORT,
++	},
++};
++
++static const u32 iris_hfi_gen2_ar50lt_dec_ip_int_buf_tbl[] = {
++	BUF_BIN,
++	BUF_COMV,
++	BUF_NON_COMV,
++	BUF_LINE,
++};
++
++const struct iris_firmware_data iris_hfi_gen2_ar50lt_data = {
++	.init_hfi_ops = iris_hfi_gen2_sys_ops_init,
++
++	.core_arch = VIDEO_ARCH_LX,
++
++	.inst_fw_caps_dec = inst_fw_cap_gen2_ar50lt_dec,
++	.inst_fw_caps_dec_size = ARRAY_SIZE(inst_fw_cap_gen2_ar50lt_dec),
++	.inst_fw_caps_enc = inst_fw_cap_gen2_ar50lt_enc,
++	.inst_fw_caps_enc_size = ARRAY_SIZE(inst_fw_cap_gen2_ar50lt_enc),
++	.dec_input_config_params_default =
++		sm8550_vdec_input_config_params_default,
++	.dec_input_config_params_default_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_params_default),
++	.dec_input_config_params_hevc =
++		sm8550_vdec_input_config_param_hevc,
++	.dec_input_config_params_hevc_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_param_hevc),
++	.dec_input_config_params_vp9 =
++		sm8550_vdec_input_config_param_vp9,
++	.dec_input_config_params_vp9_size =
++		ARRAY_SIZE(sm8550_vdec_input_config_param_vp9),
++	.dec_output_config_params =
++		sm8550_vdec_output_config_params,
++	.dec_output_config_params_size =
++		ARRAY_SIZE(sm8550_vdec_output_config_params),
++
++	.enc_input_config_params =
++		sm8550_venc_input_config_params,
++	.enc_input_config_params_size =
++		ARRAY_SIZE(sm8550_venc_input_config_params),
++	.enc_output_config_params =
++		sm8550_venc_output_config_params,
++	.enc_output_config_params_size =
++		ARRAY_SIZE(sm8550_venc_output_config_params),
++
++	.dec_input_prop = sm8550_vdec_subscribe_input_properties,
++	.dec_input_prop_size = ARRAY_SIZE(sm8550_vdec_subscribe_input_properties),
++	.dec_output_prop_avc = sm8550_vdec_subscribe_output_properties_avc,
++	.dec_output_prop_avc_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_avc),
++	.dec_output_prop_hevc = sm8550_vdec_subscribe_output_properties_hevc,
++	.dec_output_prop_hevc_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_hevc),
++	.dec_output_prop_vp9 = sm8550_vdec_subscribe_output_properties_vp9,
++	.dec_output_prop_vp9_size =
++		ARRAY_SIZE(sm8550_vdec_subscribe_output_properties_vp9),
++
++	.dec_ip_int_buf_tbl = iris_hfi_gen2_ar50lt_dec_ip_int_buf_tbl,
++	.dec_ip_int_buf_tbl_size = ARRAY_SIZE(iris_hfi_gen2_ar50lt_dec_ip_int_buf_tbl),
++	.dec_op_int_buf_tbl = sm8550_dec_op_int_buf_tbl,
++	.dec_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_dec_op_int_buf_tbl),
++
++	.enc_ip_int_buf_tbl = sm8550_enc_ip_int_buf_tbl,
++	.enc_ip_int_buf_tbl_size = ARRAY_SIZE(sm8550_enc_ip_int_buf_tbl),
++	.enc_op_int_buf_tbl = sm8550_enc_op_int_buf_tbl,
++	.enc_op_int_buf_tbl_size = ARRAY_SIZE(sm8550_enc_op_int_buf_tbl),
++};
++
++const struct platform_inst_slice_caps iris_vpu2_vpu3x_slice_caps = {
++	.max_slices_per_frame = 128,
++	.max_slice_frame_rate = 60,
++	.max_mb_slice_width = 4096,
++	.max_mb_slice_height = 2160,
++	.max_bytes_slice_width = 1920,
++	.max_bytes_slice_height = 1088,
++	.min_hevc_slice_width = 384,
++	.min_avc_slice_width = 192,
++	.min_slice_height = 128,
++};
++
++const struct platform_inst_slice_caps iris_ar50lt_slice_caps = {
++	.max_slices_per_frame = 128,
++	.max_slice_frame_rate = 60,
++	.max_mb_slice_width = 1920,
++	.max_mb_slice_height = 1088,
++	.max_bytes_slice_width = 1920,
++	.max_bytes_slice_height = 1088,
++	.min_hevc_slice_width = 384,
++	.min_avc_slice_width = 192,
++	.min_slice_height = 128,
++};
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h b/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
+index f43aea10090d..2b8b057d35a9 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_defines.h
+@@ -72,6 +72,8 @@ enum hfi_rate_control {
+ #define HFI_PROP_MIN_QP_PACKED			0x0300012f
+ #define HFI_PROP_MAX_QP_PACKED			0x03000130
+ #define HFI_PROP_IR_RANDOM_PERIOD		0x03000131
++#define HFI_PROP_MULTI_SLICE_MB_COUNT		0x03000132
++#define HFI_PROP_MULTI_SLICE_BYTES_COUNT	0x03000133
+ #define HFI_PROP_LTR_COUNT			0x03000134
+ #define HFI_PROP_LTR_MARK			0x03000135
+ #define HFI_PROP_LTR_USE			0x03000136
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_packet.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_packet.c
+index 0d05dd2afc07..6e04175eb904 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_packet.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_packet.c
+@@ -140,6 +140,9 @@ void iris_hfi_gen2_packet_sys_init(struct iris_core *core, struct iris_hfi_heade
+ 				    &payload,
+ 				    sizeof(u32));
+ 
++	if (!ubwc->ubwc_enc_version)
++		return;
++
+ 	payload = qcom_ubwc_macrotile_mode(ubwc) ? 8 : 4;
+ 	iris_hfi_gen2_create_packet(hdr,
+ 				    HFI_PROP_UBWC_MAX_CHANNELS,
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+index 8c2644c7f6e8..f0782c4b1e6e 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -969,6 +969,7 @@ static int iris_hfi_gen2_handle_session_response(struct iris_core *core,
+ 		iris_hfi_gen2_handle_dequeue_buffers(inst);
+ 
+ 	mutex_unlock(&inst->lock);
++	iris_inst_put(inst);
+ 
+ 	return ret;
+ }
+diff --git a/drivers/media/platform/qcom/iris/iris_instance.h b/drivers/media/platform/qcom/iris/iris_instance.h
+index a770331d1675..771269e705d9 100644
+--- a/drivers/media/platform/qcom/iris/iris_instance.h
++++ b/drivers/media/platform/qcom/iris/iris_instance.h
+@@ -6,6 +6,8 @@
+ #ifndef __IRIS_INSTANCE_H__
+ #define __IRIS_INSTANCE_H__
+ 
++#include <linux/kref.h>
++
+ #include <media/v4l2-ctrls.h>
+ 
+ #include "iris_buffer.h"
+@@ -17,24 +19,11 @@
+ 
+ struct iris_hfi_session_ops;
+ 
+-enum iris_fmt_type_out {
+-	IRIS_FMT_H264,
+-	IRIS_FMT_HEVC,
+-	IRIS_FMT_VP9,
+-	IRIS_FMT_AV1,
+-};
+-
+-enum iris_fmt_type_cap {
+-	IRIS_FMT_NV12,
+-	IRIS_FMT_QC08C,
+-	IRIS_FMT_TP10,
+-	IRIS_FMT_QC10C,
+-};
+-
+ /**
+  * struct iris_inst - holds per video instance parameters
+  *
+  * @list: used for attach an instance to the core
++ * @kref: reference count, keeps the instance alive while the IRQ thread uses it
+  * @core: pointer to core structure
+  * @session_id: id of current video session
+  * @hfi_session_ops: iris HFI session ops
+@@ -82,6 +71,7 @@ enum iris_fmt_type_cap {
+ 
+ struct iris_inst {
+ 	struct list_head		list;
++	struct kref			kref;
+ 	struct iris_core		*core;
+ 	u32				session_id;
+ 	const struct iris_hfi_session_ops	*hfi_session_ops;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+index 974809509146..cddab9a9c375 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -39,6 +39,10 @@ struct iris_inst;
+ #define MAX_HEVC_VBR_LAYER_HP_SLIDING_WINDOW	5
+ #define MAX_HIER_CODING_LAYER_GEN1		6
+ 
++#define BITRATE_MAX_AR50LT		100000000
++#define BITRATE_DEFAULT_AR50LT		20000000
++#define MIN_QP_8BIT_AR50LT		0
++
+ enum stage_type {
+ 	STAGE_1 = 1,
+ 	STAGE_2 = 2,
+@@ -51,10 +55,15 @@ enum pipe_type {
+ };
+ 
+ extern const struct iris_firmware_data iris_hfi_gen1_data;
++extern const struct iris_firmware_data iris_hfi_gen1_ar50lt_data;
+ extern const struct iris_firmware_data iris_hfi_gen2_data;
+ extern const struct iris_firmware_data iris_hfi_milos_data;
++extern const struct iris_firmware_data iris_hfi_gen2_ar50lt_data;
++extern const struct platform_inst_slice_caps iris_vpu2_vpu3x_slice_caps;
++extern const struct platform_inst_slice_caps iris_ar50lt_slice_caps;
+ 
+ extern const struct iris_platform_data milos_data;
++extern const struct iris_platform_data qcm2290_data;
+ extern const struct iris_platform_data qcs8300_data;
+ extern const struct iris_platform_data sc7280_data;
+ extern const struct iris_platform_data sm8250_data;
+@@ -76,6 +85,7 @@ enum platform_clk_type {
+ 	IRIS_VPP0_HW_CLK,
+ 	IRIS_VPP1_HW_CLK,
+ 	IRIS_APV_HW_CLK,
++	IRIS_THROTTLE_CLK,
+ };
+ 
+ struct platform_clk_data {
+@@ -90,6 +100,18 @@ struct tz_cp_config {
+ 	u32 cp_nonpixel_size;
+ };
+ 
++struct platform_inst_slice_caps {
++	u32 max_slices_per_frame;
++	u32 max_slice_frame_rate;
++	u32 max_mb_slice_width;
++	u32 max_mb_slice_height;
++	u32 max_bytes_slice_width;
++	u32 max_bytes_slice_height;
++	u32 min_hevc_slice_width;
++	u32 min_avc_slice_width;
++	u32 min_slice_height;
++};
++
+ struct platform_inst_caps {
+ 	u32 min_frame_width;
+ 	u32 max_frame_width;
+@@ -186,6 +208,9 @@ enum platform_inst_fw_cap_type {
+ 	LAYER5_BITRATE_HEVC,
+ 	REQUEST_SYNC_FRAME,
+ 	TIME_DELTA_BASED_RC,
++	SLICE_MODE,
++	SLICE_MAX_BYTES,
++	SLICE_MAX_MB,
+ 	INST_FW_CAP_MAX,
+ };
+ 
+@@ -244,6 +269,9 @@ struct iris_firmware_data {
+ 
+ 	u32 core_arch;
+ 
++	/* Query buffer sizes from the firmware (pre-Iris HFI Gen1 platforms). */
++	bool query_buffer_requirements;
++
+ 	const struct platform_inst_fw_cap *inst_fw_caps_dec;
+ 	u32 inst_fw_caps_dec_size;
+ 	const struct platform_inst_fw_cap *inst_fw_caps_enc;
+@@ -314,10 +342,14 @@ struct iris_platform_data {
+ 	const u32 *inst_iris_fmts;
+ 	u32 inst_iris_fmts_size;
+ 	struct platform_inst_caps *inst_caps;
++	const struct platform_inst_slice_caps *slice_caps;
+ 	const struct tz_cp_config *tz_cp_config_data;
+ 	u32 tz_cp_config_data_size;
+ 	u32 num_vpp_pipe;
+ 	bool no_aon;
++	bool no_rpmh;
++	u32 wd_intr_mask;
++	u32 icc_ib_multiplier;
+ 	u32 max_session_count;
+ 	/* max number of macroblocks per frame supported */
+ 	u32 max_core_mbpf;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+index bbdbf21961d7..becbe3776544 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+@@ -17,6 +17,8 @@
+ #include "iris_platform_sc7280.h"
+ #include "iris_platform_sm8250.h"
+ 
++#define WRAPPER_INTR_STATUS_A2HWD_BMSK		BIT(3)
++
+ static const struct iris_firmware_desc iris_milos_desc = {
+ 	.firmware_data = &iris_hfi_milos_data,
+ 	.get_vpu_buffer_size = iris_vpu_buf_size,
+@@ -42,9 +44,9 @@ static const struct iris_firmware_desc iris_vpu20_p4_gen1_desc = {
+ };
+ 
+ static const u32 iris_fmts_vpu2_dec[] = {
+-	[IRIS_FMT_H264] = V4L2_PIX_FMT_H264,
+-	[IRIS_FMT_HEVC] = V4L2_PIX_FMT_HEVC,
+-	[IRIS_FMT_VP9] = V4L2_PIX_FMT_VP9,
++	V4L2_PIX_FMT_H264,
++	V4L2_PIX_FMT_HEVC,
++	V4L2_PIX_FMT_VP9,
+ };
+ 
+ static struct platform_inst_caps platform_inst_cap_vpu2 = {
+@@ -125,10 +127,13 @@ const struct iris_platform_data sc7280_data = {
+ 	.inst_iris_fmts = iris_fmts_vpu2_dec,
+ 	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_vpu2_dec),
+ 	.inst_caps = &platform_inst_cap_vpu2,
++	.slice_caps = &iris_vpu2_vpu3x_slice_caps,
+ 	.tz_cp_config_data = tz_cp_config_vpu2,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu2),
+ 	.num_vpp_pipe = 1,
+ 	.no_aon = true,
++	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
++	.icc_ib_multiplier = 1,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = 4096 * 2176 / 256 * 2 + 1920 * 1088 / 256,
+ 	/* max spec for SC7280 is 4096x2176@60fps */
+@@ -159,6 +164,8 @@ const struct iris_platform_data sm8250_data = {
+ 	.tz_cp_config_data = tz_cp_config_vpu2,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu2),
+ 	.num_vpp_pipe = 4,
++	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
++	.icc_ib_multiplier = 1,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = NUM_MBS_8K,
+ 	.max_core_mbps = ((7680 * 4320) / 256) * 60,
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c b/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
+index 74626b35d9cb..e963cb116313 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu3x.c
+@@ -18,6 +18,8 @@
+ #include "iris_platform_sm8750.h"
+ #include "iris_platform_x1p42100.h"
+ 
++#define WRAPPER_INTR_STATUS_A2HWD_BMSK		BIT(3)
++
+ static const struct iris_firmware_desc iris_vpu30_p4_s6_gen2_desc = {
+ 	.firmware_data = &iris_hfi_gen2_data,
+ 	.get_vpu_buffer_size = iris_vpu_buf_size,
+@@ -49,10 +51,10 @@ static const struct iris_firmware_desc iris_vpu35_p4_gen2_desc = {
+ };
+ 
+ static const u32 iris_fmts_vpu3x_dec[] = {
+-	[IRIS_FMT_H264] = V4L2_PIX_FMT_H264,
+-	[IRIS_FMT_HEVC] = V4L2_PIX_FMT_HEVC,
+-	[IRIS_FMT_VP9] = V4L2_PIX_FMT_VP9,
+-	[IRIS_FMT_AV1] = V4L2_PIX_FMT_AV1,
++	V4L2_PIX_FMT_H264,
++	V4L2_PIX_FMT_HEVC,
++	V4L2_PIX_FMT_VP9,
++	V4L2_PIX_FMT_AV1,
+ };
+ 
+ static const struct icc_info iris_icc_info_vpu3x[] = {
+@@ -110,9 +112,12 @@ const struct iris_platform_data qcs8300_data = {
+ 	.inst_iris_fmts = iris_fmts_vpu3x_dec,
+ 	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_vpu3x_dec),
+ 	.inst_caps = &platform_inst_cap_qcs8300,
++	.slice_caps = &iris_vpu2_vpu3x_slice_caps,
+ 	.tz_cp_config_data = tz_cp_config_vpu3,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu3),
+ 	.num_vpp_pipe = 2,
++	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
++	.icc_ib_multiplier = 1,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = ((4096 * 2176) / 256) * 4,
+ 	.max_core_mbps = (((3840 * 2176) / 256) * 120),
+@@ -139,9 +144,12 @@ const struct iris_platform_data sm8550_data = {
+ 	.inst_iris_fmts = iris_fmts_vpu3x_dec,
+ 	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_vpu3x_dec),
+ 	.inst_caps = &platform_inst_cap_sm8550,
++	.slice_caps = &iris_vpu2_vpu3x_slice_caps,
+ 	.tz_cp_config_data = tz_cp_config_vpu3,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu3),
+ 	.num_vpp_pipe = 4,
++	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
++	.icc_ib_multiplier = 1,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = NUM_MBS_8K * 2,
+ 	.max_core_mbps = ((7680 * 4320) / 256) * 60,
+@@ -176,9 +184,12 @@ const struct iris_platform_data sm8650_data = {
+ 	.inst_iris_fmts = iris_fmts_vpu3x_dec,
+ 	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_vpu3x_dec),
+ 	.inst_caps = &platform_inst_cap_sm8550,
++	.slice_caps = &iris_vpu2_vpu3x_slice_caps,
+ 	.tz_cp_config_data = tz_cp_config_vpu3,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu3),
+ 	.num_vpp_pipe = 4,
++	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
++	.icc_ib_multiplier = 1,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = NUM_MBS_8K * 2,
+ 	.max_core_mbps = ((7680 * 4320) / 256) * 60,
+@@ -205,9 +216,12 @@ const struct iris_platform_data sm8750_data = {
+ 	.inst_iris_fmts = iris_fmts_vpu3x_dec,
+ 	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_vpu3x_dec),
+ 	.inst_caps = &platform_inst_cap_sm8550,
++	.slice_caps = &iris_vpu2_vpu3x_slice_caps,
+ 	.tz_cp_config_data = tz_cp_config_vpu3,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu3),
+ 	.num_vpp_pipe = 4,
++	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
++	.icc_ib_multiplier = 1,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = NUM_MBS_8K * 2,
+ 	.max_core_mbps = ((7680 * 4320) / 256) * 60,
+@@ -240,9 +254,12 @@ const struct iris_platform_data x1p42100_data = {
+ 	.inst_iris_fmts = iris_fmts_vpu3x_dec,
+ 	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_vpu3x_dec),
+ 	.inst_caps = &platform_inst_cap_sm8550,
++	.slice_caps = &iris_vpu2_vpu3x_slice_caps,
+ 	.tz_cp_config_data = tz_cp_config_vpu3,
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_vpu3),
+ 	.num_vpp_pipe = 1,
++	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
++	.icc_ib_multiplier = 1,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = NUM_MBS_8K * 2,
+ 	.max_core_mbps = ((7680 * 4320) / 256) * 60,
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c b/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
+new file mode 100644
+index 000000000000..43460b82ae77
+--- /dev/null
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
+@@ -0,0 +1,118 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
++ */
++
++#include "iris_core.h"
++#include "iris_ctrls.h"
++#include "iris_hfi_gen2.h"
++#include "iris_hfi_gen2_defines.h"
++#include "iris_platform_common.h"
++#include "iris_vpu_buffer.h"
++#include "iris_vpu_common.h"
++
++#define WRAPPER_INTR_STATUS_A2HWD_BMSK		0x10
++
++static const struct iris_firmware_desc iris_vpu_ar50lt_p1_gen1_s6_desc = {
++	.firmware_data = &iris_hfi_gen1_ar50lt_data,
++	.get_vpu_buffer_size = iris_vpu_ar50lt_gen1_buf_size,
++	.fwname = "qcom/venus-6.0/venus.mbn",
++};
++
++static const struct iris_firmware_desc iris_vpu_ar50lt_p1_gen2_s6_desc = {
++	.firmware_data = &iris_hfi_gen2_ar50lt_data,
++	.get_vpu_buffer_size = iris_vpu_ar50lt_gen2_buf_size,
++	.fwname = "qcom/vpu/ar50lt_p1_gen2_s6.mbn",
++};
++
++static const u32 iris_fmts_ar50lt_dec[] = {
++	V4L2_PIX_FMT_H264,
++	V4L2_PIX_FMT_HEVC,
++	V4L2_PIX_FMT_VP9,
++};
++
++static const struct bw_info iris_bw_table_dec_ar50lt[] = {
++	{ ((1920 * 1080) / 256) * 60, 1564000, },
++	{ ((1920 * 1080) / 256) * 30,  791000, },
++	{ ((1280 * 720) / 256) * 60,   688000, },
++	{ ((1280 * 720) / 256) * 30,   347000, },
++};
++
++static const struct icc_info iris_icc_info_ar50lt[] = {
++	{ "cpu-cfg",    1000, 1000     },
++	{ "video-mem",  1000, 6500000  },
++};
++
++static const char * const iris_pmdomain_table_ar50lt[] = { "venus", "vcodec0" };
++
++static const char * const iris_opp_pd_table_ar50lt[] = { "cx" };
++
++static const struct platform_clk_data iris_clk_table_ar50lt[] = {
++	{IRIS_CTRL_CLK,    "core"         },
++	{IRIS_AXI_CLK,     "iface"        },
++	{IRIS_AHB_CLK,     "bus"          },
++	{IRIS_HW_CLK,      "vcodec0_core" },
++	{IRIS_HW_AHB_CLK,  "vcodec0_bus"  },
++	{IRIS_THROTTLE_CLK, "throttle"    },
++};
++
++static const char * const iris_opp_clk_table_ar50lt[] = {
++	"vcodec0_core",
++	NULL,
++};
++
++static const struct tz_cp_config tz_cp_config_ar50lt[] = {
++	{
++		.cp_start = 0,
++		.cp_size = 0x25800000,
++		.cp_nonpixel_start = 0x01000000,
++		.cp_nonpixel_size = 0x24800000,
++	},
++};
++
++static struct platform_inst_caps platform_inst_cap_ar50lt = {
++	.min_frame_width = 128,
++	.max_frame_width = 1920,
++	.min_frame_height = 128,
++	.max_frame_height = 1920,
++	.max_mbpf = (1920 * 1088) / 256,
++	.mb_cycles_vpp = 440,
++	.mb_cycles_fw = 733003,
++	.mb_cycles_fw_vpp = 225975,
++	.max_frame_rate = 120,
++	.max_operating_rate = 120,
++};
++
++const struct iris_platform_data qcm2290_data = {
++	.firmware_desc_gen1 = &iris_vpu_ar50lt_p1_gen1_s6_desc,
++	.firmware_desc_gen2 = &iris_vpu_ar50lt_p1_gen2_s6_desc,
++	.vpu_ops = &iris_vpu_ar50lt_ops,
++	.icc_tbl = iris_icc_info_ar50lt,
++	.icc_tbl_size = ARRAY_SIZE(iris_icc_info_ar50lt),
++	.bw_tbl_dec = iris_bw_table_dec_ar50lt,
++	.bw_tbl_dec_size = ARRAY_SIZE(iris_bw_table_dec_ar50lt),
++	.pmdomain_tbl = iris_pmdomain_table_ar50lt,
++	.pmdomain_tbl_size = ARRAY_SIZE(iris_pmdomain_table_ar50lt),
++	.opp_pd_tbl = iris_opp_pd_table_ar50lt,
++	.opp_pd_tbl_size = ARRAY_SIZE(iris_opp_pd_table_ar50lt),
++	.clk_tbl = iris_clk_table_ar50lt,
++	.clk_tbl_size = ARRAY_SIZE(iris_clk_table_ar50lt),
++	.opp_clk_tbl = iris_opp_clk_table_ar50lt,
++	/* Upper bound of DMA address range */
++	.dma_mask = 0xe0000000 - 1,
++	.inst_iris_fmts = iris_fmts_ar50lt_dec,
++	.inst_iris_fmts_size = ARRAY_SIZE(iris_fmts_ar50lt_dec),
++	.inst_caps = &platform_inst_cap_ar50lt,
++	.slice_caps = &iris_ar50lt_slice_caps,
++	.tz_cp_config_data = tz_cp_config_ar50lt,
++	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_ar50lt),
++	.num_vpp_pipe = 1,
++	.no_rpmh = true,
++	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
++	.icc_ib_multiplier = 2,
++	.max_session_count = 8,
++	.max_core_mbpf = ((1920 * 1088) / 256) * 4,
++	/* Concurrency: 1080p@30 decode + 1080p@30 encode */
++	/* Concurrency: 3 * 1080p@30 decode */
++	.max_core_mbps = (((1920 * 1088) / 256) * 90),
++};
+diff --git a/drivers/media/platform/qcom/iris/iris_probe.c b/drivers/media/platform/qcom/iris/iris_probe.c
+index 6581a969fe3f..41dec90f3e2b 100644
+--- a/drivers/media/platform/qcom/iris/iris_probe.c
++++ b/drivers/media/platform/qcom/iris/iris_probe.c
+@@ -251,6 +251,8 @@ static void iris_remove(struct platform_device *pdev)
+ 	if (!core)
+ 		return;
+ 
++	cancel_delayed_work_sync(&core->sys_error_handler);
++
+ 	iris_core_deinit(core);
+ 
+ 	video_unregister_device(core->vdev_dec);
+@@ -420,6 +422,10 @@ static const struct of_device_id iris_dt_match[] = {
+ 		.compatible = "qcom,milos-iris",
+ 		.data = &milos_data,
+ 	},
++	{
++		.compatible = "qcom,qcm2290-venus",
++		.data = &qcm2290_data,
++	},
+ 	{
+ 		.compatible = "qcom,qcs8300-iris",
+ 		.data = &qcs8300_data,
+diff --git a/drivers/media/platform/qcom/iris/iris_resources.c b/drivers/media/platform/qcom/iris/iris_resources.c
+index 2c4d34c7bd77..883ef7e75291 100644
+--- a/drivers/media/platform/qcom/iris/iris_resources.c
++++ b/drivers/media/platform/qcom/iris/iris_resources.c
+@@ -18,6 +18,7 @@
+ 
+ int iris_set_icc_bw(struct iris_core *core, unsigned long icc_bw)
+ {
++	u32 icc_ib_multiplier = core->iris_platform_data->icc_ib_multiplier;
+ 	unsigned long bw_kbps = 0, bw_prev = 0;
+ 	const struct icc_info *icc_tbl;
+ 	int ret = 0, i;
+@@ -36,6 +37,7 @@ int iris_set_icc_bw(struct iris_core *core, unsigned long icc_bw)
+ 				return ret;
+ 
+ 			core->icc_tbl[i].avg_bw = bw_kbps;
++			core->icc_tbl[i].peak_bw = bw_kbps * icc_ib_multiplier;
+ 
+ 			core->power.icc_bw = bw_kbps;
+ 			break;
+diff --git a/drivers/media/platform/qcom/iris/iris_utils.c b/drivers/media/platform/qcom/iris/iris_utils.c
+index ba5c8dc1280c..1096cc4b01c3 100644
+--- a/drivers/media/platform/qcom/iris/iris_utils.c
++++ b/drivers/media/platform/qcom/iris/iris_utils.c
+@@ -92,6 +92,12 @@ struct iris_inst *iris_get_instance(struct iris_core *core, u32 session_id)
+ 	mutex_lock(&core->lock);
+ 	list_for_each_entry(inst, &core->instances, list) {
+ 		if (inst->session_id == session_id) {
++			/*
++			 * Take a reference under core->lock, paired with
++			 * iris_inst_put() once the caller is done, so the
++			 * instance cannot be freed by a concurrent close().
++			 */
++			kref_get(&inst->kref);
+ 			mutex_unlock(&core->lock);
+ 			return inst;
+ 		}
+diff --git a/drivers/media/platform/qcom/iris/iris_utils.h b/drivers/media/platform/qcom/iris/iris_utils.h
+index 228a5f963812..be23acc0e848 100644
+--- a/drivers/media/platform/qcom/iris/iris_utils.h
++++ b/drivers/media/platform/qcom/iris/iris_utils.h
+@@ -48,6 +48,7 @@ bool iris_split_mode_enabled(struct iris_inst *inst);
+ bool iris_fmt_is_8bit(u32 pixelformat);
+ bool iris_fmt_is_10bit(u32 pixelformat);
+ struct iris_inst *iris_get_instance(struct iris_core *core, u32 session_id);
++void iris_inst_put(struct iris_inst *inst);
+ void iris_helper_buffers_done(struct iris_inst *inst, unsigned int type,
+ 			      enum vb2_buffer_state state);
+ int iris_wait_for_session_response(struct iris_inst *inst, bool is_flush);
+diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
+index a2ea2d67f60d..8faf709c26c1 100644
+--- a/drivers/media/platform/qcom/iris/iris_vb2.c
++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
+@@ -56,10 +56,14 @@ static int iris_check_session_supported(struct iris_inst *inst)
+ 	bool found = false;
+ 	int ret;
+ 
++	mutex_lock(&core->lock);
+ 	list_for_each_entry(instance, &core->instances, list) {
+-		if (instance == inst)
++		if (instance == inst) {
+ 			found = true;
++			break;
++		}
+ 	}
++	mutex_unlock(&core->lock);
+ 
+ 	if (!found) {
+ 		ret = -EINVAL;
+diff --git a/drivers/media/platform/qcom/iris/iris_vdec.c b/drivers/media/platform/qcom/iris/iris_vdec.c
+index 7f89e745a4b1..0dd33ff447bb 100644
+--- a/drivers/media/platform/qcom/iris/iris_vdec.c
++++ b/drivers/media/platform/qcom/iris/iris_vdec.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2022-2024 Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
++#include <linux/soc/qcom/ubwc.h>
+ #include <media/v4l2-event.h>
+ #include <media/v4l2-mem2mem.h>
+ 
+@@ -63,14 +64,20 @@ int iris_vdec_inst_init(struct iris_inst *inst)
+ }
+ 
+ static const u32 iris_vdec_formats_cap[] = {
+-	[IRIS_FMT_NV12] = V4L2_PIX_FMT_NV12,
+-	[IRIS_FMT_QC08C] = V4L2_PIX_FMT_QC08C,
+-	[IRIS_FMT_TP10] =  V4L2_PIX_FMT_P010,
+-	[IRIS_FMT_QC10C] =  V4L2_PIX_FMT_QC10C,
++	V4L2_PIX_FMT_NV12,
++	V4L2_PIX_FMT_QC08C,
++	V4L2_PIX_FMT_P010,
++	V4L2_PIX_FMT_QC10C,
++};
++
++static const u32 iris_vdec_formats_noubwc_cap[] = {
++	V4L2_PIX_FMT_NV12,
++	V4L2_PIX_FMT_P010,
+ };
+ 
+ static bool check_format(struct iris_inst *inst, u32 pixfmt, u32 type)
+ {
++	const struct qcom_ubwc_cfg_data *ubwc = inst->core->ubwc_cfg;
+ 	unsigned int size, i;
+ 	const u32 *fmt;
+ 
+@@ -80,8 +87,13 @@ static bool check_format(struct iris_inst *inst, u32 pixfmt, u32 type)
+ 		size = inst->core->iris_platform_data->inst_iris_fmts_size;
+ 		break;
+ 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+-		fmt = iris_vdec_formats_cap;
+-		size = ARRAY_SIZE(iris_vdec_formats_cap);
++		if (ubwc->ubwc_enc_version) {
++			fmt = iris_vdec_formats_cap;
++			size = ARRAY_SIZE(iris_vdec_formats_cap);
++		} else {
++			fmt = iris_vdec_formats_noubwc_cap;
++			size = ARRAY_SIZE(iris_vdec_formats_noubwc_cap);
++		}
+ 		break;
+ 	default:
+ 		return false;
+@@ -100,6 +112,7 @@ static bool check_format(struct iris_inst *inst, u32 pixfmt, u32 type)
+ 
+ static u32 find_format_by_index(struct iris_inst *inst, u32 index, u32 type)
+ {
++	const struct qcom_ubwc_cfg_data *ubwc = inst->core->ubwc_cfg;
+ 	unsigned int size;
+ 	const u32 *fmt;
+ 
+@@ -109,8 +122,13 @@ static u32 find_format_by_index(struct iris_inst *inst, u32 index, u32 type)
+ 		size = inst->core->iris_platform_data->inst_iris_fmts_size;
+ 		break;
+ 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+-		fmt = iris_vdec_formats_cap;
+-		size = ARRAY_SIZE(iris_vdec_formats_cap);
++		if (ubwc->ubwc_enc_version) {
++			fmt = iris_vdec_formats_cap;
++			size = ARRAY_SIZE(iris_vdec_formats_cap);
++		} else {
++			fmt = iris_vdec_formats_noubwc_cap;
++			size = ARRAY_SIZE(iris_vdec_formats_noubwc_cap);
++		}
+ 		break;
+ 	default:
+ 		return 0;
+diff --git a/drivers/media/platform/qcom/iris/iris_venc.c b/drivers/media/platform/qcom/iris/iris_venc.c
+index a945992f63aa..2f2c56bf9122 100644
+--- a/drivers/media/platform/qcom/iris/iris_venc.c
++++ b/drivers/media/platform/qcom/iris/iris_venc.c
+@@ -3,6 +3,7 @@
+  * Copyright (c) 2022-2025 Qualcomm Innovation Center, Inc. All rights reserved.
+  */
+ 
++#include <linux/soc/qcom/ubwc.h>
+ #include <media/v4l2-event.h>
+ #include <media/v4l2-mem2mem.h>
+ 
+@@ -80,24 +81,34 @@ int iris_venc_inst_init(struct iris_inst *inst)
+ }
+ 
+ static const u32 iris_venc_formats_cap[] = {
+-	[IRIS_FMT_H264] = V4L2_PIX_FMT_H264,
+-	[IRIS_FMT_HEVC] = V4L2_PIX_FMT_HEVC,
++	V4L2_PIX_FMT_H264,
++	V4L2_PIX_FMT_HEVC,
+ };
+ 
+ static const u32 iris_venc_formats_out[] = {
+-	[IRIS_FMT_NV12] = V4L2_PIX_FMT_NV12,
+-	[IRIS_FMT_QC08C] = V4L2_PIX_FMT_QC08C,
++	V4L2_PIX_FMT_NV12,
++	V4L2_PIX_FMT_QC08C,
++};
++
++static const u32 iris_venc_formats_noubwc_out[] = {
++	V4L2_PIX_FMT_NV12,
+ };
+ 
+ static bool check_format(struct iris_inst *inst, u32 pixfmt, u32 type)
+ {
++	const struct qcom_ubwc_cfg_data *ubwc = inst->core->ubwc_cfg;
+ 	unsigned int size, i;
+ 	const u32 *fmt;
+ 
+ 	switch (type) {
+ 	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+-		fmt = iris_venc_formats_out;
+-		size = ARRAY_SIZE(iris_venc_formats_out);
++		if (ubwc->ubwc_enc_version) {
++			fmt = iris_venc_formats_out;
++			size = ARRAY_SIZE(iris_venc_formats_out);
++		} else {
++			fmt = iris_venc_formats_noubwc_out;
++			size = ARRAY_SIZE(iris_venc_formats_noubwc_out);
++		}
+ 		break;
+ 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+ 		fmt = iris_venc_formats_cap;
+@@ -117,13 +128,19 @@ static bool check_format(struct iris_inst *inst, u32 pixfmt, u32 type)
+ 
+ static u32 find_format_by_index(struct iris_inst *inst, u32 index, u32 type)
+ {
++	const struct qcom_ubwc_cfg_data *ubwc = inst->core->ubwc_cfg;
+ 	unsigned int size;
+ 	const u32 *fmt;
+ 
+ 	switch (type) {
+ 	case V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE:
+-		fmt = iris_venc_formats_out;
+-		size = ARRAY_SIZE(iris_venc_formats_out);
++		if (ubwc->ubwc_enc_version) {
++			fmt = iris_venc_formats_out;
++			size = ARRAY_SIZE(iris_venc_formats_out);
++		} else {
++			fmt = iris_venc_formats_noubwc_out;
++			size = ARRAY_SIZE(iris_venc_formats_noubwc_out);
++		}
+ 		break;
+ 	case V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE:
+ 		fmt = iris_venc_formats_cap;
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+index f1d7f186002d..05aab6e3005d 100644
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -40,21 +40,39 @@ static void iris_v4l2_fh_deinit(struct iris_inst *inst, struct file *filp)
+ 	v4l2_fh_exit(&inst->fh);
+ }
+ 
+-static void iris_add_session(struct iris_inst *inst)
++static void iris_inst_release(struct kref *kref)
++{
++	struct iris_inst *inst = container_of(kref, struct iris_inst, kref);
++
++	mutex_destroy(&inst->ctx_q_lock);
++	mutex_destroy(&inst->lock);
++	kfree(inst->fmt_src);
++	kfree(inst->fmt_dst);
++	kfree(inst);
++}
++
++void iris_inst_put(struct iris_inst *inst)
++{
++	kref_put(&inst->kref, iris_inst_release);
++}
++
++static int iris_add_session(struct iris_inst *inst)
+ {
+ 	struct iris_core *core = inst->core;
+ 	struct iris_inst *iter;
+ 	u32 count = 0;
+ 
+-	mutex_lock(&core->lock);
++	guard(mutex)(&core->lock);
+ 
+ 	list_for_each_entry(iter, &core->instances, list)
+ 		count++;
+ 
+-	if (count < core->iris_platform_data->max_session_count)
+-		list_add_tail(&inst->list, &core->instances);
++	if (count >= core->iris_platform_data->max_session_count)
++		return -EBUSY;
+ 
+-	mutex_unlock(&core->lock);
++	list_add_tail(&inst->list, &core->instances);
++
++	return 0;
+ }
+ 
+ static void iris_remove_session(struct iris_inst *inst)
+@@ -165,6 +183,7 @@ int iris_open(struct file *filp)
+ 	inst->domain = session_type;
+ 	inst->session_id = hash32_ptr(inst);
+ 	inst->state = IRIS_INST_DEINIT;
++	kref_init(&inst->kref);
+ 
+ 	mutex_init(&inst->lock);
+ 	mutex_init(&inst->ctx_q_lock);
+@@ -197,8 +216,6 @@ int iris_open(struct file *filp)
+ 		goto fail_m2m_release;
+ 	}
+ 
+-	iris_session_init_caps(core);
+-
+ 	if (inst->domain == DECODER)
+ 		ret = iris_vdec_inst_init(inst);
+ 	else if (inst->domain == ENCODER)
+@@ -206,12 +223,17 @@ int iris_open(struct file *filp)
+ 	if (ret)
+ 		goto fail_m2m_ctx_release;
+ 
+-	iris_add_session(inst);
++	ret = iris_add_session(inst);
++	if (ret)
++		goto fail_inst_deinit;
+ 
+ 	inst->fh.m2m_ctx = inst->m2m_ctx;
+ 
+ 	return 0;
+ 
++fail_inst_deinit:
++	kfree(inst->fmt_src);
++	kfree(inst->fmt_dst);
+ fail_m2m_ctx_release:
+ 	v4l2_m2m_ctx_release(inst->m2m_ctx);
+ fail_m2m_release:
+@@ -301,11 +323,7 @@ int iris_close(struct file *filp)
+ 	iris_check_num_queued_internal_buffers(inst, V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE);
+ 	iris_remove_session(inst);
+ 	mutex_unlock(&inst->lock);
+-	mutex_destroy(&inst->ctx_q_lock);
+-	mutex_destroy(&inst->lock);
+-	kfree(inst->fmt_src);
+-	kfree(inst->fmt_dst);
+-	kfree(inst);
++	iris_inst_put(inst);
+ 
+ 	return 0;
+ }
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu2.c b/drivers/media/platform/qcom/iris/iris_vpu2.c
+index b8714dcbad10..5419a5096b00 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu2.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu2.c
+@@ -12,37 +12,13 @@
+ 
+ #include "iris_vpu_register_defines.h"
+ 
+-static u64 iris_vpu2_calc_freq(struct iris_inst *inst, size_t data_size)
+-{
+-	struct platform_inst_caps *caps = inst->core->iris_platform_data->inst_caps;
+-	struct v4l2_format *inp_f = inst->fmt_src;
+-	u32 mbs_per_second, mbpf, height, width;
+-	unsigned long vpp_freq, vsp_freq;
+-	u32 fps = inst->frame_rate;
+-
+-	width = max(inp_f->fmt.pix_mp.width, inst->crop.width);
+-	height = max(inp_f->fmt.pix_mp.height, inst->crop.height);
+-
+-	mbpf = NUM_MBS_PER_FRAME(height, width);
+-	mbs_per_second = mbpf * fps;
+-
+-	vpp_freq = mbs_per_second * caps->mb_cycles_vpp;
+-
+-	/* 21 / 20 is overhead factor */
+-	vpp_freq += vpp_freq / 20;
+-	vsp_freq = mbs_per_second * caps->mb_cycles_vsp;
+-
+-	/* 10 / 7 is overhead factor */
+-	vsp_freq += ((fps * data_size * 8) * 10) / 7;
+-
+-	return max(vpp_freq, vsp_freq);
+-}
+-
+ const struct vpu_ops iris_vpu2_ops = {
+ 	.power_off_hw = iris_vpu_power_off_hw,
+ 	.power_on_hw = iris_vpu_power_on_hw,
+ 	.power_off_controller = iris_vpu_power_off_controller,
+ 	.power_on_controller = iris_vpu_power_on_controller,
+-	.calc_freq = iris_vpu2_calc_freq,
++	.calc_freq = iris_vpu2_calculate_frequency,
+ 	.set_hwmode = iris_vpu_set_hwmode,
++	.set_preset_registers = iris_vpu_set_preset_registers,
++	.interrupt_init = iris_vpu_interrupt_init,
+ };
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu3x.c b/drivers/media/platform/qcom/iris/iris_vpu3x.c
+index 3dad47be78b5..c3b760730c98 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu3x.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu3x.c
+@@ -261,6 +261,8 @@ const struct vpu_ops iris_vpu3_ops = {
+ 	.power_on_controller = iris_vpu_power_on_controller,
+ 	.calc_freq = iris_vpu3x_vpu4x_calculate_frequency,
+ 	.set_hwmode = iris_vpu_set_hwmode,
++	.set_preset_registers = iris_vpu_set_preset_registers,
++	.interrupt_init = iris_vpu_interrupt_init,
+ };
+ 
+ const struct vpu_ops iris_vpu33_ops = {
+@@ -270,6 +272,8 @@ const struct vpu_ops iris_vpu33_ops = {
+ 	.power_on_controller = iris_vpu_power_on_controller,
+ 	.calc_freq = iris_vpu3x_vpu4x_calculate_frequency,
+ 	.set_hwmode = iris_vpu_set_hwmode,
++	.set_preset_registers = iris_vpu_set_preset_registers,
++	.interrupt_init = iris_vpu_interrupt_init,
+ };
+ 
+ const struct vpu_ops iris_vpu35_ops = {
+@@ -280,4 +284,6 @@ const struct vpu_ops iris_vpu35_ops = {
+ 	.program_bootup_registers = iris_vpu35_vpu4x_program_bootup_registers,
+ 	.calc_freq = iris_vpu3x_vpu4x_calculate_frequency,
+ 	.set_hwmode = iris_vpu_set_hwmode,
++	.set_preset_registers = iris_vpu_set_preset_registers,
++	.interrupt_init = iris_vpu_interrupt_init,
+ };
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu4x.c b/drivers/media/platform/qcom/iris/iris_vpu4x.c
+index 02e100a4045f..90ccdc0d2a07 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu4x.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu4x.c
+@@ -368,4 +368,6 @@ const struct vpu_ops iris_vpu4x_ops = {
+ 	.program_bootup_registers = iris_vpu35_vpu4x_program_bootup_registers,
+ 	.calc_freq = iris_vpu3x_vpu4x_calculate_frequency,
+ 	.set_hwmode = iris_vpu4x_set_hwmode,
++	.set_preset_registers = iris_vpu_set_preset_registers,
++	.interrupt_init = iris_vpu_interrupt_init,
+ };
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_ar50lt.c b/drivers/media/platform/qcom/iris/iris_vpu_ar50lt.c
+new file mode 100644
+index 000000000000..e084a5b49f2e
+--- /dev/null
++++ b/drivers/media/platform/qcom/iris/iris_vpu_ar50lt.c
+@@ -0,0 +1,130 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Copyright (c) 2026 Qualcomm Innovation Center, Inc. All rights reserved.
++ */
++
++#include <linux/bits.h>
++#include <linux/iopoll.h>
++#include <linux/reset.h>
++
++#include "iris_instance.h"
++#include "iris_vpu_common.h"
++
++#include "iris_vpu_register_defines.h"
++
++#define WRAPPER_INTR_MASK_A2HVCODEC_BMSK_AR50LT BIT(3)
++
++#define WRAPPER_VCODEC0_CLOCK_CONFIG_AR50LT		0xb0080
++
++#define CPU_CS_VCICMD					0xa0020
++#define CPU_CS_VCICMD_ARP_OFF			0x1
++
++static void iris_vpu_ar50lt_set_preset_registers(struct iris_core *core)
++{
++	writel(0x0, core->reg_base + WRAPPER_VCODEC0_CLOCK_CONFIG_AR50LT);
++}
++
++static void iris_vpu_ar50lt_interrupt_init(struct iris_core *core)
++{
++	writel(WRAPPER_INTR_MASK_A2HVCODEC_BMSK_AR50LT, core->reg_base + WRAPPER_INTR_MASK);
++}
++
++static void iris_vpu_ar50lt_disable_arp(struct iris_core *core)
++{
++	writel(CPU_CS_VCICMD_ARP_OFF, core->reg_base + CPU_CS_VCICMD);
++}
++
++static int iris_vpu_ar50lt_power_off_controller(struct iris_core *core)
++{
++	iris_disable_unprepare_clock(core, IRIS_AHB_CLK);
++	iris_disable_unprepare_clock(core, IRIS_AXI_CLK);
++	iris_disable_unprepare_clock(core, IRIS_CTRL_CLK);
++	iris_disable_power_domains(core, core->pmdomain_tbl->pd_devs[IRIS_CTRL_POWER_DOMAIN]);
++
++	return 0;
++}
++
++static void iris_vpu_ar50lt_power_off_hw(struct iris_core *core)
++{
++	dev_pm_genpd_set_hwmode(core->pmdomain_tbl->pd_devs[IRIS_HW_POWER_DOMAIN], false);
++	iris_disable_unprepare_clock(core, IRIS_THROTTLE_CLK);
++	iris_disable_unprepare_clock(core, IRIS_HW_AHB_CLK);
++	iris_disable_unprepare_clock(core, IRIS_HW_CLK);
++	iris_disable_power_domains(core, core->pmdomain_tbl->pd_devs[IRIS_HW_POWER_DOMAIN]);
++}
++
++static int iris_vpu_ar50lt_power_on_controller(struct iris_core *core)
++{
++	int ret;
++
++	ret = iris_enable_power_domains(core, core->pmdomain_tbl->pd_devs[IRIS_CTRL_POWER_DOMAIN]);
++	if (ret)
++		return ret;
++
++	ret = iris_prepare_enable_clock(core, IRIS_CTRL_CLK);
++	if (ret)
++		goto err_disable_power;
++
++	ret = iris_prepare_enable_clock(core, IRIS_AXI_CLK);
++	if (ret && ret != -ENOENT)
++		goto err_disable_ctrl_clock;
++
++	ret = iris_prepare_enable_clock(core, IRIS_AHB_CLK);
++	if (ret)
++		goto err_disable_axi_clock;
++
++	return 0;
++
++err_disable_axi_clock:
++	iris_disable_unprepare_clock(core, IRIS_AXI_CLK);
++err_disable_ctrl_clock:
++	iris_disable_unprepare_clock(core, IRIS_CTRL_CLK);
++err_disable_power:
++	iris_disable_power_domains(core, core->pmdomain_tbl->pd_devs[IRIS_CTRL_POWER_DOMAIN]);
++
++	return ret;
++}
++
++static int iris_vpu_ar50lt_power_on_hw(struct iris_core *core)
++{
++	int ret;
++
++	ret = iris_enable_power_domains(core, core->pmdomain_tbl->pd_devs[IRIS_HW_POWER_DOMAIN]);
++	if (ret)
++		return ret;
++
++	ret = iris_prepare_enable_clock(core, IRIS_HW_CLK);
++	if (ret)
++		goto err_disable_power;
++
++	ret = iris_prepare_enable_clock(core, IRIS_HW_AHB_CLK);
++	if (ret)
++		goto err_disable_hw_clock;
++
++	ret = iris_prepare_enable_clock(core, IRIS_THROTTLE_CLK);
++	if (ret)
++		goto err_disable_hw_ahb_clock;
++
++	return 0;
++
++err_disable_hw_ahb_clock:
++	iris_disable_unprepare_clock(core, IRIS_HW_AHB_CLK);
++err_disable_hw_clock:
++	iris_disable_unprepare_clock(core, IRIS_HW_CLK);
++err_disable_power:
++	iris_disable_power_domains(core, core->pmdomain_tbl->pd_devs[IRIS_HW_POWER_DOMAIN]);
++
++	return ret;
++}
++
++const struct vpu_ops iris_vpu_ar50lt_ops = {
++	.power_off_hw = iris_vpu_ar50lt_power_off_hw,
++	.power_on_hw = iris_vpu_ar50lt_power_on_hw,
++	.power_off_controller = iris_vpu_ar50lt_power_off_controller,
++	.power_on_controller = iris_vpu_ar50lt_power_on_controller,
++	.calc_freq = iris_vpu2_calculate_frequency,
++	.set_hwmode = iris_vpu_set_hwmode,
++	.set_preset_registers = iris_vpu_ar50lt_set_preset_registers,
++	.interrupt_init = iris_vpu_ar50lt_interrupt_init,
++	.disable_arp = iris_vpu_ar50lt_disable_arp,
++};
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_buffer.c b/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
+index faebb5472866..a8170e5fa9e6 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_buffer.c
+@@ -50,6 +50,26 @@ static u32 hfi_buffer_bin_h264d(u32 frame_width, u32 frame_height, u32 num_vpp_p
+ 	return size_h264d_hw_bin_buffer(n_aligned_w, n_aligned_h, num_vpp_pipes);
+ }
+ 
++static u32 hfi_buffer_bin_h264d_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 n_aligned_h = ALIGN(frame_height, 16);
++	u32 n_aligned_w = ALIGN(frame_width, 16);
++	u32 size_yuv, size_bin_hdr, size_bin_res;
++
++	size_yuv = ((n_aligned_w * n_aligned_h * 3) >> 1);
++	if (size_yuv <= 1920 * 1088 * 3 / 2) {
++		size_bin_hdr = size_yuv * H264_CABAC_HDR_RATIO_SM_TOT;
++		size_bin_res = size_yuv * H264_CABAC_RES_RATIO_SM_TOT;
++	} else {
++		size_bin_hdr = (size_yuv * 3) / 5;
++		size_bin_res = (size_yuv * 3) / 2;
++	}
++	size_bin_hdr = ALIGN(size_bin_hdr, DMA_ALIGNMENT);
++	size_bin_res = ALIGN(size_bin_res, DMA_ALIGNMENT);
++
++	return size_bin_hdr + size_bin_res;
++}
++
+ static u32 size_av1d_hw_bin_buffer(u32 frame_width, u32 frame_height, u32 num_vpp_pipes)
+ {
+ 	u32 size_yuv, size_bin_hdr, size_bin_res;
+@@ -103,6 +123,19 @@ static u32 hfi_buffer_bin_vp9d(u32 frame_width, u32 frame_height, u32 num_vpp_pi
+ 	return _size * num_vpp_pipes;
+ }
+ 
++static u32 hfi_buffer_bin_vp9d_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 size_yuv, size;
++
++	size_yuv = ALIGN(frame_width, 16) * ALIGN(frame_height, 16) * 3 / 2;
++	size_yuv = ALIGN(size_yuv, DMA_ALIGNMENT);
++
++	size = ALIGN(((max(size_yuv, VPX_DECODER_FRAME_BIN_BUFFER_SIZE)) * 6) / 5, DMA_ALIGNMENT) +
++		ALIGN(((max(size_yuv, VPX_DECODER_FRAME_BIN_BUFFER_SIZE)) * 4), DMA_ALIGNMENT);
++
++	return size;
++}
++
+ static u32 hfi_buffer_bin_h265d(u32 frame_width, u32 frame_height, u32 num_vpp_pipes)
+ {
+ 	u32 n_aligned_w = ALIGN(frame_width, 16);
+@@ -111,6 +144,27 @@ static u32 hfi_buffer_bin_h265d(u32 frame_width, u32 frame_height, u32 num_vpp_p
+ 	return size_h265d_hw_bin_buffer(n_aligned_w, n_aligned_h, num_vpp_pipes);
+ }
+ 
++static u32 hfi_buffer_bin_h265d_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 n_aligned_w = ALIGN(frame_width, 16);
++	u32 n_aligned_h = ALIGN(frame_height, 16);
++
++	u32 size_yuv, size_bin_hdr, size_bin_res;
++
++	size_yuv = ((n_aligned_w * n_aligned_h * 3) >> 1);
++	if (size_yuv <= ((BIN_BUFFER_THRESHOLD * 3) >> 1)) {
++		size_bin_hdr = size_yuv * H265_CABAC_HDR_RATIO_SM_TOT;
++		size_bin_res = size_yuv * H265_CABAC_RES_RATIO_SM_TOT;
++	} else {
++		size_bin_hdr = (size_yuv * 41) / 50;
++		size_bin_res = (size_yuv * 59) / 50;
++	}
++	size_bin_hdr = ALIGN(size_bin_hdr, DMA_ALIGNMENT);
++	size_bin_res = ALIGN(size_bin_res, DMA_ALIGNMENT);
++
++	return size_bin_hdr + size_bin_res;
++}
++
+ static u32 hfi_buffer_comv_h264d(u32 frame_width, u32 frame_height, u32 _comv_bufcount)
+ {
+ 	u32 frame_height_in_mbs = DIV_ROUND_UP(frame_height, 16);
+@@ -174,6 +228,14 @@ static u32 size_h264d_bse_cmd_buf(u32 frame_height)
+ 		SIZE_H264D_BSE_CMD_PER_BUF;
+ }
+ 
++static u32 size_h264d_bse_cmd_buf_ar50lt(u32 frame_height)
++{
++	u32 height = ALIGN(frame_height, 32);
++
++	return min_t(u32, (DIV_ROUND_UP(height, 16) * 12), H264D_MAX_SLICE) *
++		SIZE_H264D_BSE_CMD_PER_BUF;
++}
++
+ static u32 size_h265d_bse_cmd_buf(u32 frame_width, u32 frame_height)
+ {
+ 	u32 _size = ALIGN(((ALIGN(frame_width, LCU_MAX_SIZE_PELS) / LCU_MIN_SIZE_PELS) *
+@@ -185,6 +247,18 @@ static u32 size_h265d_bse_cmd_buf(u32 frame_width, u32 frame_height)
+ 	return _size;
+ }
+ 
++static u32 size_h265d_bse_cmd_buf_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 _size = ALIGN(((ALIGN(frame_width, LCU_MAX_SIZE_PELS) / LCU_MIN_SIZE_PELS) *
++			   (ALIGN(frame_height, LCU_MAX_SIZE_PELS) / LCU_MIN_SIZE_PELS)) *
++			    NUM_HW_PIC_BUF, DMA_ALIGNMENT);
++
++	_size = min_t(u32, _size, H265D_MAX_SLICE_AR50LT + 1);
++	_size = 2 * _size * SIZE_H265D_BSE_CMD_PER_BUF;
++
++	return _size;
++}
++
+ static u32 hfi_buffer_persist_h265d(u32 rpu_enabled)
+ {
+ 	return ALIGN((SIZE_SLIST_BUF_H265 * NUM_SLIST_BUF_H265 +
+@@ -195,6 +269,13 @@ static u32 hfi_buffer_persist_h265d(u32 rpu_enabled)
+ 		     DMA_ALIGNMENT);
+ }
+ 
++static u32 hfi_buffer_persist_h265d_ar50lt(void)
++{
++	return ALIGN((SIZE_SLIST_BUF_H265 * NUM_SLIST_BUF_H265 +
++		      H265_NUM_TILE * sizeof(u32) + NUM_HW_PIC_BUF * SIZE_SEI_USERDATA),
++		     DMA_ALIGNMENT);
++}
++
+ static inline
+ u32 hfi_iris3_vp9d_comv_size(void)
+ {
+@@ -212,6 +293,13 @@ static u32 hfi_buffer_persist_vp9d(void)
+ 		HDR10_HIST_EXTRADATA_SIZE;
+ }
+ 
++static u32 hfi_buffer_persist_vp9d_ar50lt(void)
++{
++	return ALIGN(VP9_NUM_PROBABILITY_TABLE_BUF * VP9_PROB_TABLE_SIZE, DMA_ALIGNMENT) +
++		ALIGN(hfi_iris3_vp9d_comv_size(), DMA_ALIGNMENT) +
++		ALIGN(MAX_SUPERFRAME_HEADER_LEN, DMA_ALIGNMENT);
++}
++
+ static u32 size_h264d_vpp_cmd_buf(u32 frame_height)
+ {
+ 	u32 size, height = ALIGN(frame_height, 32);
+@@ -222,6 +310,16 @@ static u32 size_h264d_vpp_cmd_buf(u32 frame_height)
+ 	return size > VPP_CMD_MAX_SIZE ? VPP_CMD_MAX_SIZE : size;
+ }
+ 
++static u32 size_h264d_vpp_cmd_buf_ar50lt(u32 frame_height)
++{
++	u32 size, height = ALIGN(frame_height, 32);
++
++	size = min_t(u32, (DIV_ROUND_UP(height, 16) * 12), H264D_MAX_SLICE) *
++		SIZE_H264D_VPP_CMD_PER_BUF;
++
++	return size > VPP_CMD_MAX_SIZE ? VPP_CMD_MAX_SIZE : size;
++}
++
+ static u32 hfi_buffer_persist_h264d(void)
+ {
+ 	return ALIGN(SIZE_SLIST_BUF_H264 * NUM_SLIST_BUF_H264 +
+@@ -230,6 +328,11 @@ static u32 hfi_buffer_persist_h264d(void)
+ 		    DMA_ALIGNMENT);
+ }
+ 
++static u32 hfi_buffer_persist_h264d_ar50lt(void)
++{
++	return ALIGN((SIZE_SLIST_BUF_H264 * NUM_SLIST_BUF_H264), DMA_ALIGNMENT);
++}
++
+ static u32 hfi_buffer_persist_av1d(u32 max_width, u32 max_height, u32 total_ref_count)
+ {
+ 	u32 comv_size, size;
+@@ -255,6 +358,17 @@ static u32 hfi_buffer_non_comv_h264d(u32 frame_width, u32 frame_height, u32 num_
+ 	return ALIGN(size, DMA_ALIGNMENT);
+ }
+ 
++static u32 hfi_buffer_non_comv_h264d_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 size_bse = size_h264d_bse_cmd_buf_ar50lt(frame_height);
++	u32 size_vpp = size_h264d_vpp_cmd_buf_ar50lt(frame_height);
++	u32 size = ALIGN(size_bse, DMA_ALIGNMENT) +
++		ALIGN(size_vpp, DMA_ALIGNMENT) +
++		ALIGN(SIZE_HW_PIC(SIZE_H264D_HW_PIC_T), DMA_ALIGNMENT);
++
++	return ALIGN(size, DMA_ALIGNMENT);
++}
++
+ static u32 size_h265d_vpp_cmd_buf(u32 frame_width, u32 frame_height)
+ {
+ 	u32 _size = ALIGN(((ALIGN(frame_width, LCU_MAX_SIZE_PELS) / LCU_MIN_SIZE_PELS) *
+@@ -269,6 +383,20 @@ static u32 size_h265d_vpp_cmd_buf(u32 frame_width, u32 frame_height)
+ 	return _size;
+ }
+ 
++static u32 size_h265d_vpp_cmd_buf_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 _size = ALIGN(((ALIGN(frame_width, LCU_MAX_SIZE_PELS) / LCU_MIN_SIZE_PELS) *
++			   (ALIGN(frame_height, LCU_MAX_SIZE_PELS) / LCU_MIN_SIZE_PELS)) *
++			  NUM_HW_PIC_BUF, DMA_ALIGNMENT);
++	_size = min_t(u32, _size, H265D_MAX_SLICE_AR50LT + 1);
++	_size = ALIGN(_size, 4);
++	_size = 2 * _size * SIZE_H265D_VPP_CMD_PER_BUF_AR50LT;
++	if (_size > VPP_CMD_MAX_SIZE)
++		_size = VPP_CMD_MAX_SIZE;
++
++	return _size;
++}
++
+ static u32 hfi_buffer_non_comv_h265d(u32 frame_width, u32 frame_height, u32 num_vpp_pipes)
+ {
+ 	u32 _size_bse = size_h265d_bse_cmd_buf(frame_width, frame_height);
+@@ -285,6 +413,20 @@ static u32 hfi_buffer_non_comv_h265d(u32 frame_width, u32 frame_height, u32 num_
+ 	return ALIGN(_size, DMA_ALIGNMENT);
+ }
+ 
++static u32 hfi_buffer_non_comv_h265d_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 _size_bse = size_h265d_bse_cmd_buf_ar50lt(frame_width, frame_height);
++	u32 _size_vpp = size_h265d_vpp_cmd_buf_ar50lt(frame_width, frame_height);
++	u32 _size = ALIGN(_size_bse, DMA_ALIGNMENT) +
++		ALIGN(_size_vpp, DMA_ALIGNMENT) +
++		ALIGN(2 * sizeof(u16) *
++		(ALIGN(frame_width, LCU_MAX_SIZE_PELS) / LCU_MIN_SIZE_PELS) *
++		(ALIGN(frame_height, LCU_MAX_SIZE_PELS) / LCU_MIN_SIZE_PELS), DMA_ALIGNMENT) +
++		ALIGN(SIZE_HW_PIC(SIZE_H265D_HW_PIC_T), DMA_ALIGNMENT);
++
++	return ALIGN(_size, DMA_ALIGNMENT);
++}
++
+ static u32 size_vpss_lb(u32 frame_width, u32 frame_height)
+ {
+ 	u32 opb_lb_wr_llb_y_buffer_size, opb_lb_wr_llb_uv_buffer_size;
+@@ -317,6 +459,13 @@ u32 size_h265d_lb_fe_top_data(u32 frame_width, u32 frame_height)
+ 		(ALIGN(frame_width, 64) + 8) * 2;
+ }
+ 
++static inline
++u32 size_h265d_lb_fe_top_data_ar50lt(u32 frame_width, u32 frame_height)
++{
++	return ALIGN(MAX_FE_NBR_DATA_LUMA_LINE_BUFFER_SIZE *
++		(ALIGN(frame_width, 64) + 8), DMA_ALIGNMENT) * 2;
++}
++
+ static inline
+ u32 size_h265d_lb_fe_top_ctrl(u32 frame_width, u32 frame_height)
+ {
+@@ -348,6 +497,17 @@ u32 size_h265d_lb_se_left_ctrl(u32 frame_width, u32 frame_height)
+ 		MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE));
+ }
+ 
++static inline
++u32 size_h265d_lb_se_left_ctrl_ar50lt(u32 frame_width, u32 frame_height)
++{
++	return max_t(u32, ((frame_height + 16 - 1) / 8) *
++		MAX_SE_NBR_CTRL_LCU16_LINE_BUFFER_SIZE_AR50LT,
++		max_t(u32, ((frame_height + 32 - 1) / 8) *
++		MAX_SE_NBR_CTRL_LCU32_LINE_BUFFER_SIZE_AR50LT,
++		((frame_height + 64 - 1) / 8) *
++		MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE_AR50LT));
++}
++
+ static inline
+ u32 size_h265d_lb_pe_top_data(u32 frame_width, u32 frame_height)
+ {
+@@ -355,6 +515,13 @@ u32 size_h265d_lb_pe_top_data(u32 frame_width, u32 frame_height)
+ 		(ALIGN(frame_width, LCU_MIN_SIZE_PELS) / LCU_MIN_SIZE_PELS);
+ }
+ 
++static inline
++u32 size_h265d_lb_pe_top_data_ar50lt(u32 frame_width, u32 frame_height)
++{
++	return MAX_PE_NBR_DATA_LCU64_LINE_BUFFER_SIZE_AR50LT *
++		(ALIGN(frame_width, LCU_MIN_SIZE_PELS) / LCU_MIN_SIZE_PELS);
++}
++
+ static inline
+ u32 size_h265d_lb_vsp_top(u32 frame_width, u32 frame_height)
+ {
+@@ -404,6 +571,25 @@ u32 hfi_buffer_line_h265d(u32 frame_width, u32 frame_height, bool is_opb, u32 nu
+ 	return ALIGN((_size + vpss_lb_size), DMA_ALIGNMENT);
+ }
+ 
++static inline
++u32 hfi_buffer_line_h265d_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 size;
++
++	size = ALIGN(size_h265d_lb_fe_top_data_ar50lt(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h265d_lb_fe_top_ctrl(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h265d_lb_fe_left_ctrl(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h265d_lb_se_left_ctrl_ar50lt(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h265d_lb_se_top_ctrl(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h265d_lb_pe_top_data_ar50lt(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h265d_lb_vsp_top(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h265d_lb_vsp_left(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h265d_lb_recon_dma_metadata_wr(frame_width, frame_height), DMA_ALIGNMENT) * 4 +
++		ALIGN(size_h265d_qp(frame_width, frame_height), DMA_ALIGNMENT);
++
++	return ALIGN(size, DMA_ALIGNMENT);
++}
++
+ static inline
+ u32 size_vpxd_lb_fe_left_ctrl(u32 frame_width, u32 frame_height)
+ {
+@@ -438,6 +624,17 @@ u32 size_vpxd_lb_se_left_ctrl(u32 frame_width, u32 frame_height)
+ 			   MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE));
+ }
+ 
++static inline
++u32 size_vpxd_lb_se_left_ctrl_ar50lt(u32 frame_width, u32 frame_height)
++{
++	return max_t(u32, ((frame_height + 15) >> 4) *
++		     MAX_SE_NBR_CTRL_LCU16_LINE_BUFFER_SIZE_AR50LT,
++		     max_t(u32, ((frame_height + 31) >> 5) *
++			   MAX_SE_NBR_CTRL_LCU32_LINE_BUFFER_SIZE_AR50LT,
++			   ((frame_height + 63) >> 6) *
++			   MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE_AR50LT));
++}
++
+ static inline
+ u32 size_vpxd_lb_recon_dma_metadata_wr(u32 frame_width, u32 frame_height)
+ {
+@@ -492,6 +689,17 @@ u32 hfi_iris3_vp9d_lb_size(u32 frame_width, u32 frame_height, u32 num_vpp_pipes)
+ 		ALIGN(size_vp9d_qp(frame_width, frame_height), DMA_ALIGNMENT);
+ }
+ 
++static inline
++u32 hfi_buffer_line_vp9d_ar50lt(u32 frame_width, u32 frame_height, u32 _yuv_bufcount_min)
++{
++	return ALIGN(size_vpxd_lb_fe_left_ctrl(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_vpxd_lb_se_left_ctrl_ar50lt(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_vp9d_lb_vsp_top(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_vpxd_lb_se_top_ctrl(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_vp9d_lb_pe_top_data(frame_width, frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_vp9d_lb_fe_top_data(frame_width, frame_height), DMA_ALIGNMENT);
++}
++
+ static inline
+ u32 hfi_buffer_line_vp9d(u32 frame_width, u32 frame_height, u32 _yuv_bufcount_min, bool is_opb,
+ 			 u32 num_vpp_pipes)
+@@ -529,6 +737,23 @@ static u32 hfi_buffer_line_h264d(u32 frame_width, u32 frame_height,
+ 	return ALIGN((size + vpss_lb_size), DMA_ALIGNMENT);
+ }
+ 
++static u32 hfi_buffer_line_h264d_ar50lt(u32 frame_width, u32 frame_height)
++{
++	u32 size;
++
++	size = ALIGN(size_h264d_lb_fe_top_data_ar50lt(frame_width), DMA_ALIGNMENT) +
++		ALIGN(size_h264d_lb_fe_top_ctrl_ar50lt(frame_width), DMA_ALIGNMENT) +
++		ALIGN(size_h264d_lb_fe_left_ctrl(frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h264d_lb_se_top_ctrl_ar50lt(frame_width), DMA_ALIGNMENT) +
++		ALIGN(size_h264d_lb_se_left_ctrl_ar50lt(frame_height), DMA_ALIGNMENT) +
++		ALIGN(size_h264d_lb_pe_top_data_ar50lt(frame_width), DMA_ALIGNMENT) +
++		ALIGN(size_h264d_lb_vsp_top(frame_width), DMA_ALIGNMENT) +
++		ALIGN(size_h264d_lb_recon_dma_metadata_wr(frame_height), DMA_ALIGNMENT) * 2 +
++		ALIGN(size_h264d_qp(frame_width, frame_height), DMA_ALIGNMENT);
++
++	return ALIGN(size, DMA_ALIGNMENT);
++}
++
+ static u32 size_av1d_lb_opb_wr1_nv12_ubwc(u32 frame_width, u32 frame_height)
+ {
+ 	u32 size, y_width, y_width_a = 128;
+@@ -724,6 +949,22 @@ static u32 iris_vpu_dec_bin_size(struct iris_inst *inst)
+ 	return 0;
+ }
+ 
++static u32 iris_vpu_ar50lt_dec_bin_size(struct iris_inst *inst)
++{
++	struct v4l2_format *f = inst->fmt_src;
++	u32 height = f->fmt.pix_mp.height;
++	u32 width = f->fmt.pix_mp.width;
++
++	if (inst->codec == V4L2_PIX_FMT_H264)
++		return hfi_buffer_bin_h264d_ar50lt(width, height);
++	else if (inst->codec == V4L2_PIX_FMT_HEVC)
++		return hfi_buffer_bin_h265d_ar50lt(width, height);
++	else if (inst->codec == V4L2_PIX_FMT_VP9)
++		return hfi_buffer_bin_vp9d_ar50lt(width, height);
++
++	return 0;
++}
++
+ static u32 iris_vpu_dec_comv_size(struct iris_inst *inst)
+ {
+ 	u32 num_comv = VIDEO_MAX_FRAME;
+@@ -785,6 +1026,18 @@ static u32 iris_vpu_dec_persist_size(struct iris_inst *inst)
+ 	return 0;
+ }
+ 
++static u32 iris_vpu_ar50lt_dec_persist_size(struct iris_inst *inst)
++{
++	if (inst->codec == V4L2_PIX_FMT_H264)
++		return hfi_buffer_persist_h264d_ar50lt();
++	else if (inst->codec == V4L2_PIX_FMT_HEVC)
++		return hfi_buffer_persist_h265d_ar50lt();
++	else if (inst->codec == V4L2_PIX_FMT_VP9)
++		return hfi_buffer_persist_vp9d_ar50lt();
++
++	return 0;
++}
++
+ static u32 iris_vpu_dec_dpb_size(struct iris_inst *inst)
+ {
+ 	if (iris_split_mode_enabled(inst))
+@@ -808,6 +1061,20 @@ static u32 iris_vpu_dec_non_comv_size(struct iris_inst *inst)
+ 	return 0;
+ }
+ 
++static u32 iris_vpu_ar50lt_dec_non_comv_size(struct iris_inst *inst)
++{
++	struct v4l2_format *f = inst->fmt_src;
++	u32 height = f->fmt.pix_mp.height;
++	u32 width = f->fmt.pix_mp.width;
++
++	if (inst->codec == V4L2_PIX_FMT_H264)
++		return hfi_buffer_non_comv_h264d_ar50lt(width, height);
++	else if (inst->codec == V4L2_PIX_FMT_HEVC)
++		return hfi_buffer_non_comv_h265d_ar50lt(width, height);
++
++	return 0;
++}
++
+ static u32 iris_vpu_dec_line_size(struct iris_inst *inst)
+ {
+ 	u32 num_vpp_pipes = inst->core->iris_platform_data->num_vpp_pipe;
+@@ -833,6 +1100,23 @@ static u32 iris_vpu_dec_line_size(struct iris_inst *inst)
+ 	return 0;
+ }
+ 
++static u32 iris_vpu_ar50lt_dec_line_size(struct iris_inst *inst)
++{
++	struct v4l2_format *f = inst->fmt_src;
++	u32 height = f->fmt.pix_mp.height;
++	u32 width = f->fmt.pix_mp.width;
++	u32 out_min_count = inst->buffers[BUF_OUTPUT].min_count;
++
++	if (inst->codec == V4L2_PIX_FMT_H264)
++		return hfi_buffer_line_h264d_ar50lt(width, height);
++	else if (inst->codec == V4L2_PIX_FMT_HEVC)
++		return hfi_buffer_line_h265d_ar50lt(width, height);
++	else if (inst->codec == V4L2_PIX_FMT_VP9)
++		return hfi_buffer_line_vp9d_ar50lt(width, height, out_min_count);
++
++	return 0;
++}
++
+ static u32 iris_vpu_dec_scratch1_size(struct iris_inst *inst)
+ {
+ 	return iris_vpu_dec_comv_size(inst) +
+@@ -840,6 +1124,13 @@ static u32 iris_vpu_dec_scratch1_size(struct iris_inst *inst)
+ 		iris_vpu_dec_line_size(inst);
+ }
+ 
++static u32 iris_vpu_ar50lt_dec_scratch1_size(struct iris_inst *inst)
++{
++	return iris_vpu_dec_comv_size(inst) +
++		iris_vpu_ar50lt_dec_non_comv_size(inst) +
++		iris_vpu_ar50lt_dec_line_size(inst);
++}
++
+ static inline u32 iris_vpu_enc_get_bitstream_width(struct iris_inst *inst)
+ {
+ 	if (is_rotation_90_or_270(inst))
+@@ -1470,6 +1761,15 @@ u32 hfi_buffer_dpb_enc(u32 frame_width, u32 frame_height, bool is_ten_bit)
+ 	return size;
+ }
+ 
++static inline
++u32 hfi_buffer_dpb_enc_ar50lt(u32 frame_width, u32 frame_height, bool is_ten_bit)
++{
++	if (!is_ten_bit)
++		return size_enc_ref_buffer(frame_width, frame_height);
++	else
++		return size_enc_ten_bit_ref_buffer(frame_width, frame_height);
++}
++
+ static u32 iris_vpu_enc_arp_size(struct iris_inst *inst)
+ {
+ 	return HFI_BUFFER_ARP_ENC;
+@@ -1494,6 +1794,16 @@ u32 hfi_buffer_vpss_enc(u32 dswidth, u32 dsheight, bool ds_enable,
+ 	return 0;
+ }
+ 
++static inline
++u32 hfi_buffer_vpss_enc_ar50lt(u32 dswidth, u32 dsheight, bool ds_enable,
++			       u32 blur, bool is_ten_bit)
++{
++	if (ds_enable || blur)
++		return hfi_buffer_dpb_enc_ar50lt(dswidth, dsheight, is_ten_bit);
++
++	return 0;
++}
++
+ static inline u32 hfi_buffer_scratch1_enc(u32 frame_width, u32 frame_height,
+ 					  u32 lcu_size, u32 num_ref,
+ 					  bool ten_bit, u32 num_vpp_pipes,
+@@ -1752,6 +2062,16 @@ static u32 iris_vpu_enc_vpss_size(struct iris_inst *inst)
+ 	return hfi_buffer_vpss_enc(width, height, ds_enable, 0, 0);
+ }
+ 
++static u32 iris_vpu_ar50lt_enc_vpss_size(struct iris_inst *inst)
++{
++	u32 ds_enable = is_scaling_enabled(inst);
++	struct v4l2_format *f = inst->fmt_dst;
++	u32 height = f->fmt.pix_mp.height;
++	u32 width = f->fmt.pix_mp.width;
++
++	return hfi_buffer_vpss_enc_ar50lt(width, height, ds_enable, 0, 0);
++}
++
+ static inline u32 size_dpb_opb(u32 height, u32 lcu_size)
+ {
+ 	u32 max_tile_height = ((height + lcu_size - 1) / lcu_size) * lcu_size + 8;
+@@ -2194,6 +2514,56 @@ u32 iris_vpu4x_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_typ
+ 	return size;
+ }
+ 
++u32 iris_vpu_ar50lt_gen1_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_type)
++{
++	return inst->buffers[buffer_type].size;
++}
++
++u32 iris_vpu_ar50lt_gen2_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_type)
++{
++	const struct iris_vpu_buf_type_handle *buf_type_handle_arr = NULL;
++	u32 size = 0, buf_type_handle_size = 0, i;
++
++	static const struct iris_vpu_buf_type_handle dec_internal_buf_type_handle[] = {
++		{BUF_BIN,         iris_vpu_ar50lt_dec_bin_size      },
++		{BUF_COMV,        iris_vpu_dec_comv_size            },
++		{BUF_NON_COMV,    iris_vpu_ar50lt_dec_non_comv_size },
++		{BUF_LINE,        iris_vpu_ar50lt_dec_line_size     },
++		{BUF_PERSIST,     iris_vpu_ar50lt_dec_persist_size  },
++		{BUF_DPB,         iris_vpu_dec_dpb_size             },
++		{BUF_SCRATCH_1,   iris_vpu_ar50lt_dec_scratch1_size },
++		{BUF_PARTIAL,     iris_vpu_dec_partial_size         },
++	};
++
++	static const struct iris_vpu_buf_type_handle enc_internal_buf_type_handle[] = {
++		{BUF_BIN,         iris_vpu_enc_bin_size             },
++		{BUF_COMV,        iris_vpu_enc_comv_size            },
++		{BUF_NON_COMV,    iris_vpu_enc_non_comv_size        },
++		{BUF_LINE,        iris_vpu_enc_line_size            },
++		{BUF_ARP,         iris_vpu_enc_arp_size             },
++		{BUF_VPSS,        iris_vpu_ar50lt_enc_vpss_size     },
++		{BUF_SCRATCH_1,   iris_vpu_enc_scratch1_size        },
++		{BUF_SCRATCH_2,   iris_vpu_enc_scratch2_size        },
++	};
++
++	if (inst->domain == DECODER) {
++		buf_type_handle_size = ARRAY_SIZE(dec_internal_buf_type_handle);
++		buf_type_handle_arr = dec_internal_buf_type_handle;
++	} else if (inst->domain == ENCODER) {
++		buf_type_handle_size = ARRAY_SIZE(enc_internal_buf_type_handle);
++		buf_type_handle_arr = enc_internal_buf_type_handle;
++	}
++
++	for (i = 0; i < buf_type_handle_size; i++) {
++		if (buf_type_handle_arr[i].type == buffer_type) {
++			size = buf_type_handle_arr[i].handle(inst);
++			break;
++		}
++	}
++
++	return size;
++}
++
+ static u32 internal_buffer_count(struct iris_inst *inst,
+ 				 enum iris_buffer_type buffer_type)
+ {
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_buffer.h b/drivers/media/platform/qcom/iris/iris_vpu_buffer.h
+index 8c0d6b7b5de8..2085e316a6bd 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_buffer.h
++++ b/drivers/media/platform/qcom/iris/iris_vpu_buffer.h
+@@ -61,17 +61,26 @@ struct iris_inst;
+ #define MAX_FE_NBR_CTRL_LCU16_LINE_BUFFER_SIZE 64
+ #define MAX_SE_NBR_CTRL_LCU16_LINE_BUFFER_SIZE (128 / 8)
+ #define MAX_SE_NBR_CTRL_LCU32_LINE_BUFFER_SIZE (128 / 8)
++#define MAX_SE_NBR_CTRL_LCU16_LINE_BUFFER_SIZE_AR50LT (8 / 8)
++#define MAX_SE_NBR_CTRL_LCU32_LINE_BUFFER_SIZE_AR50LT (16 / 8)
++#define MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE_AR50LT (32 / 8)
+ #define VP9_UDC_HEADER_BUF_SIZE	(3 * 128)
+ 
+ #define SIZE_SEI_USERDATA			4096
+ #define SIZE_DOLBY_RPU_METADATA (41 * 1024)
+ #define H264_CABAC_HDR_RATIO_HD_TOT	1
+ #define H264_CABAC_RES_RATIO_HD_TOT	3
++#define H264_CABAC_HDR_RATIO_SM_TOT 1
++#define H264_CABAC_RES_RATIO_SM_TOT 2
+ #define H265D_MAX_SLICE	3600
++#define H265D_MAX_SLICE_AR50LT	600
+ #define SIZE_H265D_HW_PIC_T SIZE_H264D_HW_PIC_T
+ #define H265_CABAC_HDR_RATIO_HD_TOT 2
+ #define H265_CABAC_RES_RATIO_HD_TOT 2
++#define H265_CABAC_HDR_RATIO_SM_TOT 1
++#define H265_CABAC_RES_RATIO_SM_TOT 6
+ #define SIZE_H265D_VPP_CMD_PER_BUF (256)
++#define SIZE_H265D_VPP_CMD_PER_BUF_AR50LT (192)
+ #define SIZE_THREE_DIMENSION_USERDATA 768
+ #define SIZE_H265D_ARP 9728
+ 
+@@ -81,6 +90,7 @@ struct iris_inst;
+ #define VPX_DECODER_FRAME_BIN_DENOMINATOR 2
+ 
+ #define VPX_DECODER_FRAME_BIN_RES_BUDGET_RATIO (3 / 2)
++#define VPX_DECODER_FRAME_BIN_BUFFER_SIZE (1024 * 1024)
+ 
+ #define SIZE_H264D_HW_PIC_T		(BIT(11))
+ 
+@@ -99,6 +109,7 @@ struct iris_inst;
+ #define MAX_FE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE	64
+ #define MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE	16
+ #define MAX_PE_NBR_DATA_LCU64_LINE_BUFFER_SIZE	384
++#define MAX_PE_NBR_DATA_LCU64_LINE_BUFFER_SIZE_AR50LT	176
+ #define MAX_FE_NBR_DATA_LUMA_LINE_BUFFER_SIZE	640
+ 
+ #define AV1_CABAC_HDR_RATIO_HD_TOT 2
+@@ -155,11 +166,21 @@ static inline u32 size_h264d_lb_fe_top_data(u32 frame_width)
+ 	return MAX_FE_NBR_DATA_LUMA_LINE_BUFFER_SIZE * ALIGN(frame_width, 16) * 3;
+ }
+ 
++static inline u32 size_h264d_lb_fe_top_data_ar50lt(u32 frame_width)
++{
++	return 16 * ALIGN(frame_width, 16) * 2;
++}
++
+ static inline u32 size_h264d_lb_fe_top_ctrl(u32 frame_width)
+ {
+ 	return MAX_FE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE * DIV_ROUND_UP(frame_width, 16);
+ }
+ 
++static inline u32 size_h264d_lb_fe_top_ctrl_ar50lt(u32 frame_width)
++{
++	return 16 * DIV_ROUND_UP(frame_width, 16);
++}
++
+ static inline u32 size_h264d_lb_fe_left_ctrl(u32 frame_height)
+ {
+ 	return MAX_FE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE * DIV_ROUND_UP(frame_height, 16);
+@@ -170,16 +191,31 @@ static inline u32 size_h264d_lb_se_top_ctrl(u32 frame_width)
+ 	return MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE * DIV_ROUND_UP(frame_width, 16);
+ }
+ 
++static inline u32 size_h264d_lb_se_top_ctrl_ar50lt(u32 frame_width)
++{
++	return MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE_AR50LT * DIV_ROUND_UP(frame_width, 16);
++}
++
+ static inline u32 size_h264d_lb_se_left_ctrl(u32 frame_height)
+ {
+ 	return MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE * DIV_ROUND_UP(frame_height, 16);
+ }
+ 
++static inline u32 size_h264d_lb_se_left_ctrl_ar50lt(u32 frame_height)
++{
++	return MAX_SE_NBR_CTRL_LCU64_LINE_BUFFER_SIZE_AR50LT * DIV_ROUND_UP(frame_height, 16);
++}
++
+ static inline u32 size_h264d_lb_pe_top_data(u32 frame_width)
+ {
+ 	return MAX_PE_NBR_DATA_LCU64_LINE_BUFFER_SIZE * DIV_ROUND_UP(frame_width, 16);
+ }
+ 
++static inline u32 size_h264d_lb_pe_top_data_ar50lt(u32 frame_width)
++{
++	return 64 * DIV_ROUND_UP(frame_width, 16);
++}
++
+ static inline u32 size_h264d_lb_vsp_top(u32 frame_width)
+ {
+ 	return (DIV_ROUND_UP(frame_width, 16) << 7);
+@@ -288,6 +324,8 @@ static inline u32 size_av1d_qp(u32 frame_width, u32 frame_height)
+ u32 iris_vpu_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_type);
+ u32 iris_vpu33_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_type);
+ u32 iris_vpu4x_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_type);
++u32 iris_vpu_ar50lt_gen1_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_type);
++u32 iris_vpu_ar50lt_gen2_buf_size(struct iris_inst *inst, enum iris_buffer_type buffer_type);
+ int iris_vpu_buf_count(struct iris_inst *inst, enum iris_buffer_type buffer_type);
+ 
+ #endif
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_common.c b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+index c9f5dc851d9f..243bd845349f 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_common.c
++++ b/drivers/media/platform/qcom/iris/iris_vpu_common.c
+@@ -31,7 +31,7 @@
+ #define UC_REGION_ADDR				(CPU_CS_BASE_OFFS + 0x64)
+ #define UC_REGION_SIZE				(CPU_CS_BASE_OFFS + 0x68)
+ 
+-static void iris_vpu_interrupt_init(struct iris_core *core)
++void iris_vpu_interrupt_init(struct iris_core *core)
+ {
+ 	u32 mask_val;
+ 
+@@ -84,7 +84,7 @@ int iris_vpu_boot_firmware(struct iris_core *core)
+ 		ctrl_status = readl(core->reg_base + CTRL_STATUS);
+ 		if ((ctrl_status & CTRL_ERROR_STATUS__M) == 0x4) {
+ 			dev_err(core->dev, "invalid setting for uc_region\n");
+-			break;
++			return -EINVAL;
+ 		}
+ 
+ 		usleep_range(50, 100);
+@@ -97,7 +97,8 @@ int iris_vpu_boot_firmware(struct iris_core *core)
+ 	}
+ 
+ 	writel(HOST2XTENSA_INTR_ENABLE, core->reg_base + CPU_CS_H2XSOFTINTEN);
+-	writel(0x0, core->reg_base + CPU_CS_X2RPMH);
++	if (!core->iris_platform_data->no_rpmh)
++		writel(0x0, core->reg_base + CPU_CS_X2RPMH);
+ 
+ 	return 0;
+ }
+@@ -109,11 +110,11 @@ void iris_vpu_raise_interrupt(struct iris_core *core)
+ 
+ void iris_vpu_clear_interrupt(struct iris_core *core)
+ {
++	u32 wd_intr_mask = core->iris_platform_data->wd_intr_mask;
+ 	u32 intr_status, mask;
+ 
+ 	intr_status = readl(core->reg_base + WRAPPER_INTR_STATUS);
+-	mask = (WRAPPER_INTR_STATUS_A2H_BMSK |
+-		WRAPPER_INTR_STATUS_A2HWD_BMSK |
++	mask = (WRAPPER_INTR_STATUS_A2H_BMSK | wd_intr_mask |
+ 		CTRL_INIT_IDLE_MSG_BMSK);
+ 
+ 	if (intr_status & mask)
+@@ -124,7 +125,9 @@ void iris_vpu_clear_interrupt(struct iris_core *core)
+ 
+ int iris_vpu_watchdog(struct iris_core *core, u32 intr_status)
+ {
+-	if (intr_status & WRAPPER_INTR_STATUS_A2HWD_BMSK) {
++	u32 wd_intr_mask = core->iris_platform_data->wd_intr_mask;
++
++	if (intr_status & wd_intr_mask) {
+ 		dev_err(core->dev, "received watchdog interrupt\n");
+ 		return -ETIME;
+ 	}
+@@ -425,6 +428,32 @@ void iris_vpu35_vpu4x_program_bootup_registers(struct iris_core *core)
+ 	writel(0x1, core->reg_base + WRAPPER_IRIS_VCODEC_VPU_WRAPPER_SPARE_0);
+ }
+ 
++u64 iris_vpu2_calculate_frequency(struct iris_inst *inst, size_t data_size)
++{
++	struct platform_inst_caps *caps = inst->core->iris_platform_data->inst_caps;
++	struct v4l2_format *inp_f = inst->fmt_src;
++	u32 mbs_per_second, mbpf, height, width;
++	unsigned long vpp_freq, vsp_freq;
++	u32 fps = inst->frame_rate;
++
++	width = max(inp_f->fmt.pix_mp.width, inst->crop.width);
++	height = max(inp_f->fmt.pix_mp.height, inst->crop.height);
++
++	mbpf = NUM_MBS_PER_FRAME(height, width);
++	mbs_per_second = mbpf * fps;
++
++	vpp_freq = mbs_per_second * caps->mb_cycles_vpp;
++
++	/* 21 / 20 is overhead factor */
++	vpp_freq += vpp_freq / 20;
++	vsp_freq = mbs_per_second * caps->mb_cycles_vsp;
++
++	/* 10 / 7 is overhead factor */
++	vsp_freq += ((fps * data_size * 8) * 10) / 7;
++
++	return max(vpp_freq, vsp_freq);
++}
++
+ u64 iris_vpu3x_vpu4x_calculate_frequency(struct iris_inst *inst, size_t data_size)
+ {
+ 	struct platform_inst_caps *caps = inst->core->iris_platform_data->inst_caps;
+@@ -488,9 +517,9 @@ int iris_vpu_power_on(struct iris_core *core)
+ 
+ 	iris_opp_set_rate(core->dev, freq);
+ 
+-	iris_vpu_set_preset_registers(core);
++	core->iris_platform_data->vpu_ops->set_preset_registers(core);
+ 
+-	iris_vpu_interrupt_init(core);
++	core->iris_platform_data->vpu_ops->interrupt_init(core);
+ 	core->intr_status = 0;
+ 	enable_irq(core->irq);
+ 
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_common.h b/drivers/media/platform/qcom/iris/iris_vpu_common.h
+index 09799a375c14..a62b6184bde7 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_common.h
++++ b/drivers/media/platform/qcom/iris/iris_vpu_common.h
+@@ -13,6 +13,7 @@ extern const struct vpu_ops iris_vpu3_ops;
+ extern const struct vpu_ops iris_vpu33_ops;
+ extern const struct vpu_ops iris_vpu35_ops;
+ extern const struct vpu_ops iris_vpu4x_ops;
++extern const struct vpu_ops iris_vpu_ar50lt_ops;
+ 
+ struct vpu_ops {
+ 	void (*power_off_hw)(struct iris_core *core);
+@@ -22,6 +23,9 @@ struct vpu_ops {
+ 	void (*program_bootup_registers)(struct iris_core *core);
+ 	u64 (*calc_freq)(struct iris_inst *inst, size_t data_size);
+ 	int (*set_hwmode)(struct iris_core *core);
++	void (*set_preset_registers)(struct iris_core *core);
++	void (*interrupt_init)(struct iris_core *core);
++	void (*disable_arp)(struct iris_core *core);
+ };
+ 
+ int iris_vpu_boot_firmware(struct iris_core *core);
+@@ -37,11 +41,13 @@ int iris_vpu_power_on(struct iris_core *core);
+ int iris_vpu_power_off_controller(struct iris_core *core);
+ void iris_vpu_power_off_hw(struct iris_core *core);
+ void iris_vpu_power_off(struct iris_core *core);
++u64 iris_vpu2_calculate_frequency(struct iris_inst *inst, size_t data_size);
+ int iris_vpu35_vpu4x_power_off_controller(struct iris_core *core);
+ int iris_vpu35_vpu4x_power_on_controller(struct iris_core *core);
+ void iris_vpu35_vpu4x_program_bootup_registers(struct iris_core *core);
+ u64 iris_vpu3x_vpu4x_calculate_frequency(struct iris_inst *inst, size_t data_size);
+ 
+ void iris_vpu_set_preset_registers(struct iris_core *core);
++void iris_vpu_interrupt_init(struct iris_core *core);
+ 
+ #endif
+diff --git a/drivers/media/platform/qcom/iris/iris_vpu_register_defines.h b/drivers/media/platform/qcom/iris/iris_vpu_register_defines.h
+index 72168b9ffa73..4fffa094c52f 100644
+--- a/drivers/media/platform/qcom/iris/iris_vpu_register_defines.h
++++ b/drivers/media/platform/qcom/iris/iris_vpu_register_defines.h
+@@ -41,7 +41,6 @@
+ #define MSK_CORE_POWER_ON			BIT(1)
+ 
+ #define WRAPPER_INTR_STATUS			(WRAPPER_BASE_OFFS + 0x0C)
+-#define WRAPPER_INTR_STATUS_A2HWD_BMSK		BIT(3)
+ #define WRAPPER_INTR_STATUS_A2H_BMSK		BIT(2)
+ 
+ #define WRAPPER_INTR_MASK			(WRAPPER_BASE_OFFS + 0x10)
+diff --git a/drivers/media/platform/qcom/venus/core.c b/drivers/media/platform/qcom/venus/core.c
+index 2a0ab553c451..7087af32060f 100644
+--- a/drivers/media/platform/qcom/venus/core.c
++++ b/drivers/media/platform/qcom/venus/core.c
+@@ -1178,7 +1178,6 @@ static const struct venus_resources sc7280_res = {
+ 	.dec_nodename = "video-decoder",
+ 	.enc_nodename = "video-encoder",
+ };
+-#endif
+ 
+ static const struct bw_tbl qcm2290_bw_table_dec[] = {
+ 	{ 352800, 597000, 0, 746000, 0 }, /* 1080p@30 + 720p@30 */
+@@ -1229,13 +1228,16 @@ static const struct venus_resources qcm2290_res = {
+ 	.enc_nodename = "video-encoder",
+ 	.min_fw = &min_fw,
+ };
++#endif
+ 
+ static const struct of_device_id venus_dt_match[] = {
+ 	{ .compatible = "qcom,msm8916-venus", .data = &msm8916_res, },
+ 	{ .compatible = "qcom,msm8939-venus", .data = &msm8939_res, },
+ 	{ .compatible = "qcom,msm8996-venus", .data = &msm8996_res, },
+ 	{ .compatible = "qcom,msm8998-venus", .data = &msm8998_res, },
++#if (!IS_ENABLED(CONFIG_VIDEO_QCOM_IRIS))
+ 	{ .compatible = "qcom,qcm2290-venus", .data = &qcm2290_res, },
++#endif
+ 	{ .compatible = "qcom,sc7180-venus", .data = &sc7180_res, },
+ 	{ .compatible = "qcom,sdm660-venus", .data = &sdm660_res, },
+ 	{ .compatible = "qcom,sdm845-venus", .data = &sdm845_res, },
+diff --git a/drivers/media/platform/qcom/venus/hfi_msgs.c b/drivers/media/platform/qcom/venus/hfi_msgs.c
+index 5c2025c5acc7..ed6b4e5e5e92 100644
+--- a/drivers/media/platform/qcom/venus/hfi_msgs.c
++++ b/drivers/media/platform/qcom/venus/hfi_msgs.c
+@@ -230,6 +230,9 @@ static void hfi_event_notify(struct venus_core *core, struct venus_inst *inst,
+ 	if (!packet)
+ 		return;
+ 
++	if (!inst && pkt->event_id != HFI_EVENT_SYS_ERROR)
++		return;
++
+ 	switch (pkt->event_id) {
+ 	case HFI_EVENT_SYS_ERROR:
+ 		event_sys_error(core, EVT_SYS_ERROR, pkt);
+-- 
+2.47.0
+

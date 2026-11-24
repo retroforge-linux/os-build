@@ -1092,7 +1092,6 @@
 		reg = <0x0 0x01760000 0x0 0x1100>;
 		#interconnect-cells = <2>;
 		qcom,bcm-voters = <&apps_bcm_voter>;
-		status = "disabled";
 	};
 
 	lpass_ag_noc: interconnect@3c40000 {
@@ -1101,6 +1100,73 @@
 		#interconnect-cells = <2>;
 		qcom,bcm-voters = <&apps_bcm_voter>;
 		status = "disabled";
+	};
+
+	/*
+	 * AR50_LITE, as on QCM2290: iris through the qcm2290 fallback. Clocks,
+	 * IOMMU, coherency and corners from the vendor ravelin-vidc.dtsi. No
+	 * "iface" clock: GCC keeps GCC_VIDEO_AHB_CLK on.
+	 */
+	venus: video-codec@aa00000 {
+		compatible = "qcom,sm4450-venus", "qcom,qcm2290-venus";
+		reg = <0x0 0x0aa00000 0x0 0xf0000>;
+		interrupts = <GIC_SPI 174 IRQ_TYPE_LEVEL_HIGH>;
+
+		power-domains = <&gcc GCC_VENUS_GDSC>,
+				<&gcc GCC_VCODEC0_GDSC>,
+				<&rpmhpd RPMHPD_CX>;
+		power-domain-names = "venus",
+				     "vcodec0",
+				     "cx";
+		operating-points-v2 = <&venus_opp_table>;
+
+		clocks = <&gcc GCC_VIDEO_VENUS_CTL_CLK>,
+			 <&gcc GCC_VENUS_CTL_AXI_CLK>,
+			 <&gcc GCC_VIDEO_THROTTLE_CORE_CLK>,
+			 <&gcc GCC_VIDEO_VCODEC0_SYS_CLK>,
+			 <&gcc GCC_VCODEC0_AXI_CLK>;
+		clock-names = "core",
+			      "bus",
+			      "throttle",
+			      "vcodec0_core",
+			      "vcodec0_bus";
+
+		memory-region = <&video_mem>;
+		iommus = <&apps_smmu 0x1980 0x20>;
+		dma-coherent;
+
+		interconnects = <&video_aggre_noc MASTER_VIDEO_P0 QCOM_ICC_TAG_ALWAYS
+				 &mc_virt SLAVE_EBI1 QCOM_ICC_TAG_ALWAYS>,
+				<&gem_noc MASTER_APPSS_PROC QCOM_ICC_TAG_ACTIVE_ONLY
+				 &config_noc SLAVE_VENUS_CFG QCOM_ICC_TAG_ACTIVE_ONLY>;
+		interconnect-names = "video-mem",
+				     "cpu-cfg";
+
+		firmware-name = "qcom/vpu/ar50lt_p1_gen2_s6.mbn";
+
+		venus_opp_table: opp-table {
+			compatible = "operating-points-v2";
+
+			opp-133333333 {
+				opp-hz = /bits/ 64 <133333333>;
+				required-opps = <&rpmhpd_opp_low_svs>;
+			};
+
+			opp-240000000 {
+				opp-hz = /bits/ 64 <240000000>;
+				required-opps = <&rpmhpd_opp_svs>;
+			};
+
+			opp-365000000 {
+				opp-hz = /bits/ 64 <365000000>;
+				required-opps = <&rpmhpd_opp_svs_l1>;
+			};
+
+			opp-384000000 {
+				opp-hz = /bits/ 64 <384000000>;
+				required-opps = <&rpmhpd_opp_nom>;
+			};
+		};
 	};
 
 	mdss: display-subsystem@ae00000 {

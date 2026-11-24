@@ -1,0 +1,225 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+Date: Wed, 9 Sep 2026 18:41:54 +0200
+Subject: [PATCH] interconnect: qcom: icc-rpm: backport the 7.4 vote fixes
+
+Four commits of v7.4-rc1, in upstream order:
+
+ 51797517fab7 interconnect: qcom: Move bcm_div() to common code
+ 40ea86fa389c interconnect: qcom: icc-rpm: Don't skip small votes
+ b2079a6b8e8b interconnect: qcom: icc-rpm: Handle icc_link_create() failures
+ 24e7422ce311 interconnect: qcom: use 64-bit SMD RPM bus votes
+
+The first three are 1-3 of "icc_rpm_smd_qol"
+<20260909-topic-icc_rpm_smd_qol-v1-1-6dc5b5e97626@oss.qualcomm.com>; the
+first only gives icc-rpm the rounding helper the second uses. The fourth
+is <20260904-topic-icc_rpm_64b_req-v1-1-37e24f1991a3@oss.qualcomm.com>.
+
+The fourth matters most here: SMD RPM bus votes carry a 64-bit value, but
+the driver sent a u32 and told the RPM the payload was 4 bytes. The SM6115's
+DDR slave (EBI) vote sums every master, and the MANGMI Air X's CPU OPPs alone
+ask for up to 8.37 GB/s, so its vote wrapped past 4 GiB/s.
+
+Not taken: ddbacca26d1d (auxiliary QoS ports) and its two users, which are
+MSM8996 and MSM8976 nodes; SM6115 and QCM2290 nodes have none.
+
+Applies after our 0132 (both edit icc-rpm.c).
+
+Signed-off-by: Konrad Dybcio <konrad.dybcio@oss.qualcomm.com>
+---
+ drivers/interconnect/qcom/bcm-voter.c  | 21 +++++----------------
+ drivers/interconnect/qcom/icc-common.h |  9 +++++++++
+ drivers/interconnect/qcom/icc-rpm.c    | 19 +++++++++++++------
+ drivers/interconnect/qcom/icc-rpm.h    |  4 ++--
+ drivers/interconnect/qcom/smd-rpm.c    |  8 ++++----
+ 5 files changed, 33 insertions(+), 28 deletions(-)
+
+diff --git a/drivers/interconnect/qcom/bcm-voter.c b/drivers/interconnect/qcom/bcm-voter.c
+index a2d437a05a11..cdb0c5ee5cbc 100644
+--- a/drivers/interconnect/qcom/bcm-voter.c
++++ b/drivers/interconnect/qcom/bcm-voter.c
+@@ -3,7 +3,6 @@
+  * Copyright (c) 2020-2021, The Linux Foundation. All rights reserved.
+  */
+ 
+-#include <asm/div64.h>
+ #include <linux/interconnect-provider.h>
+ #include <linux/list_sort.h>
+ #include <linux/module.h>
+@@ -14,6 +13,7 @@
+ #include <soc/qcom/tcs.h>
+ 
+ #include "bcm-voter.h"
++#include "icc-common.h"
+ #include "icc-rpmh.h"
+ 
+ static LIST_HEAD(bcm_voters);
+@@ -47,17 +47,6 @@ static int cmp_vcd(void *priv, const struct list_head *a, const struct list_head
+ 	return bcm_a->aux_data.vcd - bcm_b->aux_data.vcd;
+ }
+ 
+-static u64 bcm_div(u64 num, u32 base)
+-{
+-	/* Ensure that small votes aren't lost. */
+-	if (num && num < base)
+-		return 1;
+-
+-	do_div(num, base);
+-
+-	return num;
+-}
+-
+ /* BCMs with enable_mask use one-hot-encoding for on/off signaling */
+ static void bcm_aggregate_mask(struct qcom_icc_bcm *bcm)
+ {
+@@ -99,20 +88,20 @@ static void bcm_aggregate(struct qcom_icc_bcm *bcm)
+ 	for (bucket = 0; bucket < QCOM_ICC_NUM_BUCKETS; bucket++) {
+ 		for (i = 0; i < bcm->num_nodes; i++) {
+ 			node = bcm->nodes[i];
+-			temp = bcm_div(node->sum_avg[bucket] * bcm->aux_data.width,
++			temp = qcom_bw_div(node->sum_avg[bucket] * bcm->aux_data.width,
+ 				       node->buswidth * node->channels);
+ 			agg_avg[bucket] = max(agg_avg[bucket], temp);
+ 
+-			temp = bcm_div(node->max_peak[bucket] * bcm->aux_data.width,
++			temp = qcom_bw_div(node->max_peak[bucket] * bcm->aux_data.width,
+ 				       node->buswidth);
+ 			agg_peak[bucket] = max(agg_peak[bucket], temp);
+ 		}
+ 
+ 		temp = agg_avg[bucket] * bcm->vote_scale;
+-		bcm->vote_x[bucket] = bcm_div(temp, bcm->aux_data.unit);
++		bcm->vote_x[bucket] = qcom_bw_div(temp, bcm->aux_data.unit);
+ 
+ 		temp = agg_peak[bucket] * bcm->vote_scale;
+-		bcm->vote_y[bucket] = bcm_div(temp, bcm->aux_data.unit);
++		bcm->vote_y[bucket] = qcom_bw_div(temp, bcm->aux_data.unit);
+ 	}
+ 
+ 	if (bcm->keepalive && bcm->vote_x[QCOM_ICC_BUCKET_AMC] == 0 &&
+diff --git a/drivers/interconnect/qcom/icc-common.h b/drivers/interconnect/qcom/icc-common.h
+index 21c39b163948..af4b5a6f30b7 100644
+--- a/drivers/interconnect/qcom/icc-common.h
++++ b/drivers/interconnect/qcom/icc-common.h
+@@ -7,6 +7,15 @@
+ #define __DRIVERS_INTERCONNECT_QCOM_ICC_COMMON_H__
+ 
+ #include <linux/interconnect-provider.h>
++#include <linux/math64.h>
++
++static inline u64 qcom_bw_div(u64 num, u32 base)
++{
++	if (num && num < base)
++		return 1;
++
++	return div_u64(num, base);
++}
+ 
+ struct icc_node_data *qcom_icc_xlate_extended(const struct of_phandle_args *spec,
+ 					      void *data);
+diff --git a/drivers/interconnect/qcom/icc-rpm.c b/drivers/interconnect/qcom/icc-rpm.c
+index ef67eeb5c7e1..b3da614fd69e 100644
+--- a/drivers/interconnect/qcom/icc-rpm.c
++++ b/drivers/interconnect/qcom/icc-rpm.c
+@@ -309,25 +309,25 @@ static u64 qcom_icc_calc_rate(struct qcom_icc_provider *qp, struct qcom_icc_node
+ 	u64 agg_avg_rate, agg_peak_rate, agg_rate;
+ 
+ 	if (qn->channels)
+-		agg_avg_rate = div_u64(qn->sum_avg[ctx], qn->channels);
++		agg_avg_rate = qcom_bw_div(qn->sum_avg[ctx], qn->channels);
+ 	else
+ 		agg_avg_rate = qn->sum_avg[ctx];
+ 
+ 	if (qn->ab_coeff) {
+ 		agg_avg_rate = agg_avg_rate * qn->ab_coeff;
+-		agg_avg_rate = div_u64(agg_avg_rate, 100);
++		agg_avg_rate = qcom_bw_div(agg_avg_rate, 100);
+ 	}
+ 
+ 	if (qn->ib_coeff) {
+ 		agg_peak_rate = qn->max_peak[ctx] * 100;
+-		agg_peak_rate = div_u64(agg_peak_rate, qn->ib_coeff);
++		agg_peak_rate = qcom_bw_div(agg_peak_rate, qn->ib_coeff);
+ 	} else {
+ 		agg_peak_rate = qn->max_peak[ctx];
+ 	}
+ 
+ 	agg_rate = max_t(u64, agg_avg_rate, agg_peak_rate);
+ 
+-	return div_u64(agg_rate, qn->buswidth);
++	return qcom_bw_div(agg_rate, qn->buswidth);
+ }
+ 
+ /**
+@@ -594,8 +594,15 @@ int qnoc_probe(struct platform_device *pdev)
+ 		node->data = qnodes[i];
+ 		icc_node_add(node, provider);
+ 
+-		for (j = 0; j < qnodes[i]->num_links; j++)
+-			icc_link_create(node, qnodes[i]->links[j]);
++		for (j = 0; j < qnodes[i]->num_links; j++) {
++			ret = icc_link_create(node, qnodes[i]->links[j]);
++			if (ret) {
++				icc_nodes_remove(provider);
++				clk_bulk_disable_unprepare(qp->num_intf_clks,
++							   qp->intf_clks);
++				goto err_disable_unprepare_clk;
++			}
++		}
+ 
+ 		/* Set QoS registers (we only need to do it once, generally) */
+ 		if (qnodes[i]->qos.ap_owned &&
+diff --git a/drivers/interconnect/qcom/icc-rpm.h b/drivers/interconnect/qcom/icc-rpm.h
+index b243ddb36b50..e20b83785520 100644
+--- a/drivers/interconnect/qcom/icc-rpm.h
++++ b/drivers/interconnect/qcom/icc-rpm.h
+@@ -30,7 +30,7 @@ enum qcom_icc_type {
+  * @resource_type: RPM resource type of the clock resource
+  * @clock_id: index of the clock resource of a specific resource type
+  * @branch: whether the resource represents a branch clock
+-*/
++ */
+ struct rpm_clk_resource {
+ 	u32 resource_type;
+ 	u32 clock_id;
+@@ -169,7 +169,7 @@ int qnoc_probe(struct platform_device *pdev);
+ void qnoc_remove(struct platform_device *pdev);
+ 
+ bool qcom_icc_rpm_smd_available(void);
+-int qcom_icc_rpm_smd_send(int ctx, int rsc_type, int id, u32 val);
++int qcom_icc_rpm_smd_send(int ctx, int rsc_type, int id, u64 val);
+ int qcom_icc_rpm_set_bus_rate(const struct rpm_clk_resource *clk, int ctx, u32 rate);
+ 
+ #endif
+diff --git a/drivers/interconnect/qcom/smd-rpm.c b/drivers/interconnect/qcom/smd-rpm.c
+index dbc7ae50b02b..6ac9aef942ad 100644
+--- a/drivers/interconnect/qcom/smd-rpm.c
++++ b/drivers/interconnect/qcom/smd-rpm.c
+@@ -20,7 +20,7 @@ static struct qcom_smd_rpm *icc_smd_rpm;
+ struct icc_rpm_smd_req {
+ 	__le32 key;
+ 	__le32 nbytes;
+-	__le32 value;
++	__le64 value;
+ };
+ 
+ bool qcom_icc_rpm_smd_available(void)
+@@ -29,12 +29,12 @@ bool qcom_icc_rpm_smd_available(void)
+ }
+ EXPORT_SYMBOL_GPL(qcom_icc_rpm_smd_available);
+ 
+-int qcom_icc_rpm_smd_send(int ctx, int rsc_type, int id, u32 val)
++int qcom_icc_rpm_smd_send(int ctx, int rsc_type, int id, u64 val)
+ {
+ 	struct icc_rpm_smd_req req = {
+ 		.key = cpu_to_le32(RPM_KEY_BW),
+-		.nbytes = cpu_to_le32(sizeof(u32)),
+-		.value = cpu_to_le32(val),
++		.nbytes = cpu_to_le32(sizeof(u64)),
++		.value = cpu_to_le64(val),
+ 	};
+ 
+ 	return qcom_rpm_smd_write(icc_smd_rpm, ctx, rsc_type, id, &req,
+-- 
+2.47.0
+
