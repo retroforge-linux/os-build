@@ -17,10 +17,12 @@
 # check for this call only: Steam's UI counts its hidden desktop window as active even with Big Picture
 # open, and a LAN peer that has the game but is off or not sharing is only a note on the screen (the
 # download comes from Steam's servers). Stardew Valley asked for those two alone (one folder, ample space).
-# Success is Steam's own StartRequestedInstall running, which continues the install (ContinueInstall).
+# Steam's own StartRequestedInstall continues the install (ContinueInstall), and the wizard's next state
+# says what followed: Complete is the download queued; the game's EULAs (Dispatch) are Steam's screen,
+# which Big Picture shows for the player to accept, as Steam's own Install does (never accepted here).
 #
 # The web helper must be awake (not minimal) and Big Picture open: /usr/bin/steam does both first.
-# Exit 0: Steam started the install by itself. 3: Steam shows its own screen for it (EULA, folder, space).
+# Exit 0: Steam queued the download by itself. 3: Steam shows its own screen for it (EULA, folder, space).
 # 1: not done (no DevTools port, no manager, or no answer): the caller opens steam://install/<appid>.
 # TEST SEAMS: RETROFORGE_STEAM_DEVTOOLS (http://127.0.0.1:8080), RETROFORGE_STEAM_DEVTOOLS_WAIT (s, 20).
 import base64
@@ -74,8 +76,17 @@ JS = """(async () => {
     for (const [k, d] of saved) { if (d) Object.defineProperty(mgr, k, d); else delete mgr[k]; }
   }
   if (started) {
+    // Steam's continue moves the wizard on: Complete (14), or None (0) after it, is the download queued;
+    // a screen state is Steam asking (8: the game's EULAs, shown in Big Picture); Failed/Canceled not done.
     try { await Promise.race([started, new Promise(r => setTimeout(r, 10000))]); } catch (e) { return "none"; }
-    return "silent";
+    for (let i = 0; i < 60; i++) {
+      let st; try { st = (await SteamClient.Installs.GetInstallManagerInfo()).eInstallState; } catch (e) { st = -1; }
+      if (st === 14 || st === 0) return "silent";
+      if ([4, 6, 8, 11, 12, 13].includes(st)) return "screen";
+      if (st === 15 || st === 16) return "none";
+      await new Promise(r => setTimeout(r, 250));
+    }
+    return "screen";
   }
   if (mgr.m_InstallManager && mgr.m_InstallManager !== before) return "screen";
   mgr.ResetInstallState();

@@ -108,7 +108,9 @@ func uninstall(item: LibraryLaunchItem) -> void:
 
 ## Hand an install or uninstall to Steam and follow the game's app manifest until it is done: true,
 ## or false once no OGUI launch goes through Steam any more (the player left Steam's UI, or it never
-## came up) first.
+## came up) first, unless the running client has the install going: Steam's own install returns to
+## OGUI as soon as Steam has queued the download (/usr/bin/steam), and the client kept running goes
+## on with a download the player left Steam's UI during.
 func _through_steam(item: LibraryLaunchItem, verb: String) -> bool:
 	var appid := item.provider_app_id.to_int()
 	logger.info("%s: %s through Steam" % [item.name, verb])
@@ -131,6 +133,8 @@ func _through_steam(item: LibraryLaunchItem, verb: String) -> bool:
 		elif verb == "uninstall" and state.is_empty():
 			return true
 		if not _steam_in_use():
+			if verb == "install" and not state.is_empty() and SteamApps.client_running():
+				continue
 			logger.info("%s: Steam closed before the %s was done" % [item.name, verb])
 			return false
 	return false

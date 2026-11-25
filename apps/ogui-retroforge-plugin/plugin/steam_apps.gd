@@ -167,6 +167,22 @@ static func install_running() -> bool:
 	return FileAccess.file_exists(path) and FileAccess.get_modified_time(path) >= _boot_time()
 
 
+## The Steam client runs: ~/.steam/steam.pid names a live process called steam (the client leaves
+## the file behind when it ends; retroforge-steam-keep reads it the same way). By line: Godot reads a
+## whole /proc file as empty.
+static func client_running(home: String = "", proc: String = "/proc") -> bool:
+	if home == "":
+		home = OS.get_environment("HOME")
+	var f := FileAccess.open(home.path_join(".steam/steam.pid"), FileAccess.READ)
+	if f == null:
+		return false
+	var pid := f.get_line().strip_edges()
+	if not pid.is_valid_int():
+		return false
+	var comm := FileAccess.open(proc.path_join(pid).path_join("comm"), FileAccess.READ)
+	return comm != null and comm.get_line().strip_edges() == "steam"
+
+
 ## The kernel's boot time (Unix seconds, /proc/stat btime), 0 when unknown. Read by line: Godot reads
 ## a whole /proc file as empty (its size is 0).
 static func _boot_time() -> int:

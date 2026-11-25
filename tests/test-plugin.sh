@@ -310,6 +310,13 @@ grep -q 'library_manager.library_launch_item_added.connect(_drop_steam_shortcut)
 # keys on that argument) and the setting applies from the next launch without a rescan. Its toggle
 # is attached and detached like the other Steam toggles, after keep-running, with no separator of its
 # own (bfd3f38: the rows there draw none).
+# Steam's own install returns to OGUI once Steam has queued the download (/usr/bin/steam): the
+# install's card follows it while the client runs, instead of failing when that launch ends (Dispatch,
+# MANGMI Air X, 2026-11-25).
+grep -q 'if verb == "install" and not state.is_empty() and SteamApps.client_running():' "$SRC/library_steam.gd" \
+  && ok "an install Steam has queued is followed after Steam's UI closes, while the client runs" \
+  || bad "library_steam.gd fails an install once Steam's UI closes, though the client has it downloading"
+
 grep -q '^	item.command = "steam"$' "$SRC/library_steam.gd" && grep -q '^	item.args = SteamApps.launch_args(game\["appid"\])$' "$SRC/library_steam.gd" \
   && ok "a Steam game launches through /usr/bin/steam, which decides whether the client starts" \
   || bad "library_steam.gd no longer launches games through steam: the start-without-Steam setting would be bypassed"
@@ -982,6 +989,17 @@ func test_steam_apps() -> void:
 	check("steam install: no manifest yet, no state", SteamApps.app_state(root, 413150), {})
 	check("steam install: done once fully installed with nothing still going",
 		[SteamApps.install_complete(4), SteamApps.install_complete(6), SteamApps.install_complete(1026), SteamApps.install_complete(4 | 0x100000), SteamApps.install_complete(0)],
+		[true, false, false, false, false])
+	write("$T/pid/steam/.steam/steam.pid", "4242\n")
+	write("$T/pid/proc/4242/comm", "steam\n")
+	write("$T/pid/other/.steam/steam.pid", "4243\n")
+	write("$T/pid/proc/4243/comm", "bash\n")
+	write("$T/pid/gone/.steam/steam.pid", "4244\n")
+	write("$T/pid/junk/.steam/steam.pid", "x\n")
+	check("steam client: running while steam.pid names a live process called steam (an install it has queued is followed)",
+		[SteamApps.client_running("$T/pid/steam", "$T/pid/proc"), SteamApps.client_running("$T/pid/none", "$T/pid/proc"),
+		 SteamApps.client_running("$T/pid/other", "$T/pid/proc"), SteamApps.client_running("$T/pid/gone", "$T/pid/proc"),
+		 SteamApps.client_running("$T/pid/junk", "$T/pid/proc")],
 		[true, false, false, false, false])
 	check("steam: launched as the OGUI Steam plugin does, with the rungameid OGUI takes the app id from",
 		SteamApps.launch_args(1145360),
