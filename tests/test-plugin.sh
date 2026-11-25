@@ -74,6 +74,16 @@ add, fill = s.find("box.add_child(node)"), s.find("_channel.item_selected.connec
 sys.exit(0 if 0 <= add < fill and s.find("await _fill_channels()") > s.find("func _load_state()") > 0
          and s.find("_channel.clear()") > 0 and s.find("_channel.add_item") > 0 else 1)
 PY2
+# And for the Time zone dropdown, filled at the first visit of its page.
+python3 - "$SRC/time_zone_settings.gd" <<'PY2' && ok "time_zone_settings.gd touches its dropdown's items only outside attach" || bad "time_zone_settings.gd fills the dropdown in attach: OGUI segfaults before it is in the tree"
+import sys
+s = open(sys.argv[1]).read()
+attach = s[s.find("func attach("):s.find("func detach(")]
+sys.exit(0 if "box.add_child(_row)" in attach and not any(c in attach for c in ("_row.clear", "_row.add_item", "_row.select")) else 1)
+PY2
+grep -q 'load(plugin_base.path_join("time_zone_settings.gd"))' "$SRC/plugin.gd" && grep -q '_time_zone.detach()' "$SRC/plugin.gd" \
+  && ok "plugin.gd attaches and detaches the Time zone row" || bad "plugin.gd does not load time_zone_settings.gd"
+
 # retroforge-launch's missing-file status names every choice of a system_requires "any" (the Mega CD
 # BIOS of any region): the message must take them all, not only exactly one path.
 grep -q 'if words.size() < 3:' "$SRC/library_roms.gd" && grep -q 'for file_path in words.slice(2):' "$SRC/library_roms.gd" \
@@ -1169,6 +1179,83 @@ GD
     bad "a script did not compile: $(printf '%s\n' "$out" | grep 'SCRIPT ERROR' | head -3)"
   fi
 
+  # time_zones.gd reads /usr/share/zoneinfo itself (Godot never rereads /etc/localtime); Python's
+  # zoneinfo, over the same files, is the reference. The image's tzdata when there is a base here.
+  CASE="time zones"
+  ZONEINFO="$ROOT/work/base/usr/share/zoneinfo"
+  [ -f "$ZONEINFO/zonenow.tab" ] || ZONEINFO=/usr/share/zoneinfo
+  if [ ! -f "$ZONEINFO/zonenow.tab" ]; then
+    printf '  skip %s -- no tzdata with a zonenow.tab\n' "$CASE"
+  else
+    mkdir -p "$T/zones"
+    PYTHONTZPATH="$ZONEINFO" python3 - "$ZONEINFO" >"$T/zones/offsets" <<'PY2' || bad "could not compute the reference offsets"
+import sys, datetime, zoneinfo
+zones = [l.split("\t")[2].strip() for l in open(sys.argv[1] + "/zonenow.tab") if not l.startswith("#")]
+for z in zones + ["UTC", "Europe/Brussels"]:
+    # Now-ish in every season up to the last years of the files' tables, and before and after a switch.
+    for t in (0, 1774745999, 1774746000, 1782000000, 1792889999, 1792890000, 1798000000, 1988000000, 2100000000):
+        off = datetime.datetime.fromtimestamp(t, zoneinfo.ZoneInfo(z)).utcoffset()
+        print(z, t, int(off.total_seconds()), sep="\t")
+PY2
+    cat >"$T/zones_test.gd" <<GD
+extends SceneTree
+
+const TimeZones := preload("$SRC/time_zones.gd")
+const ZONEINFO := "$ZONEINFO"
+var failed := 0
+
+func check(what: String, got, want) -> void:
+	if got == want:
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+func _init() -> void:
+	var wrong := []
+	var lines := FileAccess.get_file_as_string("$T/zones/offsets").split("\n", false)
+	for line in lines:
+		var p := line.split("\t")
+		var got: int = TimeZones.offset_at(TimeZones.read(ZONEINFO, p[0]), int(p[1]))
+		if got != int(p[2]):
+			wrong.append([p[0], p[1], got, int(p[2])])
+	check("%d offsets are Python zoneinfo's" % lines.size(), [lines.size() > 500, wrong], [true, []])
+	check("no such zone: UTC", TimeZones.offset_at(TimeZones.read(ZONEINFO, "Nowhere/Else"), 0), 0)
+	check("not a zone file: UTC", TimeZones.offset_at(TimeZones.read(ZONEINFO, "zonenow.tab"), 0), 0)
+	check("a cut-off zone file: UTC", TimeZones.offset_at(TimeZones.read(ZONEINFO, "Europe/Paris").slice(0, 60), 1782000000), 0)
+	check("offset text", [TimeZones.offset_text(0), TimeZones.offset_text(3600), TimeZones.offset_text(-12600), TimeZones.offset_text(20700)],
+		["UTC+00:00", "UTC+01:00", "UTC-03:30", "UTC+05:45"])
+	check("zone of a localtime link", [TimeZones.zone_of_link("../usr/share/zoneinfo/Europe/Brussels"), TimeZones.zone_of_link("/usr/share/zoneinfo/UTC"), TimeZones.zone_of_link(""), TimeZones.zone_of_link("/somewhere/else")],
+		["Europe/Brussels", "UTC", "UTC", "UTC"])
+	check("table: comments and short lines are skipped",
+		TimeZones.parse_table("# c\nXX\t+4852+00220\tEurope/Paris\tcentral Europe (CET/CEST)\n\nbad line\nXX\t+3736-00853\tPacific/Niue\tNiue\nXX\t+1\tAmerica/New_York\n"),
+		[{"zone": "Europe/Paris", "name": "Paris - central Europe (CET/CEST)"}, {"zone": "Pacific/Niue", "name": "Niue"}, {"zone": "America/New_York", "name": "New York"}])
+	var winter: Array = TimeZones.choices(ZONEINFO, "Europe/Paris", 1798000000)
+	var zones := winter.map(func(c): return c["zone"])
+	check("choices: UTC is one, each zone once", [zones.has("UTC"), zones.size() > 80, zones.all(func(z): return zones.count(z) == 1)], [true, true, true])
+	check("choices: from west to east", range(1, winter.size()).all(func(i): return winter[i - 1]["offset"] <= winter[i]["offset"]), true)
+	check("choices: labelled with the offset in force", winter[zones.find("Europe/Paris")]["label"], "UTC+01:00  Paris - central Europe (CET/CEST)")
+	var summer: Array = TimeZones.choices(ZONEINFO, "Europe/Paris", 1782000000)
+	check("choices: and in summer", summer[summer.map(func(c): return c["zone"]).find("Europe/Paris")]["label"], "UTC+02:00  Paris - central Europe (CET/CEST)")
+	var ssh: Array = TimeZones.choices(ZONEINFO, "Europe/Brussels", 1798000000)
+	check("choices: a zone set elsewhere that the table lacks is listed too",
+		[ssh.size(), ssh.filter(func(c): return c["zone"] == "Europe/Brussels").map(func(c): return c["label"])], [winter.size() + 1, ["UTC+01:00  Europe/Brussels"]])
+	check("choices: no tzdata, only the current zone and UTC", TimeZones.choices("/nonexistent", "UTC", 0).size(), 1)
+	check("local time", TimeZones.local_time(TimeZones.read(ZONEINFO, "Asia/Kathmandu"), 1782000000), Time.get_datetime_dict_from_unix_time(1782000000 + 20700))
+	quit(failed)
+GD
+    out="$(XDG_CONFIG_HOME="$T/config" timeout 120 "$GODOT" --headless --script "$T/zones_test.gd" 2>&1)"; rc=$?
+    printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+    n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+    PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+    if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+      bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+    fi
+    if printf '%s\n' "$out" | grep -q 'SCRIPT ERROR'; then
+      bad "a script did not compile: $(printf '%s\n' "$out" | grep 'SCRIPT ERROR' | head -3)"
+    fi
+  fi
+
   # scrape_runner.gd runs /usr/bin/retroforge-scrape on a worker thread; here against a fake tool
   # that behaves like it (progress lines, a JSON summary, warnings on stderr, an exit code). Its
   # signals arrive over frames, so this is a script of its own that awaits them.
@@ -2034,6 +2121,165 @@ GD
     fi
     if printf '%s\n' "$out" | grep -q 'SCRIPT ERROR'; then
       bad "a script did not compile: $(printf '%s\n' "$out" | grep 'SCRIPT ERROR' | head -3)"
+    fi
+
+    # ===============================================================================================
+    # Settings > General > Time zone (time_zone_settings.gd) in OGUI's own scenes, against a fake
+    # timedatectl: the row sits under Language, lists the zones at the page's first visit, sets one
+    # through timedatectl and moves OGUI's clock to it at once.
+    CASE="time-zone"
+    if [ -f "$ZONEINFO/zonenow.tab" ]; then
+    mkdir -p "$T/tz/etc" "$T/tz/d"
+    ln -sfn ../usr/share/zoneinfo/Europe/London "$T/tz/etc/localtime"
+    cat >"$T/tz/timedatectl" <<'SH'
+#!/bin/bash
+# Fake timedatectl: set-timezone moves the link, unless $FAKE_DIR/refuse (polkit said no).
+echo "$*" >> "$FAKE_DIR/calls"
+[ -e "$FAKE_DIR/refuse" ] && { echo "Failed to set time zone: Access denied" >&2; exit 1; }
+[ "$1 $2" = "--no-ask-password set-timezone" ] || exit 2
+ln -sfn "../usr/share/zoneinfo/$3" "$FAKE_DIR/../etc/localtime"
+SH
+    chmod +x "$T/tz/timedatectl"
+    cat >"$OGUI_PROJECT/retroforge_time_zone_test.gd" <<'GD'
+extends SceneTree
+
+var failed := 0
+var D := OS.get_environment("FAKE_DIR")
+var notes: Array[String] = []
+
+func check(what: String, got, want) -> void:
+	if got == want:
+		print("  ok   time-zone -- ", what)
+	else:
+		failed += 1
+		print("  FAIL time-zone -- ", what, ": got ", got, ", want ", want)
+
+func _initialize() -> void:
+	run.call_deferred()
+
+func wait(sec: float) -> void:
+	await create_timer(sec).timeout
+
+func note(n) -> void:
+	if not notes.has(n.text):  # queued, then sent
+		notes.append(n.text)
+
+func calls() -> Array:
+	return Array(FileAccess.get_file_as_string(D.path_join("calls")).split("\n", false))
+
+func link(zone: String) -> void:
+	OS.execute("ln", ["-sfn", "../usr/share/zoneinfo/" + zone, D.path_join("../etc/localtime")])
+
+# OGUI's context bar, reduced to what its script and the clock use (the scene brings InputPlumber).
+func context_bar() -> Node:
+	var bar := PanelContainer.new()
+	bar.name = "ContextBar"
+	for label_name in ["TimeLabel", "DebugLabel"]:
+		var label := Label.new()
+		label.name = label_name
+		bar.add_child(label)
+		label.owner = bar
+		label.unique_name_in_owner = true
+	bar.set_script(load("res://core/ui/card_ui/navigation/context_bar_menu.gd"))
+	return bar
+
+func clock_in(bar: Node, tz: GDScript, zone: String) -> bool:
+	var now := int(Time.get_unix_time_from_system())
+	var data: PackedByteArray = tz.read(OS.get_environment("ZONEINFO"), zone)
+	return [0, 2].any(func(s): return bar._format_time(tz.local_time(data, now - s)) == bar.get_node("%TimeLabel").text)
+
+func run() -> void:
+	root.size = Vector2i(1280, 800)
+	var processor := ResourceProcessor.new()  # card_ui.tscn has one: it drives every Command
+	processor.registry = load("res://core/systems/resource/resource_registry.tres") as ResourceRegistry
+	root.add_child(processor)
+	var nm = load("res://core/global/notification_manager.tres")
+	nm.notification_queued.connect(note)
+	nm.notification_sent.connect(note)
+	var TimeZones: GDScript = load("res://plugins/retroforge/time_zones.gd")
+	var general_state = load("res://assets/state/states/settings_general.tres")
+	# Settings > Logging has a row per logger, named after it: one is a ContextBar too, and comes first
+	# in OGUI's tree, so a lookup by name found it and no clock (HW, Pocket ACE, 2026-11-25).
+	var logging_row := VBoxContainer.new()
+	logging_row.name = "ContextBar"
+	var settings_page := Control.new()
+	settings_page.add_child(logging_row)
+	root.add_child(settings_page)
+	var bar := context_bar()
+	root.add_child(bar)
+	var menu: Node = load("res://core/ui/card_ui/settings/general_settings_menu.tscn").instantiate()
+	root.add_child(menu)
+	await process_frame
+	var tz = load("res://plugins/retroforge/time_zone_settings.gd").new()
+	tz.timedatectl = D.path_join("../timedatectl")
+	tz.zoneinfo = OS.get_environment("ZONEINFO")
+	tz.localtime = D.path_join("../etc/localtime")
+	tz.setup(self)
+	check("attaches to OGUI's layout", tz.attach(), true)
+	await process_frame
+	var box: Node = menu.get_node("MarginContainer/VBoxContainer/UpdateSection")
+	var row: Node = box.get_node_or_null("RetroForgeTimeZone")
+	check("the row sits right under Language", row.get_index(), box.get_node("LanguageDropdown").get_index() + 1)
+	general_state.state_entered.emit(null)
+	await process_frame
+	var options: OptionButton = row.option_button
+	check("a visit lists the zones, the current one selected", [options.item_count > 80, options.get_item_metadata(row.selected)], [true, "Europe/London"])
+	var ogui_timer: Timer = bar.get_children().filter(func(n): return n is Timer)[0]
+	check("the zone OGUI started in: its clock is left alone", ogui_timer.timeout.is_connected(bar._on_update_time), true)
+	options.show_popup()
+	await process_frame
+	check("the list fits the screen and scrolls", [options.get_popup().visible, options.get_popup().size.y <= root.size.y], [true, true])
+	options.get_popup().hide()
+	link("Europe/Brussels")  # timedatectl over ssh
+	general_state.state_entered.emit(null)
+	await process_frame
+	check("a zone set elsewhere is shown at the next visit", [options.get_item_text(row.selected).ends_with("Europe/Brussels"), calls()], [true, []])
+	check("and OGUI's clock follows it", clock_in(bar, TimeZones, "Europe/Brussels"), true)
+
+	var zones := range(options.item_count).map(func(i): return options.get_item_metadata(i))
+	var tokyo := zones.find("Asia/Tokyo")
+	options.select(tokyo)
+	row.item_selected.emit(tokyo)
+	check("locked while it is set", row.disabled, true)
+	await wait(1.0)
+	check("a choice goes to timedatectl, without a password prompt", calls(), ["--no-ask-password set-timezone Asia/Tokyo"])
+	check("then it is selected and unlocked", [options.get_item_metadata(row.selected), row.disabled], ["Asia/Tokyo", false])
+	check("OGUI's clock shows it at once", clock_in(bar, TimeZones, "Asia/Tokyo"), true)
+	await wait(1.5)
+	check("and after OGUI's own clock tick", clock_in(bar, TimeZones, "Asia/Tokyo"), true)
+	tokyo = range(options.item_count).filter(func(i): return options.get_item_metadata(i) == "Asia/Tokyo")[0]
+	row.item_selected.emit(tokyo)
+	row.item_selected.emit(-1)  # OGUI's Dropdown with no item focused in the popup
+	await wait(0.5)
+	check("the zone already set, or no item, asks nothing", calls().size(), 1)
+
+	FileAccess.open(D.path_join("refuse"), FileAccess.WRITE).store_string("")
+	var lima: int = range(options.item_count).filter(func(i): return options.get_item_metadata(i) == "America/Lima")[0]
+	options.select(lima)
+	row.item_selected.emit(lima)
+	await wait(1.0)
+	check("a refusal says so and goes back to the zone in force", [notes, options.get_item_metadata(row.selected), row.disabled], [["Could not set the time zone"], "Asia/Tokyo", false])
+	check("and the clock keeps it", clock_in(bar, TimeZones, "Asia/Tokyo"), true)
+
+	tz.detach()
+	await process_frame
+	check("detach: the row goes, OGUI's clock is its own again",
+		[box.has_node("RetroForgeTimeZone"), ogui_timer.timeout.is_connected(bar._on_update_time), ogui_timer.timeout.get_connections().size()], [false, true, 1])
+	# OGUI's watchdog thread still looped while the engine freed its singletons, and Godot aborted.
+	load("res://core/systems/threading/watchdog_thread.tres").stop()
+	quit(failed)
+GD
+    out="$(cd "$OGUI_PROJECT" && TZ=UTC FAKE_DIR="$T/tz/d" ZONEINFO="$ZONEINFO" timeout 120 "$GODOT" --headless --path . --script res://retroforge_time_zone_test.gd 2>&1)"; rc=$?
+    rm -f "$OGUI_PROJECT/retroforge_time_zone_test.gd"
+    printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+    n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+    PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+    if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+      bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR' | head -3)"
+    fi
+    if printf '%s\n' "$out" | grep -q 'SCRIPT ERROR'; then
+      bad "a script did not compile: $(printf '%s\n' "$out" | grep 'SCRIPT ERROR' | head -3)"
+    fi
     fi
   fi
 fi

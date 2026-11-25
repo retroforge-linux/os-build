@@ -51,6 +51,7 @@ var _osk_nav: RefCounted  # osk_navigation.gd
 var _touch_keyboard: RefCounted  # touch_keyboard.gd
 var _buttons: RefCounted  # button_layout.gd
 var _pause: RefCounted  # pause_on_menu.gd
+var _time_zone: RefCounted  # time_zone_settings.gd
 var _scraper: RefCounted  # scraper_settings.gd
 var _psn: RefCounted  # psn_settings.gd
 var _cheevos: RefCounted  # cheevos_settings.gd
@@ -114,6 +115,9 @@ func _ready() -> void:
 	_pause = load(plugin_base.path_join("pause_on_menu.gd")).new().setup(get_tree())
 	if not _pause.attach():
 		logger.warn("OGUI general settings layout not found; no pause-in-menus toggle")
+	_time_zone = load(plugin_base.path_join("time_zone_settings.gd")).new().setup(get_tree())
+	if not _time_zone.attach():
+		logger.warn("no tzdata, or OGUI general settings layout not found; no Time zone row")
 	# Every Library section inserts right after Refresh Library, so the later one lands on top:
 	# RetroAchievements first (the bottom), then PSN, then ROM art.
 	_cheevos = load(plugin_base.path_join("cheevos_settings.gd")).new().setup(get_tree())
@@ -176,6 +180,8 @@ func unload() -> void:
 		_buttons.detach()
 	if _pause:
 		_pause.detach()
+	if _time_zone:
+		_time_zone.detach()
 	if _scraper:
 		_scraper.detach()
 	if _psn:

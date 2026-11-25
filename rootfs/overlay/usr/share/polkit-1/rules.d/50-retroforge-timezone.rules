@@ -1,4 +1,5 @@
-// Let the shell (player user) set the system timezone during first-boot setup without an auth prompt.
+// Let the shell (player user) set the system timezone without an auth prompt: Settings > General > Time
+// zone in OGUI (apps/ogui-retroforge-plugin/plugin/time_zone_settings.gd).
 //
 // Everything else player needs is now covered by STOCK polkit: since the shell boots through retroforge-session.service
 // autologin it is a real ACTIVE seat0 logind session, so NetworkManager's OOBE Wi-Fi connect
