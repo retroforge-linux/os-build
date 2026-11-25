@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+# steam-install-app APPID — install a Steam game the way Steam's own Big Picture library does, without the
+# Install screen when Steam needs nothing from the player.
+#
+# Steam's client has no command line that installs quietly: steam://install/<appid> opens its Install
+# screen, and app_update is steamcmd's, which cannot use the client's sign-in. Big Picture's library calls
+# its game-actions manager's InstallApp(appid, clientid) instead: that marks the app as the expected install
+# and opens the client's install wizard, and when the wizard reports in, Steam's own code continues the
+# install itself (SteamClient.Installs.ContinueInstall) unless it has to ask: several library folders, too
+# little space, a non-default folder, a compatibility warning, the desktop UI active, or a EULA (its EULA
+# screen). This calls that, over the client's DevTools port (127.0.0.1:8080, which /usr/bin/steam keeps on
+# with .cef-enable-remote-debugging), in its SharedJSContext page. The manager is found by its shape (an
+# object with InstallApp and m_unAppIDExpectedInstall among Steam's webpack modules), not by module id,
+# which changes with Steam's updates. The client id "0" is this machine. Without it the wizard never
+# reports in (MANGMI Air X, 2026-11-25).
+# Two of the reasons Steam asks are not questions for a player on the gamepad UI, and are left out of the
+# check for this call only: Steam's UI counts its hidden desktop window as active even with Big Picture
+# open, and a LAN peer that has the game but is off or not sharing is only a note on the screen (the
+# download comes from Steam's servers). Stardew Valley asked for those two alone (one folder, ample space).
+# Success is Steam's own StartRequestedInstall running, which continues the install (ContinueInstall).
+#
+# The web helper must be awake (not minimal) and Big Picture open: /usr/bin/steam does both first.
+# Exit 0: Steam started the install by itself. 3: Steam shows its own screen for it (EULA, folder, space).
+# 1: not done (no DevTools port, no manager, or no answer): the caller opens steam://install/<appid>.
+# TEST SEAMS: RETROFORGE_STEAM_DEVTOOLS (http://127.0.0.1:8080), RETROFORGE_STEAM_DEVTOOLS_WAIT (s, 20).
+import base64
+import json
+import os
+import socket
+import struct
+import sys
+import time
+import urllib.request
+
+DEVTOOLS = os.environ.get("RETROFORGE_STEAM_DEVTOOLS", "http://127.0.0.1:8080")
+WAIT = float(os.environ.get("RETROFORGE_STEAM_DEVTOOLS_WAIT", "20"))
+
+JS = """(async () => {
+  const appid = %d;
+  let req;
+  window.webpackChunksteamui.push([[Symbol("retroforge-install")], {}, r => { req = r; }]);
+  let mgr = null;
+  const uis = [];
+  for (const id of Object.keys(req.m)) {
+    let ex; try { ex = req(id); } catch (e) { continue; }
+    if (!ex || typeof ex !== "object") continue;
+    for (const k of Object.keys(ex)) {
+      let v; try { v = ex[k]; } catch (e) { continue; }
+      if (!v || typeof v !== "object") continue;
+      if (!mgr && typeof v.InstallApp === "function" && "m_unAppIDExpectedInstall" in v) mgr = v;
+      if (typeof v.IsDesktopUIWindowActive === "function") uis.push([k, v]);
+    }
+  }
+  if (!mgr) return "nomgr";
+  const name = /\\w+\\.(\\w+)\\.IsDesktopUIWindowActive\\(\\)/.exec(String(mgr.BShowDiskSettingsForInstall));
+  const ui = name && (uis.find(([k]) => k === name[1]) || [])[1];
+  const own = k => Object.getOwnPropertyDescriptor(mgr, k);
+  const saved = [["BShowDiskSettingsForInstall", own("BShowDiskSettingsForInstall")], ["StartRequestedInstall", own("StartRequestedInstall")]];
+  const disk = mgr.BShowDiskSettingsForInstall, start = mgr.StartRequestedInstall;
+  let started = null;
+  mgr.BShowDiskSettingsForInstall = function (N) {
+    const d = ui && Object.getOwnPropertyDescriptor(ui, "IsDesktopUIWindowActive");
+    if (ui) ui.IsDesktopUIWindowActive = () => false;
+    try { return disk.call(this, new Proxy(N, { get: (t, k) => (k === "strPeerContentServer" ? "" : t[k]) })); }
+    finally { if (ui) { if (d) Object.defineProperty(ui, "IsDesktopUIWindowActive", d); else delete ui.IsDesktopUIWindowActive; } }
+  };
+  mgr.StartRequestedInstall = function () { started = start.apply(this, arguments); return started; };
+  const before = mgr.m_InstallManager;
+  try {
+    mgr.ResetInstallState();
+    mgr.InstallApp(appid, "0");
+    for (let i = 0; i < 60 && !started; i++) await new Promise(r => setTimeout(r, 250));
+  } finally {
+    for (const [k, d] of saved) { if (d) Object.defineProperty(mgr, k, d); else delete mgr[k]; }
+  }
+  if (started) {
+    try { await Promise.race([started, new Promise(r => setTimeout(r, 10000))]); } catch (e) { return "none"; }
+    return "silent";
+  }
+  if (mgr.m_InstallManager && mgr.m_InstallManager !== before) return "screen";
+  mgr.ResetInstallState();
+  return "none";
+})()"""
+
+
+def log(msg):
+    print(f"steam-install-app: {msg}", file=sys.stderr)
+
+
+def page_url():
+    """The SharedJSContext page's websocket, waiting WAIT s for the web helper to serve it."""
+    deadline = time.monotonic() + WAIT
+    while True:
+        try:
+            with urllib.request.urlopen(DEVTOOLS + "/json/list", timeout=3) as r:
+                for t in json.load(r):
+                    if t.get("title") == "SharedJSContext" and t.get("webSocketDebuggerUrl"):
+                        return t["webSocketDebuggerUrl"]
+        except (OSError, ValueError):
+            pass
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
+def evaluate(url, expr):
+    """Runtime.evaluate over a minimal websocket client (RFC 6455): the value, or None."""
+    hostport, path = url.split("://", 1)[1].split("/", 1)
+    host, port = hostport.rsplit(":", 1)
+    s = socket.create_connection((host, int(port)), timeout=30)
+    key = base64.b64encode(os.urandom(16)).decode()
+    s.sendall((f"GET /{path} HTTP/1.1\r\nHost: {hostport}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
+               f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+    head = b""
+    while b"\r\n\r\n" not in head:
+        c = s.recv(1)
+        if not c:
+            return None
+        head += c
+    if b" 101 " not in head.split(b"\r\n", 1)[0]:
+        return None
+
+    def read(n):
+        buf = b""
+        while len(buf) < n:
+            c = s.recv(n - len(buf))
+            if not c:
+                raise OSError("closed")
+            buf += c
+        return buf
+
+    data = json.dumps({"id": 1, "method": "Runtime.evaluate",
+                       "params": {"expression": expr, "returnByValue": True, "awaitPromise": True}}).encode()
+    mask, n = os.urandom(4), len(data)
+    size = bytes([0x80 | n]) if n < 126 else bytes([0x80 | 126]) + struct.pack(">H", n) if n < 65536 \
+        else bytes([0x80 | 127]) + struct.pack(">Q", n)
+    s.sendall(b"\x81" + size + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(data)))
+    msg = b""
+    while True:
+        b0, b1 = read(2)
+        n = b1 & 0x7F
+        if n == 126:
+            n = struct.unpack(">H", read(2))[0]
+        elif n == 127:
+            n = struct.unpack(">Q", read(8))[0]
+        payload = read(n)
+        op = b0 & 0x0F
+        if op == 0x8:
+            return None
+        if op in (0x9, 0xA):
+            continue
+        msg += payload
+        if b0 & 0x80:
+            m = json.loads(msg)
+            msg = b""
+            if m.get("id") == 1:
+                return m.get("result", {}).get("result", {}).get("value")
+
+
+def main():
+    if len(sys.argv) != 2 or not sys.argv[1].isdigit():
+        log("usage: steam-install-app APPID")
+        return 2
+    appid = int(sys.argv[1])
+    url = page_url()
+    if not url:
+        log(f"app {appid}: no DevTools page from Steam's UI at {DEVTOOLS}")
+        return 1
+    try:
+        res = evaluate(url, JS % appid)
+    except (OSError, ValueError) as err:
+        log(f"app {appid}: DevTools: {err}")
+        return 1
+    if res == "silent":
+        return 0
+    if res == "screen":
+        log(f"app {appid}: Steam shows its own screen for this install")
+        return 3
+    log(f"app {appid}: Steam's install manager {'was not found' if res == 'nomgr' else 'did not answer'}")
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

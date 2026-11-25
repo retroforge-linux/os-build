@@ -50,6 +50,11 @@ set -u
 : "${RETROFORGE_STEAM_BOOTSTRAP:=/usr/lib/retroforge/steam-bootstrap}"
 export RETROFORGE_STEAM_ROOT="${RETROFORGE_STEAM_ROOT:-${XDG_DATA_HOME:-$HOME/.local/share}/Steam}"
 MAGIC_RESTART_EXITCODE=42
+# Steam's UI serves its DevTools port (127.0.0.1:8080) while this file is in the Steam folder, read when the
+# client starts: an install from OGUI goes through it (kept_install, below). Always on (user's choice,
+# 2026-11-25): any local program can drive Steam's UI through it.
+[ -d "$RETROFORGE_STEAM_ROOT" ] && [ ! -e "$RETROFORGE_STEAM_ROOT/.cef-enable-remote-debugging" ] \
+  && : >"$RETROFORGE_STEAM_ROOT/.cef-enable-remote-debugging" 2>/dev/null
 
 log() { echo "steam: $*" >&2; }
 
@@ -200,6 +205,47 @@ kept_close_ui() {
     sleep 0.25
   done
 }
+# A page of Steam's UI (steam://install/<appid> from OGUI's library, any steam:// but open/bigpicture):
+# the running client takes the URL, not -gamepadui, so one that is not in Big Picture (started -silent at
+# boot, or left it when OGUI closed its UI: kept_close_ui) showed the page as a desktop dialog, which a
+# gamepad cannot drive (Hollow Knight's Install, MANGMI Air X, 2026-11-25). So Big Picture opens first and
+# the page follows once its window is up (`SP BPM_uid0-'Steam Big ...': WasHidden 0` in webhelper.txt,
+# ~8 s), RETROFORGE_STEAM_UI_OPEN_WAIT s (20) at most, then RETROFORGE_STEAM_UI_SETTLE s (2). In Big
+# Picture already (its window is the helper's latest): nothing to do.
+kept_open_bpm() {
+  local arg page="" wlog="$RETROFORGE_STEAM_ROOT/logs/webhelper.txt" lines=0 i
+  for arg in "$@"; do
+    case "$arg" in steam://open/bigpicture) ;; steam://*) page=1 ;; esac
+  done
+  [ -n "$page" ] || return 0
+  grep -aoE '\] SP (BPM|Desktop)_uid[0-9]+' "$wlog" 2>/dev/null | tail -n1 | grep -q ' SP BPM_' && return 0
+  [ -r "$wlog" ] && lines=$(wc -l <"$wlog")
+  log "opening Big Picture first: Steam shows this page as a desktop dialog otherwise"
+  ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
+    LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      exec "$client" steam://open/bigpicture ) >/dev/null 2>&1
+  for ((i = 0; i < ${RETROFORGE_STEAM_UI_OPEN_WAIT:-20} * 4; i++)); do
+    tail -n +$((lines + 1)) "$wlog" 2>/dev/null | grep -aqE "\] SP BPM_uid[0-9]+-'[^']*': WasHidden 0" && break
+    sleep 0.25
+  done
+  sleep "${RETROFORGE_STEAM_UI_SETTLE:-2}"
+}
+# OGUI's install of a game (steam://install/<appid>), through Steam's own install, which shows no screen
+# when Steam has nothing to ask (/usr/lib/retroforge/steam-install-app says how; SuperTux and Stardew
+# Valley installed with nothing pressed, MANGMI Air X, 2026-11-25). Prints silent (Steam started it),
+# screen (Steam shows its own screen for it: a EULA, a folder, the space) or nothing (not done: the page
+# is handed over as before).
+install_cli="${RETROFORGE_STEAM_INSTALL_APP:-/usr/lib/retroforge/steam-install-app}"
+kept_install() {
+  local arg id=""
+  for arg in "$@"; do
+    case "$arg" in steam://install/*) id="${arg#steam://install/}" ;; esac
+  done
+  case "$id" in ''|*[!0-9]*) return 0 ;; esac
+  [ -x "$install_cli" ] || return 0
+  "$install_cli" "$id" >/dev/null
+  case $? in 0) echo silent ;; 3) echo screen ;; esac
+}
 kept_stop() {  # TERM, INT or HUP: end the game this launch started, not Steam
   if [ -n "$appid" ]; then
     "$keep_cli" end "$appid"
@@ -245,10 +291,24 @@ kept_launch() {
       done
       sleep "${RETROFORGE_STEAM_UI_SETTLE:-2}"
     fi
-    log "handing this launch to the kept Steam ($KEPT_UNIT.service)"
-    ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
-      LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-        exec "$client" "$@" )
+    # Steam downloads while its client runs: with Keep Steam running off, the client stops once its UI
+    # is left, so an install there stays on Steam's page, with the player, as before.
+    local installed=""
+    if [ -z "$appid" ]; then
+      kept_open_bpm "$@"
+      [ "$("$keep_cli" status 2>/dev/null)" = on ] && installed="$(kept_install "$@")"
+    fi
+    if [ "$installed" = silent ]; then
+      log "Steam installs the game by itself (no Install screen): back to OGUI"
+      kept_close_ui
+      "$keep_cli" minimal $$
+      exit 0
+    elif [ "$installed" != screen ]; then
+      log "handing this launch to the kept Steam ($KEPT_UNIT.service)"
+      ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
+        LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+          exec "$client" "$@" )
+    fi
   elif [ "$("$keep_cli" status 2>/dev/null)" != on ]; then
     return 0
   elif ! kept_start "$@"; then

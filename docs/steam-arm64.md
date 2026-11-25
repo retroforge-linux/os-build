@@ -177,13 +177,22 @@ instead, so signing into Steam Client is enough (`apps/ogui-retroforge-plugin`: 
   `/usr/bin/steam` may then start a game Steam has started here before without the client
   ("Starting games without Steam", below).
 - **Install and Uninstall** (OGUI's own buttons on a game): handed to Steam, `steam
-  -gamepadui -steamos3 -steampal -steamdeck steam://install/<appid>` (or `uninstall`), which opens
-  Steam's own dialog in Big Picture, started as Emulators > Steam Client > Open starts it. The game's
-  app manifest then gives the download's progress (`BytesDownloaded` of `BytesToDownload`) and its
-  end (fully installed, nothing still going). Steam downloads while it runs: leaving Steam first (no
-  OGUI launch goes through `steam` any more) ends the install in OGUI as failed, and Steam carries on
-  with it while it still runs (kept running, below) or at its next start. Steam updates installed
-  games itself.
+  -gamepadui -steamos3 -steampal -steamdeck steam://install/<appid>` (or `uninstall`). With Steam
+  kept running (below), `/usr/bin/steam` installs through Steam's own install instead
+  (`/usr/lib/retroforge/steam-install-app`): Big Picture's `InstallApp`, called over the client's
+  DevTools port (127.0.0.1:8080; `.cef-enable-remote-debugging` in the Steam folder, which
+  `/usr/bin/steam` keeps there), and Steam starts the download with no screen when it has nothing to
+  ask. The player is back in OGUI at once. Steam asks with its own screen in Big Picture for a EULA,
+  a compatibility warning, several library folders, too little space, a non-default or unmounted
+  folder. Its desktop window counting as active and a LAN peer that is off or not sharing are not
+  asked about. Steam has no command line that installs quietly: `steam://install` always opens its
+  dialog, and steamcmd's `app_update` cannot use the client's sign-in. Uninstall, and Install with
+  Steam not kept running, open Steam's own dialog in Big Picture, started as Emulators > Steam Client
+  > Open starts it. The game's app manifest then gives the download's progress (`BytesDownloaded` of
+  `BytesToDownload`) and its end (fully installed, nothing still going). Steam downloads while it
+  runs: leaving Steam first (no OGUI launch goes through `steam` any more) ends the install in OGUI as
+  failed, and Steam carries on with it while it still runs (kept running, below) or at its next
+  start. Steam updates installed games itself.
 - **Art**: what the client cached for its own library, `appcache/librarycache/<appid>/`
   (`library_600x900.jpg` for cards, `header.jpg`, `library_hero.jpg`, `logo.png`), else the same file
   from Valve's CDN (`steamcdn-a.akamaihd.net/steam/apps/<appid>/`, what the Steam plugin fetches),

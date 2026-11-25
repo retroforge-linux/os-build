@@ -956,6 +956,74 @@ sleep 1
 [ -e "$W/call1" ] && ok "a game is handed over at once (Steam queues its launch until the UI is up)" || bad "a game waited"
 kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
 
+CASE="keep: a Steam page opens Big Picture first"
+# OGUI's install of a game: steam://install/<appid>. The running client takes the URL, not -gamepadui, so
+# one on its desktop window showed the page as a desktop dialog a gamepad cannot drive.
+WLOG="$WROOT/logs/webhelper.txt"
+NOINST=(RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETROFORGE_STEAM_INSTALL_APP=/nonexistent RETROFORGE_STEAM_UI_SETTLE=0)
+reset_keep; touch "$W/unit-active"; mkdir -p "${WLOG%/*}"
+echo "[2026-11-25 09:21:36] SP Desktop_uid0: STARTUP LoadEnd t=2.722 +17.4ms from create" >"$WLOG"
+bg_wrap "${NOINST[@]}" -- -gamepadui -steamos3 steam://install/367520
+until_true '[ -e "$W/call1" ]'; sleep 1
+grep -qx "args: steam://open/bigpicture" "$W/call1" 2>/dev/null && [ ! -e "$W/call2" ] \
+  && ok "a client on its desktop window: Big Picture first, the page not yet" || bad "$(cat "$W/call1" "$W/call2" 2>&1)"
+echo "[2026-11-25 09:23:43] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >>"$WLOG"
+until_true '[ -e "$W/call2" ]'
+grep -qx "args: -gamepadui -steamos3 steam://install/367520" "$W/call2" 2>/dev/null \
+  && ok "then the page, once Big Picture's window is up" || bad "$(cat "$W/call2" 2>&1)"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
+reset_keep; touch "$W/unit-active"
+echo "[2026-11-25 09:23:43] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >"$WLOG"
+bg_wrap "${NOINST[@]}" -- -gamepadui -steamos3 steam://install/367520
+until_true '[ -e "$W/call1" ]'; sleep 0.5
+grep -qx "args: -gamepadui -steamos3 steam://install/367520" "$W/call1" 2>/dev/null && [ ! -e "$W/call2" ] \
+  && ok "in Big Picture already: the page at once" || bad "$(cat "$W/call1" "$W/call2" 2>&1)"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
+reset_keep; touch "$W/unit-active"
+echo "[2026-11-25 09:30:00] SP Desktop_uid0: STARTUP LoadEnd t=2.722 +17.4ms from create" >"$WLOG"
+bg_wrap "${NOINST[@]}" -- -gamepadui steam://open/bigpicture
+until_true '[ -e "$W/call1" ]'; sleep 0.5
+grep -qx "args: -gamepadui steam://open/bigpicture" "$W/call1" 2>/dev/null && [ ! -e "$W/call2" ] \
+  && ok "Big Picture itself: handed over as it is" || bad "$(cat "$W/call1" "$W/call2" 2>&1)"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
+rm -f "$WLOG"
+
+CASE="keep: an install through Steam's own install"
+# steam-install-app stub: records its argument, exits with installapp.rc (0 silent, 3 Steam's screen, 1 not done)
+printf '#!/usr/bin/env bash\necho "$*" >"%s/installapp.args"; exit $(cat "%s/installapp.rc" 2>/dev/null || echo 1)\n' "$W" "$W" >"$W/bin/installapp"
+chmod +x "$W/bin/installapp"
+INST=(RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETROFORGE_STEAM_INSTALL_APP="$W/bin/installapp" RETROFORGE_STEAM_UI_SETTLE=0 RETROFORGE_STEAM_UI_CLOSE_WAIT=0)
+reset_keep; rm -f "$W/keep.calls" "$W/installapp.args"; touch "$W/unit-active"; mkdir -p "${WLOG%/*}"; echo 0 >"$W/installapp.rc"
+echo "[2026-11-25 09:41:00] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >"$WLOG"
+bg_wrap "${INST[@]}" -- -gamepadui -steamos3 steam://install/1572920
+finish
+[ "$WRC" = 0 ] && [ "$(cat "$W/installapp.args" 2>/dev/null)" = 1572920 ] && grep -qx "args: steam://close/bigpicture" "$W/call1" 2>/dev/null \
+  && ! grep -q "steam://install" "$W"/call* && grep -q "^minimal" "$W/keep.calls" \
+  && ok "Steam installs it by itself: no Install screen, Big Picture closed, minimal again, back to OGUI (exit 0)" || bad "rc=$WRC args=$(cat "$W/installapp.args" 2>&1) $(cat "$W"/call* 2>&1) keep=$(cat "$W/keep.calls" 2>&1)"
+[ -e "$WROOT/.cef-enable-remote-debugging" ] && ok "and the client's DevTools flag is in its folder" || bad "no .cef-enable-remote-debugging"
+reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"; echo 3 >"$W/installapp.rc"
+echo "[2026-11-25 09:41:00] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >"$WLOG"
+bg_wrap "${INST[@]}" -- -gamepadui -steamos3 steam://install/1572920
+sleep 1.5
+kill -0 "$wpid" 2>/dev/null && ! ls "$W"/call* >/dev/null 2>&1 \
+  && ok "Steam shows its own screen (a EULA, a folder): the launch stays on it, nothing handed over twice" || bad "$(cat "$W"/call* 2>&1)"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
+reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"; echo 1 >"$W/installapp.rc"
+echo "[2026-11-25 09:41:00] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >"$WLOG"
+bg_wrap "${INST[@]}" -- -gamepadui -steamos3 steam://install/1572920
+until_true '[ -e "$W/call1" ]'
+grep -qx "args: -gamepadui -steamos3 steam://install/1572920" "$W/call1" 2>/dev/null \
+  && ok "not done (no DevTools, no manager): the Install page is handed over as before" || bad "$(cat "$W/call1" 2>&1)"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
+reset_keep; rm -f "$W/keep.calls" "$W/installapp.args"; touch "$W/unit-active"; echo 0 >"$W/installapp.rc"
+echo "[2026-11-25 09:41:00] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >"$WLOG"
+bg_wrap RETROFORGE_STEAM_KEEP=off "${INST[@]:1}" -- -gamepadui -steamos3 steam://install/1572920
+until_true '[ -e "$W/call1" ]'
+[ ! -e "$W/installapp.args" ] && grep -qx "args: -gamepadui -steamos3 steam://install/1572920" "$W/call1" 2>/dev/null \
+  && ok "Keep Steam running off (the client stops when its UI is left, and the download with it): Steam's page, as before" || bad "args=$(cat "$W/installapp.args" 2>&1) $(cat "$W/call1" 2>&1)"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
+rm -f "$WLOG" "$W/installapp.rc" "$W/installapp.args"
+
 CASE="keep: Steam's UI holds it"
 reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"
 bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETROFORGE_STEAM_MINIMAL_DELAY=0 -- -gamepadui -steamos3
