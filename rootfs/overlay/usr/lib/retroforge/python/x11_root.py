@@ -22,6 +22,11 @@
 # display's own size, which gamescope sets on request (GAMESCOPE_XWAYLAND_MODE_CONTROL, as Steam and
 # retroforge-steam-direct ask for a game's resolution).
 #
+# On a dual-screen board the game's X screen is [main][secondary] (0045), so its root is wider than the
+# main panel. Sizes here are the main output's: the RandR monitor at 0,0 when there are two or more,
+# else the root (Thor Lite: a 1920x1080 top panel next to the bottom one gave the games display a ~3:1
+# shape, and every picture-sized emulator letterboxed).
+#
 # NEVER RAISES, NEVER EXITS: Xlib's default error handler exit()s the process, so a no-op handler is
 # installed first; every failure (no libX11, no display, a server error) comes back as False (0
 # monitors) with the reason passed to `warn`, and the game starts all the same (on the main panel).
@@ -36,6 +41,49 @@ LIBXRANDR = os.environ.get("RETROFORGE_LIBXRANDR", "libXrandr.so.2")
 PROP_MODE_REPLACE = 0
 _ERROR_HANDLER = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)
 _ignore_errors = _ERROR_HANDLER(lambda _dpy, _event: 0)  # kept referenced: Xlib calls it later
+
+
+class _Monitor(ctypes.Structure):
+    """XRRMonitorInfo."""
+    _fields_ = [("name", ctypes.c_ulong), ("primary", ctypes.c_int), ("automatic", ctypes.c_int),
+                ("noutput", ctypes.c_int), ("x", ctypes.c_int), ("y", ctypes.c_int), ("width", ctypes.c_int),
+                ("height", ctypes.c_int), ("mwidth", ctypes.c_int), ("mheight", ctypes.c_int),
+                ("outputs", ctypes.c_void_p)]
+
+
+def _xrandr(warn):
+    """libXrandr with XRRGetMonitors bound, or None (warned)."""
+    try:
+        xr = ctypes.CDLL(LIBXRANDR)
+        xr.XRRGetMonitors.restype = ctypes.POINTER(_Monitor)
+        xr.XRRGetMonitors.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
+        xr.XRRFreeMonitors.argtypes = [ctypes.c_void_p]
+    except (OSError, AttributeError) as err:
+        warn(f"cannot load {LIBXRANDR}: {err}")
+        return None
+    return xr
+
+
+def _main_area(dpy, root, size, warn):
+    """The main output's (width, height) on a root of `size`: the monitor at 0,0 when the X server
+    shows two or more (a dual-screen board's [main][secondary] screen), else `size`."""
+    xr = _xrandr(warn)
+    if not xr:
+        return size
+    n = ctypes.c_int(0)
+    info = xr.XRRGetMonitors(dpy, root, 1, ctypes.byref(n))
+    if not info:
+        return size
+    try:
+        if n.value < 2:
+            return size
+        for i in range(n.value):
+            m = info[i]
+            if m.x == 0 and m.y == 0 and m.width > 0 and m.height > 0:
+                return (m.width, m.height)
+        return size
+    finally:
+        xr.XRRFreeMonitors(info)
 
 
 def _xlib():
@@ -116,7 +164,8 @@ def _window_calls(x):
 
 
 def screen_size(display, warn):
-    """`display`'s root window as (width, height), or (0, 0) when that cannot be told."""
+    """`display`'s main output area as (width, height) (the root, on one output), or (0, 0) when that
+    cannot be told."""
     def action(x, dpy, root):
         _window_calls(x)
         r, w, h, u = ctypes.c_ulong(), ctypes.c_uint(), ctypes.c_uint(), ctypes.c_uint()
@@ -125,7 +174,7 @@ def screen_size(display, warn):
                               ctypes.byref(h), ctypes.byref(u), ctypes.byref(u)):
             warn(f"{display} gives no root geometry")
             return (0, 0)
-        return (w.value, h.value)
+        return _main_area(dpy, root, (w.value, h.value), warn)
 
     try:
         return _with_root(display, action, warn, fail=(0, 0))
@@ -176,8 +225,9 @@ def resize_window_of(display, pid, width, height, warn):
 
 
 def xwayland_server(display, warn):
-    """(gamescope server id, width, height) of `display`'s X server; None when it is not one of
-    gamescope's (no GAMESCOPE_XWAYLAND_SERVER_ID on its root) or cannot be read."""
+    """(gamescope server id, width, height) of `display`'s X server, the size its main output's (what
+    GAMESCOPE_XWAYLAND_MODE_CONTROL sets); None when it is not one of gamescope's (no
+    GAMESCOPE_XWAYLAND_SERVER_ID on its root) or cannot be read."""
     def action(x, dpy, root):
         _window_calls(x)
         atom = x.XInternAtom(dpy, b"GAMESCOPE_XWAYLAND_SERVER_ID", 1)
@@ -197,7 +247,7 @@ def xwayland_server(display, warn):
         if not x.XGetGeometry(dpy, root, ctypes.byref(r), ctypes.byref(i), ctypes.byref(i), ctypes.byref(w),
                               ctypes.byref(h), ctypes.byref(u), ctypes.byref(u)):
             return "none"
-        return (server, w.value, h.value)
+        return (server, *_main_area(dpy, root, (w.value, h.value), warn))
 
     try:
         got = _with_root(display, action, warn, fail="none")
@@ -221,13 +271,8 @@ def ask_xwayland_size(display, server, width, height, warn):
 
 def monitors(display, warn):
     """How many active monitors `display`'s root has (RandR 1.5), or 0 when that cannot be told."""
-    try:
-        xr = ctypes.CDLL(LIBXRANDR)
-        xr.XRRGetMonitors.restype = ctypes.c_void_p
-        xr.XRRGetMonitors.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.POINTER(ctypes.c_int)]
-        xr.XRRFreeMonitors.argtypes = [ctypes.c_void_p]
-    except (OSError, AttributeError) as err:
-        warn(f"cannot load {LIBXRANDR}: {err}")
+    xr = _xrandr(warn)
+    if not xr:
         return 0
 
     def action(_x, dpy, root):

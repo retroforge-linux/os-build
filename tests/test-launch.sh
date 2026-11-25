@@ -1054,19 +1054,33 @@ int XDeleteProperty(void *d, unsigned long w, unsigned long p) { (void)d; (void)
 int XSync(void *d, int x) { (void)d; (void)x; return 1; }
 int XCloseDisplay(void *d) { (void)d; return 0; }
 void *XSetErrorHandler(void *h) { (void)h; return NULL; }
-void *XRRGetMonitors(void *d, unsigned long w, int active, int *n) {
-  (void)d; (void)w; (void)active; const char *m = getenv("FAKE_MONITORS"); *n = m ? atoi(m) : 2;
-  FILE *f = fopen(getenv("FAKE_X11_LOG"), "a"); if (f) { fprintf(f, "monitors %d\n", *n); fclose(f); }
-  return *n > 0 ? malloc(1) : NULL;
-}
-void XRRFreeMonitors(void *p) { free(p); }
-/* window_size: the root's size (FAKE_SCREEN, WxH), one window owned by the PID in FAKE_WIN_PID once that
-   file exists, and the resizes logged. */
-int XGetGeometry(void *d, unsigned long w, unsigned long *r, int *x, int *y, unsigned *ww, unsigned *hh, unsigned *b, unsigned *dp) {
-  (void)d; (void)w; *r = 1; *x = *y = 0; *b = 0; *dp = 24; *ww = 1280; *hh = 720;
+/* window_size: the main output's size (FAKE_SCREEN or FAKE_SCREEN_FILE, WxH, which the mode control
+   writes) and, as gamescope 0045 lays a dual-screen board's X screen out, a secondary output
+   (FAKE_SECONDARY, WxH) to its right: the root spans both. One window owned by the PID in FAKE_WIN_PID
+   once that file exists, and the resizes logged. */
+static void main_size(unsigned *ww, unsigned *hh) {
+  *ww = 1280; *hh = 720;
   const char *s = getenv("FAKE_SCREEN"); if (s) sscanf(s, "%ux%u", ww, hh);
   const char *p = getenv("FAKE_SCREEN_FILE"); FILE *f = p ? fopen(p, "r") : NULL;
   if (f) { if (fscanf(f, "%ux%u", ww, hh) != 2) { *ww = 1280; *hh = 720; } fclose(f); }
+}
+static void secondary_size(unsigned *ww, unsigned *hh) {
+  *ww = *hh = 0; const char *s = getenv("FAKE_SECONDARY"); if (s) sscanf(s, "%ux%u", ww, hh);
+}
+typedef struct { unsigned long name; int primary, automatic, noutput, x, y, width, height, mwidth, mheight; unsigned long *outputs; } Monitor;
+void *XRRGetMonitors(void *d, unsigned long w, int active, int *n) {
+  (void)d; (void)w; (void)active; const char *m = getenv("FAKE_MONITORS"); *n = m ? atoi(m) : 2;
+  FILE *f = fopen(getenv("FAKE_X11_LOG"), "a"); if (f) { fprintf(f, "monitors %d\n", *n); fclose(f); }
+  if (*n <= 0) return NULL;
+  Monitor *mon = calloc(*n, sizeof *mon); unsigned mw, mh, sw, sh; main_size(&mw, &mh); secondary_size(&sw, &sh);
+  mon[0].width = mw; mon[0].height = mh;
+  for (int i = 1; i < *n; i++) { mon[i].x = mw; mon[i].width = sw; mon[i].height = sh; }
+  return mon;
+}
+void XRRFreeMonitors(void *p) { free(p); }
+int XGetGeometry(void *d, unsigned long w, unsigned long *r, int *x, int *y, unsigned *ww, unsigned *hh, unsigned *b, unsigned *dp) {
+  (void)d; (void)w; *r = 1; *x = *y = 0; *b = 0; *dp = 24; unsigned sw, sh;
+  main_size(ww, hh); secondary_size(&sw, &sh); *ww += sw; if (sh > *hh) *hh = sh;
   return 1;
 }
 static unsigned long win_pid(void) {
@@ -1167,7 +1181,7 @@ d["args"] = ["--config", sys.argv[2]] + d["args"]; json.dump(d, open(sys.argv[1]
 if [ -f "$T/libfakex11.so" ]; then
   ws_run() {  # ws_run [DISPLAY]: one game with $T/geometry on its stderr; $T/geometry-later 0.6 s in
     rm -f "$T/x11.log" "$T/win-pid"; reset_logs
-    DISPLAY="${1-:9}" RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_WIN_PID="$T/win-pid" \
+    DISPLAY="${1-:9}" RETROFORGE_LIBX11="$T/libfakex11.so" RETROFORGE_LIBXRANDR="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_WIN_PID="$T/win-pid" \
       RETROFORGE_EMU_DATA_DIR="$WS_DATA" start_launcher
     wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
     wait_for '[ -f "$T/win-pid" ]'; sleep 0.4
@@ -1194,6 +1208,9 @@ if [ -f "$T/libfakex11.so" ]; then
   printf 'aspect_ratio_index = "24"\n' >> "$T/ra.cfg"; rm -f "$T/later"
   ws_run
   [ "$(resizes)" = "853x480 " ] && ok "Stretch to screen: the screen's shape (853x480 on 1280x720)" || bad "stretch: '$(resizes)'"
+  FAKE_SCREEN=1920x1080 FAKE_SECONDARY=1240x1080 ws_run
+  [ "$(resizes)" = "853x480 " ] && ok "dual-screen board: Stretch to screen takes the main panel's shape, not both panels'" \
+    || bad "dual-screen stretch: '$(resizes)'"
   printf 'aspect_ratio_index = "22"\n' >> "$T/ra.cfg"
   printf '%s\n' '[INFO] [Environ] SET_SYSTEM_AV_INFO: 1200x892, Aspect: 1.333, FPS: 60.00, Sample rate: 44100.00 Hz.' > "$T/later"
   FAKE_SCREEN=800x600 ws_run
@@ -1248,10 +1265,10 @@ if [ -f "$T/libfakex11.so" ]; then
   gd_run() {  # gd_run [gui]: one game (or Open) on the stand-in gamescope; $gd_up = the screen while up
     rm -f "$T/x11.log"; reset_logs
     if [ "${1-}" = gui ]; then
-      DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE="${GD_GAMESCOPE-1}" \
+      DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" RETROFORGE_LIBXRANDR="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE="${GD_GAMESCOPE-1}" \
         FAKE_SCREEN_FILE="$T/screen" "$LAUNCH" --gui duckstation 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
     else
-      DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE="${GD_GAMESCOPE-1}" \
+      DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" RETROFORGE_LIBXRANDR="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE="${GD_GAMESCOPE-1}" \
         FAKE_SCREEN_FILE="$T/screen" start_launcher
     fi
     wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
@@ -1266,6 +1283,13 @@ if [ -f "$T/libfakex11.so" ]; then
   [ ! -e "$GD_JOURNAL" ] && ok "no journal left after a clean exit" || bad "journal left: $(cat "$GD_JOURNAL")"
   grep -q 'duckstation: games display 853x480 for the 480-line picture (it was 1280x720)' "$T/launch.err" \
     && ok "the size is logged" || bad "log: $(tr '\n' '|' < "$T/launch.err")"
+  # A dual-screen board's X screen is [main][secondary] (gamescope 0045): the main panel's shape counts.
+  echo 1920x1080 > "$T/screen"; FAKE_SECONDARY=1240x1080 gd_run
+  [ "$gd_up" = 853x480 ] && [ "$(modes)" = "1 853x480 1 1920x1080 " ] \
+    && grep -q 'games display 853x480 for the 480-line picture (it was 1920x1080)' "$T/launch.err" \
+    && ok "dual-screen board: 853x480 from the main panel's 1920x1080, which comes back at exit" \
+    || bad "dual-screen: up $gd_up, modes '$(modes)', log: $(tr '\n' '|' < "$T/launch.err")"
+  echo 1280x720 > "$T/screen"
   printf 'resolution=1x\n' > "$GD_CONF"; gd_run
   [ "$gd_up" = 853x480 ] && ok "1x: 240 lines stepped up to 480" || bad "1x: up $gd_up, modes '$(modes)'"
   printf 'resolution=3x\n' > "$GD_CONF"; gd_run
@@ -1304,7 +1328,7 @@ if [ -f "$T/libfakex11.so" ]; then
   # The watcher (systemd-run on the device; setsid here): a SIGKILLed launcher's size comes back with no
   # next launch, and a clean exit is not undone twice.
   printf 'resolution=2x\n' > "$GD_CONF"; rm -f "$T/x11.log"; reset_logs
-  DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE=1 FAKE_SCREEN_FILE="$T/screen" \
+  DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" RETROFORGE_LIBXRANDR="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE=1 FAKE_SCREEN_FILE="$T/screen" \
     RETROFORGE_LAUNCH_DETACH="setsid -f" start_launcher
   wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
   kill -KILL "$lpid"; wait "$lpid" 2>/dev/null
@@ -1313,7 +1337,7 @@ if [ -f "$T/libfakex11.so" ]; then
     || bad "watcher: screen $(cat "$T/screen"), modes '$(modes)', journal $(cat "$GD_JOURNAL" 2>/dev/null)"
   touch "$T/stop-emu"; wait_for '! emu_up || grep -qx term "$T/emu.log" || [ -z "$(pgrep -f "$T/mnt")" ]'; sleep 0.3
   rm -f "$T/x11.log"; reset_logs
-  DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE=1 FAKE_SCREEN_FILE="$T/screen" \
+  DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" RETROFORGE_LIBXRANDR="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE=1 FAKE_SCREEN_FILE="$T/screen" \
     RETROFORGE_LAUNCH_DETACH="setsid -f" start_launcher
   wait_for emu_up; touch "$T/stop-emu"; reap_launcher "$lpid"; sleep 1.2
   [ "$(modes)" = "1 853x480 1 1280x720 " ] && [ "$(cat "$T/screen")" = 1280x720 ] \
