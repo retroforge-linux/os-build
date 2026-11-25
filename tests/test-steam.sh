@@ -1001,6 +1001,8 @@ finish
   && ! grep -q "steam://install" "$W"/call* && grep -q "^minimal" "$W/keep.calls" \
   && ok "Steam installs it by itself: no Install screen, Big Picture closed, minimal again, back to OGUI (exit 0)" || bad "rc=$WRC args=$(cat "$W/installapp.args" 2>&1) $(cat "$W"/call* 2>&1) keep=$(cat "$W/keep.calls" 2>&1)"
 [ -e "$WROOT/.cef-enable-remote-debugging" ] && ok "and the client's DevTools flag is in its folder" || bad "no .cef-enable-remote-debugging"
+[ -x "$ROOT/rootfs/overlay/usr/lib/retroforge/steam-install-app" ] \
+  && ok "the image's steam-install-app is executable (/usr/bin/steam runs it only then)" || bad "steam-install-app is not executable"
 reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"; echo 3 >"$W/installapp.rc"
 echo "[2026-11-25 09:41:00] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >"$WLOG"
 bg_wrap "${INST[@]}" -- -gamepadui -steamos3 steam://install/1572920
