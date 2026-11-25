@@ -184,12 +184,17 @@ instead, so signing into Steam Client is enough (`apps/ogui-retroforge-plugin`: 
   `/usr/bin/steam` keeps there), and Steam starts the download with no screen when it has nothing to
   ask. The player is back in OGUI at once. Steam asks with its own screen in Big Picture for a EULA
   (Dispatch's: the install waits on it, and the player accepts it there), a compatibility warning,
-  several library folders, too little space, a non-default or unmounted folder. Its desktop window counting as active and a LAN peer that is off or not sharing are not
+  several library folders, too little space, a non-default or unmounted folder. Once the player has
+  answered and Steam has queued the download (`Update Queued` for the game in
+  `logs/content_log.txt`), Big Picture closes and the player is back in OGUI, Steam minimal again. Its desktop window counting as active and a LAN peer that is off or not sharing are not
   asked about. Steam has no command line that installs quietly: `steam://install` always opens its
   dialog, and steamcmd's `app_update` cannot use the client's sign-in. Uninstall, and Install with
   Steam not kept running, open Steam's own dialog in Big Picture, started as Emulators > Steam Client
-  > Open starts it. The game's app manifest then gives the download's progress (`BytesDownloaded` of
-  `BytesToDownload`) and its end (fully installed, nothing still going). Steam downloads while it
+  > Open starts it. The game's app manifest then gives the download's end (fully installed, nothing
+  still going) and its progress, `BytesDownloaded` of `BytesToDownload`, which Steam writes only when
+  the download starts and ends; in between, the progress is what the client has written since the
+  install began (`write_bytes` of its `/proc/<pid>/io`) of the manifest's `BytesToStage`, held below
+  100% until the manifest says installed. Steam downloads while it
   runs: once no OGUI launch goes through `steam` any more, the install's card follows the download
   while the client runs (`~/.steam/steam.pid` names a live `steam`), and ends as failed when the
   client is gone first; Steam carries on with it at its next start. Steam updates installed games

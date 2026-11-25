@@ -1005,11 +1005,22 @@ finish
   && ok "the image's steam-install-app is executable (/usr/bin/steam runs it only then)" || bad "steam-install-app is not executable"
 reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"; echo 3 >"$W/installapp.rc"
 echo "[2026-11-25 09:41:00] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >"$WLOG"
+CLOG="$WROOT/logs/content_log.txt"
+echo "[2026-11-25 09:00:00] AppID 1572920 state changed : Update Required,Update Queued," >"$CLOG"   # an earlier install's
 bg_wrap "${INST[@]}" -- -gamepadui -steamos3 steam://install/1572920
 sleep 1.5
 kill -0 "$wpid" 2>/dev/null && ! ls "$W"/call* >/dev/null 2>&1 \
   && ok "Steam shows its own screen (a EULA, a folder): the launch stays on it, nothing handed over twice" || bad "$(cat "$W"/call* 2>&1)"
-kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
+echo "[2026-11-25 09:42:00] AppID 413150 state changed : Update Required,Update Queued," >>"$CLOG"
+sleep 1.5
+kill -0 "$wpid" 2>/dev/null && ! ls "$W"/call* >/dev/null 2>&1 \
+  && ok "another game's download queued: still on Steam's screen" || bad "$(cat "$W"/call* 2>&1)"
+echo "[2026-11-25 09:42:05] AppID 1572920 state changed : Update Required,Update Queued," >>"$CLOG"
+finish
+[ "$WRC" = 0 ] && grep -qx "args: steam://close/bigpicture" "$W/call1" 2>/dev/null && grep -q "^minimal" "$W/keep.calls" \
+  && ok "the player answered it and Steam queued the download: Big Picture closed, minimal again, back to OGUI (exit 0)" \
+  || bad "rc=$WRC $(cat "$W"/call* 2>&1) keep=$(cat "$W/keep.calls" 2>&1)"
+rm -f "$CLOG"
 reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"; echo 1 >"$W/installapp.rc"
 echo "[2026-11-25 09:41:00] SP BPM_uid0-'Steam Big ': WasHidden 0: (0, 0) 1280x800" >"$WLOG"
 bg_wrap "${INST[@]}" -- -gamepadui -steamos3 steam://install/1572920

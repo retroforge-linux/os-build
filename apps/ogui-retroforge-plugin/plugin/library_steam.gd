@@ -120,14 +120,26 @@ func _through_steam(item: LibraryLaunchItem, verb: String) -> bool:
 	steam.args = SteamApps.ui_args("steam://%s/%d" % [verb, appid])
 	steam.installed = true
 	steam._provider_id = ""
+	# The client's writes from here on are the download's progress (SteamApps.install_progress); a client
+	# that starts, or restarts, during the install counts from its own start.
+	var pid := SteamApps.client_pid()
+	var base := SteamApps.written(pid)
 	launch_manager.launch(steam)
 	var root := SteamApps.steam_root()
+	var shown := 0.0
 	while true:
 		await get_tree().create_timer(POLL).timeout
 		var state := SteamApps.app_state(root, appid)
 		if verb == "install" and not state.is_empty():
-			if state["total"] > 0:
-				install_progressed.emit(item, clampf(float(state["done"]) / state["total"], 0.0, 1.0))
+			var now := SteamApps.client_pid()
+			if now != pid:
+				pid = now
+				base = 0
+			var wrote := SteamApps.written(pid)
+			var progress := SteamApps.install_progress(state, wrote - base if wrote >= 0 and base >= 0 else 0)
+			if progress > shown:
+				shown = progress
+				install_progressed.emit(item, shown)
 			if SteamApps.install_complete(state["flags"]):
 				return true
 		elif verb == "uninstall" and state.is_empty():

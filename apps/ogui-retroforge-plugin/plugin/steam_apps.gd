@@ -92,8 +92,9 @@ static func library_dirs(root: String) -> PackedStringArray:
 	return dirs
 
 
-## An app's install as its manifest says it, in any library folder: {"flags", "done", "total"}, the
-## last two being its download's bytes (0 when not downloading); {} while it has no manifest.
+## An app's install as its manifest says it, in any library folder: {"flags", "done", "total",
+## "to_stage"}, the download's bytes done and to do and the bytes it writes to disk (0 when not
+## downloading); {} while it has no manifest.
 static func app_state(root: String, appid: int) -> Dictionary:
 	for lib in library_dirs(root):
 		var path := lib.path_join("steamapps/appmanifest_%d.acf" % appid)
@@ -101,11 +102,32 @@ static func app_state(root: String, appid: int) -> Dictionary:
 			continue
 		var fields := {}
 		for pair in vdf_pairs(FileAccess.get_file_as_string(path)):
-			if pair[0] == 1 and pair[1] in ["StateFlags", "BytesDownloaded", "BytesToDownload"] and not fields.has(pair[1]):
+			if pair[0] == 1 and pair[1] in ["StateFlags", "BytesDownloaded", "BytesToDownload", "BytesToStage"] and not fields.has(pair[1]):
 				fields[pair[1]] = str(pair[2]).to_int()
 		return {"flags": fields.get("StateFlags", 0), "done": fields.get("BytesDownloaded", 0),
-				"total": fields.get("BytesToDownload", 0)}
+				"total": fields.get("BytesToDownload", 0), "to_stage": fields.get("BytesToStage", 0)}
 	return {}
+
+
+## An install's progress, 0 to 1. Steam writes the manifest's BytesDownloaded when a download starts
+## and when it ends, not while it runs (Dispatch: 100 MB of 22.7 GB for its whole download, MANGMI Air
+## X, 2026-11-25), so `wrote`, the bytes the client has written since the install began, counts too,
+## of the bytes the download writes (BytesToStage, else BytesToDownload). Below 1 until the manifest
+## says it is installed: other writes of the client's count as well.
+static func install_progress(state: Dictionary, wrote: int) -> float:
+	if state.is_empty():
+		return 0.0
+	if install_complete(state["flags"]):
+		return 1.0
+	var p := 0.0
+	if state["total"] > 0:
+		p = float(state["done"]) / state["total"]
+	var stage: int = state.get("to_stage", 0)
+	if stage <= 0:
+		stage = state["total"]
+	if stage > 0 and wrote > 0:
+		p = maxf(p, float(wrote) / stage)
+	return clampf(p, 0.0, 0.99)
 
 
 ## True once an install has ended: fully installed, nothing still going.
@@ -125,7 +147,7 @@ static func appid_of(args: PackedStringArray) -> int:
 
 ## A launch of Steam's own UI (Main menu > Apps > Steam Client, an install or uninstall from the
 ## library, the desktop Steam entry): `steam` without a game to start.
-static func is_ui_launch(item: LibraryLaunchItem) -> bool:
+static func is_ui_launch(item) -> bool:  # a LibraryLaunchItem (untyped: tests load this without OGUI)
 	return item != null and item.command == "steam" and appid_of(item.args) == 0
 
 
@@ -167,20 +189,39 @@ static func install_running() -> bool:
 	return FileAccess.file_exists(path) and FileAccess.get_modified_time(path) >= _boot_time()
 
 
-## The Steam client runs: ~/.steam/steam.pid names a live process called steam (the client leaves
-## the file behind when it ends; retroforge-steam-keep reads it the same way). By line: Godot reads a
-## whole /proc file as empty.
-static func client_running(home: String = "", proc: String = "/proc") -> bool:
+## The Steam client's PID while it runs, else 0: ~/.steam/steam.pid names a live process called steam
+## (the client leaves the file behind when it ends; retroforge-steam-keep reads it the same way). By
+## line: Godot reads a whole /proc file as empty.
+static func client_pid(home: String = "", proc: String = "/proc") -> int:
 	if home == "":
 		home = OS.get_environment("HOME")
 	var f := FileAccess.open(home.path_join(".steam/steam.pid"), FileAccess.READ)
 	if f == null:
-		return false
+		return 0
 	var pid := f.get_line().strip_edges()
 	if not pid.is_valid_int():
-		return false
+		return 0
 	var comm := FileAccess.open(proc.path_join(pid).path_join("comm"), FileAccess.READ)
-	return comm != null and comm.get_line().strip_edges() == "steam"
+	return pid.to_int() if comm != null and comm.get_line().strip_edges() == "steam" else 0
+
+
+static func client_running(home: String = "", proc: String = "/proc") -> bool:
+	return client_pid(home, proc) > 0
+
+
+## The bytes a process has written to disk (write_bytes of /proc/<pid>/io; the client itself writes a
+## download's files), or -1 when it cannot be read.
+static func written(pid: int, proc: String = "/proc") -> int:
+	if pid <= 0:
+		return -1
+	var f := FileAccess.open(proc.path_join(str(pid)).path_join("io"), FileAccess.READ)
+	if f == null:
+		return -1
+	while not f.eof_reached():
+		var line := f.get_line()
+		if line.begins_with("write_bytes:"):
+			return line.get_slice(":", 1).strip_edges().to_int()
+	return -1
 
 
 ## The kernel's boot time (Unix seconds, /proc/stat btime), 0 when unknown. Read by line: Godot reads

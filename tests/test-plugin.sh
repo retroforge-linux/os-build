@@ -985,17 +985,31 @@ func test_steam_apps() -> void:
 		[SteamApps.parse_library(""), SteamApps.parse_library("[1]"), SteamApps.parse_library('{"games": 3}')], [[], [], []])
 	write(sd + "/steamapps/appmanifest_268910.acf", acf("268910", "Cuphead", 1026, "Cuphead", '\t"BytesToDownload"\t\t"4000"\n\t"BytesDownloaded"\t\t"1000"\n'))
 	check("steam install: progress from the manifest, in any library folder (a nested section's flags are not the app's)",
-		SteamApps.app_state(root, 268910), {"flags": 1026, "done": 1000, "total": 4000})
+		SteamApps.app_state(root, 268910), {"flags": 1026, "done": 1000, "total": 4000, "to_stage": 0})
 	check("steam install: no manifest yet, no state", SteamApps.app_state(root, 413150), {})
 	check("steam install: done once fully installed with nothing still going",
 		[SteamApps.install_complete(4), SteamApps.install_complete(6), SteamApps.install_complete(1026), SteamApps.install_complete(4 | 0x100000), SteamApps.install_complete(0)],
 		[true, false, false, false, false])
+	var dl := {"flags": 1026, "done": 100, "total": 1000, "to_stage": 2000}
+	check("steam install: progress is the manifest's, or the client's writes of the bytes to stage when more (Steam writes the manifest only at the start and the end)",
+		[SteamApps.install_progress(dl, 0), SteamApps.install_progress(dl, 1000), SteamApps.install_progress(dl, -5),
+		 SteamApps.install_progress({"flags": 1026, "done": 0, "total": 1000, "to_stage": 0}, 500)],
+		[0.1, 0.5, 0.1, 0.5])
+	check("steam install: below 1 until the manifest says installed, 1 once it does, 0 without a manifest",
+		[SteamApps.install_progress(dl, 5000), SteamApps.install_progress({"flags": 4, "done": 0, "total": 0, "to_stage": 0}, 0), SteamApps.install_progress({}, 900)],
+		[0.99, 1.0, 0.0])
+	write("$T/pid/proc/4242/io", "rchar: 10\nwchar: 20\nsyscr: 1\nsyscw: 2\nread_bytes: 30\nwrite_bytes: 18979475456\ncancelled_write_bytes: 0\n")
+	check("steam client: the bytes a process has written (/proc/<pid>/io), -1 when unreadable or no process",
+		[SteamApps.written(4242, "$T/pid/proc"), SteamApps.written(4243, "$T/pid/proc"), SteamApps.written(0, "$T/pid/proc")],
+		[18979475456, -1, -1])
 	write("$T/pid/steam/.steam/steam.pid", "4242\n")
 	write("$T/pid/proc/4242/comm", "steam\n")
 	write("$T/pid/other/.steam/steam.pid", "4243\n")
 	write("$T/pid/proc/4243/comm", "bash\n")
 	write("$T/pid/gone/.steam/steam.pid", "4244\n")
 	write("$T/pid/junk/.steam/steam.pid", "x\n")
+	check("steam client: its PID while steam.pid names a live process called steam, else 0",
+		[SteamApps.client_pid("$T/pid/steam", "$T/pid/proc"), SteamApps.client_pid("$T/pid/other", "$T/pid/proc")], [4242, 0])
 	check("steam client: running while steam.pid names a live process called steam (an install it has queued is followed)",
 		[SteamApps.client_running("$T/pid/steam", "$T/pid/proc"), SteamApps.client_running("$T/pid/none", "$T/pid/proc"),
 		 SteamApps.client_running("$T/pid/other", "$T/pid/proc"), SteamApps.client_running("$T/pid/gone", "$T/pid/proc"),

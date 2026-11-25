@@ -236,15 +236,32 @@ kept_open_bpm() {
 # screen (Steam shows its own screen for it: a EULA, a folder, the space) or nothing (not done: the page
 # is handed over as before).
 install_cli="${RETROFORGE_STEAM_INSTALL_APP:-/usr/lib/retroforge/steam-install-app}"
-kept_install() {
+install_appid() {  # the app id of an install page (steam://install/<appid>), or nothing
   local arg id=""
   for arg in "$@"; do
     case "$arg" in steam://install/*) id="${arg#steam://install/}" ;; esac
   done
   case "$id" in ''|*[!0-9]*) return 0 ;; esac
-  [ -x "$install_cli" ] || return 0
+  echo "$id"
+}
+kept_install() {
+  local id
+  id="$(install_appid "$@")"
+  [ -n "$id" ] && [ -x "$install_cli" ] || return 0
   "$install_cli" "$id" >/dev/null
   case $? in 0) echo silent ;; 3) echo screen ;; esac
+}
+# Steam's screen for an install (the game's EULA, a folder): once the player has answered it and Steam has
+# queued the download (`AppID <appid> state changed : ...Update Queued` in content_log.txt since the
+# install began), the launch closes Big Picture and is back in OGUI, minimal again, as the silent install
+# is: the player does not leave Steam's UI themselves (Dispatch's EULA, MANGMI Air X, 2026-11-25).
+content_log="$RETROFORGE_STEAM_ROOT/logs/content_log.txt"
+kept_queued() {  # APPID LINE: queued since line LINE of the content log (all of it once it rotated)
+  local n=0 from="$2"
+  [ -n "$1" ] && [ -r "$content_log" ] || return 1
+  n=$(wc -l <"$content_log")
+  [ "$n" -ge "$from" ] || from=0
+  tail -n +$((from + 1)) "$content_log" 2>/dev/null | grep -aqE "AppID $1 state changed : .*Update Queued"
 }
 kept_stop() {  # TERM, INT or HUP: end the game this launch started, not Steam
   if [ -n "$appid" ]; then
@@ -293,10 +310,14 @@ kept_launch() {
     fi
     # Steam downloads while its client runs: with Keep Steam running off, the client stops once its UI
     # is left, so an install there stays on Steam's page, with the player, as before.
-    local installed=""
+    local installed="" queue_id="" queue_from=0
     if [ -z "$appid" ]; then
       kept_open_bpm "$@"
-      [ "$("$keep_cli" status 2>/dev/null)" = on ] && installed="$(kept_install "$@")"
+      if [ "$("$keep_cli" status 2>/dev/null)" = on ]; then
+        queue_id="$(install_appid "$@")"
+        [ -r "$content_log" ] && queue_from=$(wc -l <"$content_log")
+        installed="$(kept_install "$@")"
+      fi
     fi
     if [ "$installed" = silent ]; then
       log "Steam installs the game by itself (no Install screen): back to OGUI"
@@ -322,6 +343,11 @@ kept_launch() {
   while :; do
     if [ -z "$appid" ]; then
       kept_active || break
+      if [ "$installed" = screen ] && kept_queued "$queue_id" "$queue_from"; then
+        log "Steam has queued the game's download: back to OGUI"
+        kept_close_ui
+        break
+      fi
       sleep 1 & wait $!
       continue
     fi
