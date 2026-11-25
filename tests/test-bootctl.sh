@@ -165,7 +165,6 @@ run mark-good
   || bad "rauc saw: $(rauc_calls | tr '\n' ';')"
 [ "$(envval A_OK)" = 1 ] && [ "$(envval A_TRY)" = 0 ] && ok "the trial is over (A_OK=1, A_TRY=0)" \
   || bad "A_OK=$(envval A_OK) A_TRY=$(envval A_TRY)"
-[ -z "$(envval rf_board_ok)" ] && ok "no saved board: no confirmed board is recorded" || bad "rf_board_ok=$(envval rf_board_ok)"
 # The ESP is finished from the running system, after the verdict.
 cmp -s "$SB/efi/EFI/steamos/parts.env" "$SB/esp/EFI/steamos/parts.env" \
   && ok "copies parts.env onto the ESP" || bad "the ESP has no copy of parts.env"
@@ -173,14 +172,12 @@ cmp -s "$SB/efi/EFI/steamos/parts.env" "$SB/esp/EFI/steamos/parts.env" \
   && ok "copies OpenABL's Device model DTBs to \\dtbs\\qcom" || bad "\\dtbs\\qcom is incomplete"
 done_
 
-t "mark-good records the board it confirmed"
+t "mark-good keeps the saved board as it is"
 printf 'saved_entry=mangmi-air-x-mq66\n' >>"$SB/esp/EFI/steamos/grubenv"
 run mark-good
-[ "$RC" = 0 ] && [ "$(envval rf_board_ok)" = mangmi-air-x-mq66 ] \
-  && ok "rf_board_ok=mangmi-air-x-mq66, so this board's retries skip the stage-2 menu" \
-  || bad "rc=$RC rf_board_ok=$(envval rf_board_ok)"
-touch "$SB/rauc.fail"; sed -i.bak '/^rf_board_ok=/d' "$SB/esp/EFI/steamos/grubenv"; run mark-good
-[ -z "$(envval rf_board_ok)" ] && ok "a failed confirmation records no board" || bad "rf_board_ok=$(envval rf_board_ok)"
+[ "$RC" = 0 ] && [ "$(envval saved_entry)" = mangmi-air-x-mq66 ] && [ -z "$(envval rf_board_ok)" ] \
+  && ok "saved_entry is kept and nothing else is recorded for it" \
+  || bad "rc=$RC saved_entry=$(envval saved_entry) rf_board_ok=$(envval rf_board_ok)"
 done_
 
 t "mark-good on a degraded boot"

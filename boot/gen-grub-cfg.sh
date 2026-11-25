@@ -47,7 +47,7 @@
 # bricked. Loud, then carry on; never wedged.
 #
 # Tries are not counted here. The ESP GRUB counts them in the grubenv (RAUC's ORDER/<slot>_TRY)
-# before handing over, and tells this config through rf_retry/rf_fallback whether to show the menu.
+# before handing over.
 set -euo pipefail
 shopt -s nullglob
 
@@ -320,7 +320,7 @@ fi
 # savedefault is NOT a GRUB builtin. grub-mkconfig emits it as a shell function in the config it
 # generates, and a config that calls it without defining it just prints "unknown command" per
 # menuentry and saves nothing.
-load_env -f (\$esp)/EFI/steamos/grubenv saved_entry rf_board_ok
+load_env -f (\$esp)/EFI/steamos/grubenv saved_entry
 function savedefault {
   saved_entry="\${chosen}"
   save_env -f (\$esp)/EFI/steamos/grubenv saved_entry
@@ -342,24 +342,12 @@ if [ -n "\$abl_board" ]; then
   fi
 fi
 
-# Once the board is known the menu is hidden and there is no wait. It shows again for 3s on another
-# try of a slot that did not come up (rf_retry) while the board has never had a boot confirmed
-# (rf_board_ok, which retroforge-bootctl mark-good writes), because that is when a wrong board shows
-# itself; a confirmed board was not what failed, and a device shut down before its confirmation
-# must not get the menu for it. It also shows when no slot had tries left (rf_fallback), and it
-# waits on a fresh card that neither OpenABL nor a saved choice can name the board for.
+# The menu shows only when no board is known: neither OpenABL's Device model nor a saved choice
+# names one. Then it waits.
 if [ -n "\${saved_entry}" ]; then
   set default="\${saved_entry}"
-  set rf_menu=""
-  if [ -n "\$rf_fallback" ]; then set rf_menu=1; fi
-  if [ -n "\$rf_retry" -a "\${saved_entry}" != "\$rf_board_ok" ]; then set rf_menu=1; fi
-  if [ -n "\$rf_menu" ]; then
-    set timeout_style=menu
-    set timeout=3
-  else
-    set timeout_style=hidden
-    set timeout=0
-  fi
+  set timeout_style=hidden
+  set timeout=0
 else
   # -1 is "no timeout".
   set default=0

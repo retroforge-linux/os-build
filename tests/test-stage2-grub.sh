@@ -333,18 +333,15 @@ for slot in A B; do
   grep -q 'save_env -f (\$esp)/EFI/steamos/grubenv' "$cfg" \
     && ok "grub-$lc.cfg saves to the ESP grubenv" || bad "grub-$lc.cfg does not save the grubenv"
   # A config that never sets a timeout waits forever (GRUB treats unset as -1). With a known board
-  # the menu is hidden with no wait, and it comes back for 3s exactly when the ESP GRUB says this
-  # boot is a retry or a fall-back -- the only way back from a wrong board on a keyboard-less device.
-  grep -q '^    set timeout=0$' "$cfg" && grep -q '^    set timeout_style=hidden$' "$cfg" \
+  # the menu is hidden with no wait, retries and fall-backs included.
+  grep -q '^  set timeout=0$' "$cfg" && grep -q '^  set timeout_style=hidden$' "$cfg" \
     && ok "grub-$lc.cfg boots a known board with the menu hidden" \
     || bad "grub-$lc.cfg has no hidden, no-wait path for a known board"
-  grep -q '^  if \[ -n "\$rf_fallback" \]; then set rf_menu=1; fi$' "$cfg" \
-    && grep -q '^  if \[ -n "\$rf_retry" -a "\${saved_entry}" != "\$rf_board_ok" \]; then set rf_menu=1; fi$' "$cfg" \
-    && grep -q '^    set timeout=3$' "$cfg" \
-    && ok "grub-$lc.cfg shows the menu for 3s on a fall-back, or a retry of a board never confirmed" \
-    || bad "grub-$lc.cfg does not gate the retry menu on an unconfirmed board"
-  grep -q '^load_env -f (\$esp)/EFI/steamos/grubenv saved_entry rf_board_ok$' "$cfg" \
-    && ok "grub-$lc.cfg loads the confirmed board" || bad "grub-$lc.cfg never loads rf_board_ok"
+  ! grep -qE 'rf_retry|rf_fallback|rf_board_ok|set timeout=3' "$cfg" \
+    && ok "grub-$lc.cfg never shows the menu for a retry or a fall-back" \
+    || bad "grub-$lc.cfg still shows the menu for a retry or a fall-back"
+  grep -q '^load_env -f (\$esp)/EFI/steamos/grubenv saved_entry$' "$cfg" \
+    && ok "grub-$lc.cfg loads the saved board" || bad "grub-$lc.cfg never loads saved_entry"
   grep -q '^  set timeout=-1$' "$cfg" && ok "grub-$lc.cfg waits when no board is known" \
                                       || bad "grub-$lc.cfg does not wait on a fresh card"
 

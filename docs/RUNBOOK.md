@@ -163,10 +163,9 @@ board (the README's table is the roster), so the DTB is the one thing the card c
 OpenABL installs the DTB of its Device model (it lists the ones in the ESP's `/dtbs/qcom`) before it
 starts the ESP GRUB, and the stage-2 config boots the entry for that model with the slot's own DTB.
 With no Device model, **the first boot stops at the stage-2 board menu and waits**; the choice is
-written to `/EFI/steamos/grubenv` and every boot after that takes it with the menu hidden. The menu
-comes back for 3 seconds when a board that has never had a boot confirmed is tried again — which is
-how a wrong board shows itself and how to get back from it — and when no slot has tries left. With a
-Device model set, change the board in OpenABL's menu instead.
+written to `/EFI/steamos/grubenv` and every boot after that takes it with the menu hidden, retries
+and fall-backs included. To change the board, set OpenABL's Device model, which wins over the saved
+choice.
 
 ### Update a dev card instead of reflashing it
 
@@ -340,8 +339,7 @@ by construction. It lives in the ESP's grubenv:
 
 > **What that means in practice.** A slot that boots but comes up broken IS demoted — the health
 > unit fails and the next boot goes to the other slot. A slot that never gets far enough to run
-> systemd at all is skipped after its third try. Each retry and each fall-back shows the stage-2
-> board menu for 3 seconds.
+> systemd at all is skipped after its third try.
 
 ## Recovery: when it does not boot
 

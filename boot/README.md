@@ -34,8 +34,8 @@ no `if`). The config reads the grubenv, picks the first slot in `ORDER` that is 
 (`TRY` 0, 1 or 2) and has both a stage-2 config and a kernel, counts the try, sets `$root`/`$prefix`
 to that slot's efi partition and sources the stage-2 `grub.cfg` there, as if it had been loaded off
 that partition.
-It tells the stage-2 config, through `rf_retry`/`rf_fallback`, whether this boot is another try or
-a fall-back, which is when the stage-2 menu is shown.
+It also sets `rf_retry`/`rf_fallback` (another try, a fall-back); only older roots' stage-2 configs
+read them.
 
 RAUC reads any `TRY` above 0 as "not good", and its `set-primary`, `mark-good` and `mark-bad`
 write `TRY=0`, so the three-try count means nothing to it. `retroforge-boot-good.service` confirms a
@@ -65,10 +65,8 @@ The ESP's `\dtbs\qcom` copies are what OpenABL lists and installs. They are the 
 at the hand-over when the tree it installed has no splash region.
 
 With no Device model, the first boot stops at the stage-2 board menu and waits; the choice is
-saved in the grubenv (`saved_entry`) and the menu is hidden from then on. It comes back for 3s on a
-retry of a board that has never had a boot confirmed (`mark-good` records `rf_board_ok`), and when no
-slot has tries left — not on every retry, because a device shut down before its confirmation is not
-a wrong board.
+saved in the grubenv (`saved_entry`) and the menu is hidden from then on, retries and fall-backs
+included. To change the board, set OpenABL's Device model.
 
 ## The kernel command line
 

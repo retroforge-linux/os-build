@@ -1323,7 +1323,7 @@ EOF
   SP_HOME_FSTYPE=ext4
   SP_PLAN_RC=0; SP_PLAN_GIB=72; SP_PLAN_REPLACES=0
   SP_PGREP_RC=1
-  SP_CARD_GRUBENV="$SP/card-grubenv"; printf 'saved_entry=mangmi-air-x-mq66\nrf_board_ok=mangmi-air-x-mq66\n' >"$SP_CARD_GRUBENV"
+  SP_CARD_GRUBENV="$SP/card-grubenv"; printf 'saved_entry=mangmi-air-x-mq66\n' >"$SP_CARD_GRUBENV"
 }
 
 spine_run() {  # extra args passed through to the spine
@@ -1441,9 +1441,6 @@ CASE="spine: the board the card booted with comes along"
 sp_env_has 'saved_entry=mangmi-air-x-mq66' \
   && ok "the internal grubenv carries the card's saved board" \
   || bad "saved_entry did not reach the internal grubenv"
-sp_env_has 'rf_board_ok=mangmi-air-x-mq66' \
-  && bad "rf_board_ok was copied: this disk has not confirmed a boot yet" \
-  || ok "and not rf_board_ok, which only a confirmed boot of this disk may set"
 spine_dir noboard
 rm -f "$SP_CARD_GRUBENV"
 out="$(spine_run)" && ok "a card grubenv that cannot be read costs only the board menu" \

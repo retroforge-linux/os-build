@@ -7,8 +7,7 @@
 #
 #   mark-good [--require-marker] [--same-session] [--wait SECONDS]
 #                    confirm THIS boot (retroforge-boot-good.service): rauc status mark-good booted,
-#                    which ends the trial (TRY=0, OK=1), and record the board as confirmed
-#                    (rf_board_ok) so its retries skip the stage-2 menu. Then finish the ESP from the running root
+#                    which ends the trial (TRY=0, OK=1). Then finish the ESP from the running root
 #                    where an older root's update hook could not (parts.env, OpenABL's \dtbs\qcom).
 #        --require-marker  re-test the session marker before confirming; without it, exit 1
 #        --same-session    the marker must name the same running gamescope after the wait as before
@@ -218,13 +217,6 @@ mark_good() {
   "$RAUC" status mark-good booted || die "rauc status mark-good booted failed"
   echo "boot confirmed good (slot $bs)"
 
-  # The board this boot came up on (the stage-2 config saved it as saved_entry) is now known good:
-  # its retries no longer show the stage-2 menu (rf_board_ok, ours, beside RAUC's variables).
-  local board
-  board=$(env_get saved_entry)
-  if [ -n "$board" ] && [ "$(env_get rf_board_ok)" != "$board" ]; then
-    "$EDITENV" "$GRUBENV" set "rf_board_ok=$board" || warn "could not record $board as a confirmed board"
-  fi
   sync -f "$GRUBENV" 2>/dev/null || sync
 
   # Only after the verdict, and never able to take it back: what an older root's hook did not write

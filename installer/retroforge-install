@@ -848,8 +848,8 @@ write_efi_partitions() {
 #   stage 1       refresh_esp_stage1, whose own last write is bootaa64.efi -- the byte that flips
 #                 ABL from the card to this disk.
 EDITENV=${EDITENV:-}
-# saved_entry only: rf_board_ok means "this disk has confirmed a boot on it", and it has not yet.
-# Best-effort, and shaped like a board id or left out: without it the first boot shows the board menu.
+# The card's saved_entry, best-effort, and shaped like a board id or left out: without it the first
+# boot shows the board menu.
 carry_board() {  # <editenv> <grubenv>
   local board
   [ -r "$CARD_GRUBENV" ] || { log "no card grubenv at $CARD_GRUBENV; the first boot will ask for the board"; return 0; }

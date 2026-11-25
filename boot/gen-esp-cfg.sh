@@ -185,9 +185,9 @@ export rf_fallback
 export rf_retry
 set rf_fallback=""
 set rf_retry=""
-# rf_retry: this slot did not come up last time, so its stage-2 menu shows (a wrong board shows
-# itself this way). Booting the second slot in ORDER is not one: after a failed update that is
-# every boot until the next one, and the board did not change.
+# rf_retry: this slot did not come up last time. Booting the second slot in ORDER is not one: after a
+# failed update that is every boot until the next one. Only older roots' stage-2 configs read
+# rf_retry/rf_fallback (they show their menu for them); this build's shows it only with no board.
 if [ -n "\$slot" ]; then
   if [ "\$try" = 1 -o "\$try" = 2 ]; then set rf_retry=1; fi
   if [ "\$try" = 2 ]; then set nt=3; elif [ "\$try" = 1 ]; then set nt=2; else set nt=1; fi
