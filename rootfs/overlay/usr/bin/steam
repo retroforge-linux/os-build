@@ -326,6 +326,12 @@ kept_launch() {
 # So a launch starts that server first, as a user unit outside this launch's process tree (OGUI would
 # count it as the game's), for a game whose compat data FEX's tool has set up on an earlier launch. It
 # stays RETROFORGE_STEAM_FEXSERVER_LINGER s (60) after its last client; a running one is left as it is.
+# Only before FEX 2611 (the tool's VERSIONS.txt, "FEX describe FEX-2611"): from FEX commit 7a6d04e30 on,
+# Steam's FEX server manager deletes the server's socket when the game's session ends, which stranded
+# ours (still running, holding the server lock, unreachable) so the next launch failed "Couldn't connect
+# to FEXServer socket" (Parking Garage Rally Circuit after a crash, Air X, 2026-11-25), and ours saved
+# nothing there (Megabonk 30-38 s either way, 2026-11-24). FEX-2607, the tool's public branch, keeps it;
+# a version it cannot read, too.
 # The runtime's own x86 programs (its probes, shell tools and scripts: hundreds of short processes) also
 # run without FEX's Multiblock, which costs more to compile than it saves for them: per program, in the
 # game's FEX folder, the files written only where none is (the player's own stays). The game keeps it.
@@ -340,7 +346,7 @@ x86_64-linux-gnu-detect-lib i386-linux-gnu-detect-lib x86_64-linux-gnu-inspect-l
 i386-linux-gnu-inspect-library x86_64-linux-gnu-check-locale steam-runtime-identify-library-abi
 steam-runtime-launcher-interface-0 steam-runtime-system-info"
 fex_server() {  # fex_server ARG...
-  local arg id="" fex="${RETROFORGE_STEAM_FEX:-$RETROFORGE_STEAM_ROOT/steamapps/common/FEX-Emu}" data
+  local arg id="" fex="${RETROFORGE_STEAM_FEX:-$RETROFORGE_STEAM_ROOT/steamapps/common/FEX-Emu}" data fexv
   for arg in "$@"; do
     case "$arg" in steam://rungameid/*) id="${arg#steam://rungameid/}" ;; esac
   done
@@ -359,6 +365,8 @@ fex_server() {  # fex_server ARG...
         || printf '{"Config": {"Multiblock": "0"}}\n' >"$data/fex-emu/AppConfig/$arg.json" 2>/dev/null
     done
   fi
+  fexv=$(sed -n 's/^FEX describe[[:space:]]*FEX-\([0-9][0-9][0-9][0-9]\).*/\1/p' "$fex/VERSIONS.txt" 2>/dev/null | head -n1)
+  [ -n "$fexv" ] && [ "$fexv" -ge 2611 ] && return 0
   systemctl --user is-active --quiet "retroforge-fexserver-$id.service" 2>/dev/null && return 0
   # FEXServer exits 1 when its time is up, as when stopped: not a failure
   systemd-run --user --quiet --collect --unit="retroforge-fexserver-$id" --working-directory="$fex" \

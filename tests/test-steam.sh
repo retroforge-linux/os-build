@@ -635,6 +635,21 @@ bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_FEX="$W/fex" -- -gamepadui -si
 until_true '[ -e "$W/call1" ]'
 [ ! -e "$W/fexrun.args" ] && ok "one already running is left as it is" || bad "started again: $(cat "$W/fexrun.args")"
 kill -TERM "$wpid"; wait "$wpid"
+reset_keep; touch "$W/unit-active"; printf 'FEX describe\tFEX-2607\nFEX bash\t1cc4b93\n' >"$W/fex/VERSIONS.txt"
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_FEX="$W/fex" -- -gamepadui -silent steam://rungameid/42
+until_true '[ -e "$W/call1" ]'
+[ -e "$W/fexrun.args" ] && ok "FEX-2607 (the tool's public branch): its FEXServer starts first" || bad "not started: $(cat "$W/err")"
+kill -TERM "$wpid"; wait "$wpid"
+# From FEX 2611, Steam's FEX server manager deletes the server's socket at the session's end: one of
+# ours stayed up, unreachable, and the next launch could not connect
+reset_keep; touch "$W/unit-active"; rm -r "$FAC"; printf 'FEX describe\tFEX-2611.1\nFEX bash\t8f92e80\n' >"$W/fex/VERSIONS.txt"
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_FEX="$W/fex" -- -gamepadui -silent steam://rungameid/42
+until_true '[ -e "$W/call1" ]'
+[ ! -e "$W/fexrun.args" ] && ok "FEX 2611 on: none (Steam's FEX server manager runs the server and deletes its socket)" || bad "started: $(cat "$W/fexrun.args")"
+[ "$(cat "$FAC/ld-linux-x86-64.so.2.json" 2>/dev/null)" = '{"Config": {"Multiblock": "0"}}' ] \
+  && ok "and the runtime's helpers still run without Multiblock" || bad "$(ls "$FAC" 2>&1)"
+kill -TERM "$wpid"; wait "$wpid"
+rm -f "$W/fex/VERSIONS.txt"
 reset_keep; touch "$W/unit-active"; rm -f "$WROOT/steamapps/compatdata/42/fex-emu/Config.json"; rm -r "$FAC"
 bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_FEX="$W/fex" -- -gamepadui -silent steam://rungameid/42
 until_true '[ -e "$W/call1" ]'

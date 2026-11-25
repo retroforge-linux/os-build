@@ -650,6 +650,15 @@ a native or Proton game, or a first launch. It stays 60 s after its last client.
 44-48 s after the launch instead of 69-73 s. The server holding the helper's pipe is FEX's
 (FEX-2607-76, Valve's FEX-Emu tool), not ours to change.
 
+Only before FEX 2611, which `/usr/bin/steam` reads from the tool's `VERSIONS.txt` (`FEX describe
+FEX-2611`). From FEX commit 7a6d04e30 (2026-11-04, in FEX-2611, the tool's beta branch) Steam's FEX
+server manager (`Source/Steam/ServerManager.cpp`) deletes the server's socket when the game's session
+ends, without asking whose server it is. Ours then stayed up, holding `Server.lock`, with no socket, and
+the next launch of that game failed `Couldn't connect to FEXServer socket` / `FEXServerClient: Failure to
+setup client` until the unit stopped (Parking Garage Rally Circuit after a crash, Air X, 2026-11-24/25).
+On FEX-2611 the server first gained nothing anyway: Megabonk's window 30-38 s after the launch with it or
+without (2026-11-24). The runtime's helpers keep running without Multiblock on every version.
+
 ### Only our drivers in the guest
 
 Most of those helpers are pressure-vessel's library capture: through the guest's x86 ld.so, for each
