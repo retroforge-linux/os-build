@@ -313,9 +313,22 @@ grep -q 'library_manager.library_launch_item_added.connect(_drop_steam_shortcut)
 # Steam's own install returns to OGUI once Steam has queued the download (/usr/bin/steam): the
 # install's card follows it while the client runs, instead of failing when that launch ends (Dispatch,
 # MANGMI Air X, 2026-11-25).
-grep -q 'if verb == "install" and not state.is_empty() and SteamApps.client_running():' "$SRC/library_steam.gd" \
+grep -q 'if verb == "install" and SteamApps.client_running() and (not state.is_empty() or not launched and waited < MANIFEST_WAIT):' "$SRC/library_steam.gd" \
   && ok "an install Steam has queued is followed after Steam's UI closes, while the client runs" \
   || bad "library_steam.gd fails an install once Steam's UI closes, though the client has it downloading"
+# An Install is Steam's own in the background first (nothing of Steam's shown), Steam's UI only when
+# Steam has to ask: steam-install-app --quiet, before the steam launch.
+python3 - "$SRC/library_steam.gd" <<'PY3' \
+  && ok "an Install runs steam-install-app --quiet before any Steam launch, and follows it without one when Steam queued it" \
+  || bad "library_steam.gd opens Steam's UI for every install, or follows a background install as a launch"
+import re, sys
+src = open(sys.argv[1]).read()
+body = src[src.index("func _through_steam("):src.index("func _quiet_install(")]
+quiet, launch = body.index("_quiet_install(appid)"), body.index("launch_manager.launch(steam)")
+assert quiet < launch
+assert "return await _follow(item, verb, appid, pid, base, false)" in body[quiet:launch]
+assert 'OS.execute(INSTALL_APP, ["--quiet", str(appid)])' in src
+PY3
 
 grep -q '^	item.command = "steam"$' "$SRC/library_steam.gd" && grep -q '^	item.args = SteamApps.launch_args(game\["appid"\])$' "$SRC/library_steam.gd" \
   && ok "a Steam game launches through /usr/bin/steam, which decides whether the client starts" \

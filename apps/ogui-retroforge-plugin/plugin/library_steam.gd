@@ -7,16 +7,21 @@ extends Library
 ## (LibraryLaunchItem.get_app_id), so gamescope focuses the game's window, and runs its Steam
 ## handling (RunningApp.is_steam_app).
 ##
-## A game that is not installed gets OGUI's Install, and an installed one Uninstall: both are handed
-## to Steam (steam://install/<appid>, steam://uninstall/<appid>), whose own dialog opens in Big
-## Picture, started as Main menu > Apps > Steam Client starts it. The game's app manifest then
-## says how the download goes (install_progressed) and when it is done. Steam downloads while it
-## runs: leaving Steam before the end ends the install here as failed, and Steam carries on with it
-## while it still runs, or at its next start.
+## A game that is not installed gets OGUI's Install, and an installed one Uninstall. An Install is
+## first Steam's own, in the background with nothing of Steam's shown (steam-install-app --quiet: with
+## Steam kept running, when Steam has nothing to ask). Otherwise both are handed to Steam
+## (steam://install/<appid>, steam://uninstall/<appid>), whose own screen opens in Big Picture,
+## started as Main menu > Apps > Steam Client starts it. The game's app manifest then says when the
+## download is done, and with the client's writes how it goes (install_progressed). Steam downloads
+## while its client runs: an install here ends as failed when the client is gone first, and Steam
+## carries on with it at its next start.
 
 const SteamApps := preload("steam_apps.gd")
 const RomNames := preload("rom_names.gd")
 const HELPER := "/usr/lib/retroforge/steam-library"
+const INSTALL_APP := "/usr/lib/retroforge/steam-install-app"
+## s an install in the background may take for Steam to write the game's app manifest.
+const MANIFEST_WAIT := 30.0
 ## s between two looks at an install's app manifest.
 const POLL := 2.0
 
@@ -106,13 +111,22 @@ func uninstall(item: LibraryLaunchItem) -> void:
 	uninstall_completed.emit(item, await _through_steam(item, "uninstall"))
 
 
-## Hand an install or uninstall to Steam and follow the game's app manifest until it is done: true,
-## or false once no OGUI launch goes through Steam any more (the player left Steam's UI, or it never
-## came up) first, unless the running client has the install going: Steam's own install returns to
-## OGUI as soon as Steam has queued the download (/usr/bin/steam), and the client kept running goes
-## on with a download the player left Steam's UI during.
+## Install in the background first, then hand an install Steam has to ask about, or an uninstall, to
+## Steam's UI, and follow the game's app manifest until it is done: true, or false once the client
+## is gone first, or once no OGUI launch goes through Steam any more (the player left Steam's UI, or
+## it never came up) without the client having the install going (Steam's own install returns to OGUI
+## as soon as Steam has queued the download, /usr/bin/steam).
 func _through_steam(item: LibraryLaunchItem, verb: String) -> bool:
 	var appid := item.provider_app_id.to_int()
+	# The client's writes from here on are the download's progress (SteamApps.install_progress); a client
+	# that starts, or restarts, during the install counts from its own start.
+	var pid := SteamApps.client_pid()
+	var base := SteamApps.written(pid)
+	if verb == "install":
+		var quiet: int = await _quiet_install(appid)
+		if quiet == 0:
+			logger.info("%s: Steam installs it in the background" % item.name)
+			return await _follow(item, verb, appid, pid, base, false)
 	logger.info("%s: %s through Steam" % [item.name, verb])
 	var steam := LibraryLaunchItem.new()
 	steam.name = "Steam"
@@ -120,13 +134,28 @@ func _through_steam(item: LibraryLaunchItem, verb: String) -> bool:
 	steam.args = SteamApps.ui_args("steam://%s/%d" % [verb, appid])
 	steam.installed = true
 	steam._provider_id = ""
-	# The client's writes from here on are the download's progress (SteamApps.install_progress); a client
-	# that starts, or restarts, during the install counts from its own start.
-	var pid := SteamApps.client_pid()
-	var base := SteamApps.written(pid)
 	launch_manager.launch(steam)
+	return await _follow(item, verb, appid, pid, base, true)
+
+
+## steam-install-app --quiet on a worker thread: 0 once Steam has queued the download with nothing of
+## its shown, 3 when Steam has to ask (left to its UI), else not done.
+func _quiet_install(appid: int) -> int:
+	if not FileAccess.file_exists(INSTALL_APP):
+		return 1
+	var out := []
+	var task := WorkerThreadPool.add_task(func() -> void:
+		out.append(OS.execute(INSTALL_APP, ["--quiet", str(appid)])))
+	while not WorkerThreadPool.is_task_completed(task):
+		await get_tree().process_frame
+	WorkerThreadPool.wait_for_task_completion(task)
+	return out[0] if out.size() > 0 else 1
+
+
+func _follow(item: LibraryLaunchItem, verb: String, appid: int, pid: int, base: int, launched: bool) -> bool:
 	var root := SteamApps.steam_root()
 	var shown := 0.0
+	var waited := 0.0
 	while true:
 		await get_tree().create_timer(POLL).timeout
 		var state := SteamApps.app_state(root, appid)
@@ -144,11 +173,13 @@ func _through_steam(item: LibraryLaunchItem, verb: String) -> bool:
 				return true
 		elif verb == "uninstall" and state.is_empty():
 			return true
-		if not _steam_in_use():
-			if verb == "install" and not state.is_empty() and SteamApps.client_running():
-				continue
-			logger.info("%s: Steam closed before the %s was done" % [item.name, verb])
-			return false
+		if launched and _steam_in_use():
+			continue
+		waited += POLL
+		if verb == "install" and SteamApps.client_running() and (not state.is_empty() or not launched and waited < MANIFEST_WAIT):
+			continue
+		logger.info("%s: Steam closed before the %s was done" % [item.name, verb])
+		return false
 	return false
 
 

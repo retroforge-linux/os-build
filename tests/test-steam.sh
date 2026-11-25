@@ -1037,6 +1037,32 @@ until_true '[ -e "$W/call1" ]'
 kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
 rm -f "$WLOG" "$W/installapp.rc" "$W/installapp.args"
 
+CASE="steam-install-app --quiet"
+# OGUI's Install in the background: only with Keep Steam running on and the kept client up, the web helper
+# woken (full) for it and minimal again whatever happens. A keep stub records how it is called.
+IAPP="$ROOT/rootfs/overlay/usr/lib/retroforge/steam-install-app"
+QH="$W/quiet"; mkdir -p "$QH/home/.steam" "$QH/proc/4242"
+printf '#!/usr/bin/env bash\necho "$*" >>"%s/keep.args"\n[ "$1" = status ] && cat "%s/keep.state"\nexit 0\n' "$QH" "$QH" >"$QH/keep"
+chmod +x "$QH/keep"
+QENV=(HOME="$QH/home" RETROFORGE_PROC="$QH/proc" RETROFORGE_STEAM_KEEP_CLI="$QH/keep" RETROFORGE_STEAM_DEVTOOLS=http://127.0.0.1:9 RETROFORGE_STEAM_DEVTOOLS_WAIT=0)
+echo off >"$QH/keep.state"; echo 4242 >"$QH/home/.steam/steam.pid"; echo steam >"$QH/proc/4242/comm"; rm -f "$QH/keep.args"
+env "${QENV[@]}" python3 "$IAPP" --quiet 1572920 2>/dev/null; rc=$?
+[ "$rc" = 1 ] && [ "$(cat "$QH/keep.args")" = status ] \
+  && ok "Keep Steam running off: not done (exit 1), Steam's UI not woken" || bad "rc=$rc keep: $(cat "$QH/keep.args" 2>&1)"
+echo on >"$QH/keep.state"; rm -f "$QH/keep.args" "$QH/proc/4242/comm"
+env "${QENV[@]}" python3 "$IAPP" --quiet 1572920 2>/dev/null; rc=$?
+[ "$rc" = 1 ] && [ "$(cat "$QH/keep.args")" = status ] \
+  && ok "no client running (steam.pid names no live steam): not done, nothing woken" || bad "rc=$rc keep: $(cat "$QH/keep.args" 2>&1)"
+echo steam >"$QH/proc/4242/comm"; rm -f "$QH/keep.args"
+env "${QENV[@]}" python3 "$IAPP" --quiet 1572920 2>"$QH/err"; rc=$?
+mapfile -t KA <"$QH/keep.args"
+[ "$rc" = 1 ] && [ "${KA[0]}" = status ] && [[ "${KA[1]}" =~ ^full\ [0-9]+$ ]] && [ "${KA[2]}" = "minimal ${KA[1]#full }" ] \
+  && grep -q "no DevTools page" "$QH/err" \
+  && ok "the client up: Steam's UI woken, held by the helper and minimal again though Steam's UI never answered (exit 1)" \
+  || bad "rc=$rc keep: ${KA[*]} err: $(cat "$QH/err")"
+env "${QENV[@]}" python3 "$IAPP" --quiet 2>/dev/null; rc=$?
+[ "$rc" = 2 ] && ok "no app id: usage (exit 2)" || bad "rc=$rc"
+
 CASE="keep: Steam's UI holds it"
 reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"
 bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETROFORGE_STEAM_MINIMAL_DELAY=0 -- -gamepadui -steamos3

@@ -176,29 +176,35 @@ instead, so signing into Steam Client is enough (`apps/ogui-retroforge-plugin`: 
   focuses the game's window and OGUI's Steam handling (and patches 0017 and 0020) applies.
   `/usr/bin/steam` may then start a game Steam has started here before without the client
   ("Starting games without Steam", below).
-- **Install and Uninstall** (OGUI's own buttons on a game): handed to Steam, `steam
-  -gamepadui -steamos3 -steampal -steamdeck steam://install/<appid>` (or `uninstall`). With Steam
-  kept running (below), `/usr/bin/steam` installs through Steam's own install instead
-  (`/usr/lib/retroforge/steam-install-app`): Big Picture's `InstallApp`, called over the client's
-  DevTools port (127.0.0.1:8080; `.cef-enable-remote-debugging` in the Steam folder, which
-  `/usr/bin/steam` keeps there), and Steam starts the download with no screen when it has nothing to
-  ask. The player is back in OGUI at once. Steam asks with its own screen in Big Picture for a EULA
-  (Dispatch's: the install waits on it, and the player accepts it there), a compatibility warning,
-  several library folders, too little space, a non-default or unmounted folder. Once the player has
-  answered and Steam has queued the download (`Update Queued` for the game in
-  `logs/content_log.txt`), Big Picture closes and the player is back in OGUI, Steam minimal again. Its desktop window counting as active and a LAN peer that is off or not sharing are not
-  asked about. Steam has no command line that installs quietly: `steam://install` always opens its
-  dialog, and steamcmd's `app_update` cannot use the client's sign-in. Uninstall, and Install with
-  Steam not kept running, open Steam's own dialog in Big Picture, started as Emulators > Steam Client
-  > Open starts it. The game's app manifest then gives the download's end (fully installed, nothing
-  still going) and its progress, `BytesDownloaded` of `BytesToDownload`, which Steam writes only when
-  the download starts and ends; in between, the progress is what the client has written since the
-  install began (`write_bytes` of its `/proc/<pid>/io`) of the manifest's `BytesToStage`, held below
-  100% until the manifest says installed. Steam downloads while it
-  runs: once no OGUI launch goes through `steam` any more, the install's card follows the download
-  while the client runs (`~/.steam/steam.pid` names a live `steam`), and ends as failed when the
-  client is gone first; Steam carries on with it at its next start. Steam updates installed games
-  itself.
+- **Install and Uninstall** (OGUI's own buttons on a game). Steam has no command line that installs
+  quietly: `steam://install` always opens its dialog, and steamcmd's `app_update` cannot use the
+  client's sign-in. So an Install calls Big Picture's own `InstallApp` over the client's DevTools
+  port (127.0.0.1:8080; `.cef-enable-remote-debugging` in the Steam folder, which `/usr/bin/steam`
+  keeps there), through `/usr/lib/retroforge/steam-install-app`, with Steam kept running (below):
+  - First in the background, with nothing of Steam's shown (`steam-install-app --quiet`): Steam's
+    web helper is woken for it and frozen again after, and Steam starts the download when it has
+    nothing to ask. The player stays in OGUI.
+  - Steam asks for a EULA still to accept (`SteamClient.Apps.LoadEula`; Dispatch's), several library
+    folders, too little space, a non-default or unmounted folder. Then the background install is
+    cancelled before Steam continues it (without Big Picture, Steam's questions are desktop pop-ups a
+    gamepad cannot drive), and the Install is handed to Steam's UI, `steam -gamepadui -steamos3
+    -steampal -steamdeck steam://install/<appid>`: `/usr/bin/steam` opens Big Picture, makes the same
+    call, Steam asks there, and once the player has answered and Steam has queued the download
+    (`Update Queued` for the game in `logs/content_log.txt`), Big Picture closes and the player is
+    back in OGUI, Steam minimal again.
+  - Not asked: Steam's UI counting its hidden desktop window as active, a LAN peer that has the game
+    but is off or not sharing (a note: the download comes from Steam's servers), and the Steam Deck
+    compatibility warning (the Deck's ratings do not describe this device).
+
+  An Uninstall, and an Install with Steam not kept running, open Steam's own dialog in Big Picture,
+  started as Emulators > Steam Client > Open starts it. The game's app manifest gives the download's
+  end (fully installed, nothing still going) and its progress, `BytesDownloaded` of
+  `BytesToDownload`, which Steam writes only when the download starts and ends; in between, the
+  progress is what the client has written since the install began (`write_bytes` of its
+  `/proc/<pid>/io`) of the manifest's `BytesToStage`, held below 100% until the manifest says
+  installed. Steam downloads while its client runs: the install's card follows the download while
+  the client runs (`~/.steam/steam.pid` names a live `steam`), and ends as failed when the client is
+  gone first; Steam carries on with it at its next start. Steam updates installed games itself.
 - **Art**: what the client cached for its own library, `appcache/librarycache/<appid>/`
   (`library_600x900.jpg` for cards, `header.jpg`, `library_hero.jpg`, `logo.png`), else the same file
   from Valve's CDN (`steamcdn-a.akamaihd.net/steam/apps/<appid>/`, what the Steam plugin fetches),

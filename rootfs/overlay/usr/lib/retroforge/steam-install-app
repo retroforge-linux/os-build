@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# steam-install-app APPID — install a Steam game the way Steam's own Big Picture library does, without the
-# Install screen when Steam needs nothing from the player.
+# steam-install-app [--quiet] APPID — install a Steam game the way Steam's own Big Picture library does,
+# without the Install screen when Steam needs nothing from the player.
 #
 # Steam's client has no command line that installs quietly: steam://install/<appid> opens its Install
 # screen, and app_update is steamcmd's, which cannot use the client's sign-in. Big Picture's library calls
@@ -12,85 +12,154 @@
 # with .cef-enable-remote-debugging), in its SharedJSContext page. The manager is found by its shape (an
 # object with InstallApp and m_unAppIDExpectedInstall among Steam's webpack modules), not by module id,
 # which changes with Steam's updates. The client id "0" is this machine. Without it the wizard never
-# reports in (MANGMI Air X, 2026-11-25).
-# Two of the reasons Steam asks are not questions for a player on the gamepad UI, and are left out of the
-# check for this call only: Steam's UI counts its hidden desktop window as active even with Big Picture
-# open, and a LAN peer that has the game but is off or not sharing is only a note on the screen (the
-# download comes from Steam's servers). Stardew Valley asked for those two alone (one folder, ample space).
+# reports in (MANGMI Air X, 2026-11-25). Only the modules whose source names it are required.
+# Three of the reasons Steam asks are not questions for a player on the gamepad UI, and are left out of
+# the check for this call only: Steam's UI counts its hidden desktop window as active even with Big
+# Picture open, a LAN peer that has the game but is off or not sharing is only a note on the screen (the
+# download comes from Steam's servers), and the Steam Deck compatibility warning rates the Deck, not this
+# device (user's choice, 2026-11-25). Stardew Valley asked for the first two alone (one folder, ample
+# space); Mr. Nibbles Forever, Figment and Guardians of Victoria for the third.
 # Steam's own StartRequestedInstall continues the install (ContinueInstall), and the wizard's next state
 # says what followed: Complete is the download queued; the game's EULAs (Dispatch) are Steam's screen,
 # which Big Picture shows for the player to accept, as Steam's own Install does (never accepted here).
 #
-# The web helper must be awake (not minimal) and Big Picture open: /usr/bin/steam does both first.
-# Exit 0: Steam queued the download by itself. 3: Steam shows its own screen for it (EULA, folder, space).
-# 1: not done (no DevTools port, no manager, or no answer): the caller opens steam://install/<appid>.
-# TEST SEAMS: RETROFORGE_STEAM_DEVTOOLS (http://127.0.0.1:8080), RETROFORGE_STEAM_DEVTOOLS_WAIT (s, 20).
+# Without --quiet the web helper must be awake (not minimal) and Big Picture open: /usr/bin/steam does both
+# first. Exit 0: Steam queued the download by itself. 3: Steam shows its own screen for it (EULA, folder,
+# space). 1: not done (no DevTools port, no manager, or no answer): the caller opens steam://install/<appid>.
+#
+# --quiet: OGUI's Install, before any Steam launch, so that nothing of Steam's shows. With Keep Steam
+# running on and the kept client up, it wakes the client's web helper (retroforge-steam-keep full, held by
+# this process, minimal again at the end; waking shows no window), and installs without Big Picture. Steam
+# shows a question without Big Picture as a desktop pop-up, which a gamepad cannot drive, so here nothing
+# of Steam's is let ask: when Steam would (its checks, or a EULA still to accept), the install is cancelled
+# before Steam continues it and the exit is 3, for the caller to open Steam's UI (/usr/bin/steam, above).
+# Exit 0: Steam queued the download. 1: not done (Keep off, no client, no DevTools).
+# TEST SEAMS: RETROFORGE_STEAM_DEVTOOLS (http://127.0.0.1:8080), RETROFORGE_STEAM_DEVTOOLS_WAIT (s, 20; also
+# how long a just-woken UI may take to have Steam's modules up), RETROFORGE_STEAM_KEEP_CLI
+# (/usr/bin/retroforge-steam-keep), RETROFORGE_PROC (/proc).
 import base64
 import json
 import os
 import socket
 import struct
+import subprocess
 import sys
 import time
 import urllib.request
 
 DEVTOOLS = os.environ.get("RETROFORGE_STEAM_DEVTOOLS", "http://127.0.0.1:8080")
 WAIT = float(os.environ.get("RETROFORGE_STEAM_DEVTOOLS_WAIT", "20"))
+KEEP = os.environ.get("RETROFORGE_STEAM_KEEP_CLI", "/usr/bin/retroforge-steam-keep")
+PROC = os.environ.get("RETROFORGE_PROC", "/proc")
 
 JS = """(async () => {
-  const appid = %d;
+  const appid = %d, quiet = %s;
+  if (!window.webpackChunksteamui) return "nomgr";
   let req;
   window.webpackChunksteamui.push([[Symbol("retroforge-install")], {}, r => { req = r; }]);
-  let mgr = null;
-  const uis = [];
-  for (const id of Object.keys(req.m)) {
-    let ex; try { ex = req(id); } catch (e) { continue; }
-    if (!ex || typeof ex !== "object") continue;
-    for (const k of Object.keys(ex)) {
-      let v; try { v = ex[k]; } catch (e) { continue; }
-      if (!v || typeof v !== "object") continue;
-      if (!mgr && typeof v.InstallApp === "function" && "m_unAppIDExpectedInstall" in v) mgr = v;
-      if (typeof v.IsDesktopUIWindowActive === "function") uis.push([k, v]);
+  if (!req) return "nomgr";
+  // Only the modules whose source names what is looked for are required: requiring every module
+  // starts the ones Steam has not loaded yet, ~12 s in a web helper just woken (MANGMI Air X).
+  const exportsOf = needle => {
+    const found = [];
+    for (const id of Object.keys(req.m)) {
+      let src; try { src = Function.prototype.toString.call(req.m[id]); } catch (e) { continue; }
+      if (!src.includes(needle)) continue;
+      let ex; try { ex = req(id); } catch (e) { continue; }
+      if (!ex || typeof ex !== "object") continue;
+      for (const k of Object.keys(ex)) {
+        let v; try { v = ex[k]; } catch (e) { continue; }
+        if (v && typeof v === "object") found.push([k, v]);
+      }
     }
-  }
-  if (!mgr) return "nomgr";
+    return found;
+  };
+  const m = exportsOf("m_unAppIDExpectedInstall").find(([, v]) => typeof v.InstallApp === "function" && "m_unAppIDExpectedInstall" in v);
+  if (!m) return "nomgr";
+  const mgr = m[1];
   const name = /\\w+\\.(\\w+)\\.IsDesktopUIWindowActive\\(\\)/.exec(String(mgr.BShowDiskSettingsForInstall));
-  const ui = name && (uis.find(([k]) => k === name[1]) || [])[1];
-  const own = k => Object.getOwnPropertyDescriptor(mgr, k);
-  const saved = [["BShowDiskSettingsForInstall", own("BShowDiskSettingsForInstall")], ["StartRequestedInstall", own("StartRequestedInstall")]];
+  const ui = name && (exportsOf("IsDesktopUIWindowActive").find(([k, v]) => k === name[1] && typeof v.IsDesktopUIWindowActive === "function") || [])[1];
+  const keys = ["BShowDiskSettingsForInstall", "BShowDeckCompatForInstall", "StartRequestedInstall"];
+  const saved = keys.map(k => [k, Object.getOwnPropertyDescriptor(mgr, k)]);
   const disk = mgr.BShowDiskSettingsForInstall, start = mgr.StartRequestedInstall;
-  let started = null;
+  const cancel = async () => { try { await SteamClient.Installs.CancelInstall(); } catch (e) {} mgr.ResetInstallState(); };
+  // Quiet (no Big Picture): Steam's questions are only noted, so that Steam shows no screen of its own (a
+  // desktop pop-up, without Big Picture); if it would ask, or the game has a EULA still to accept
+  // (SteamClient.Apps.LoadEula: the EULAs Steam would show, rejected when there are none), the install
+  // is cancelled before Steam's continue, and Steam's UI asks instead (exit 3).
+  let started = null, asks = false;
   mgr.BShowDiskSettingsForInstall = function (N) {
     const d = ui && Object.getOwnPropertyDescriptor(ui, "IsDesktopUIWindowActive");
     if (ui) ui.IsDesktopUIWindowActive = () => false;
-    try { return disk.call(this, new Proxy(N, { get: (t, k) => (k === "strPeerContentServer" ? "" : t[k]) })); }
+    let r;
+    try { r = disk.call(this, new Proxy(N, { get: (t, k) => (k === "strPeerContentServer" ? "" : t[k]) })); }
     finally { if (ui) { if (d) Object.defineProperty(ui, "IsDesktopUIWindowActive", d); else delete ui.IsDesktopUIWindowActive; } }
+    if (!quiet) return r;
+    asks = asks || !!r;
+    return false;
   };
-  mgr.StartRequestedInstall = function () { started = start.apply(this, arguments); return started; };
+  // Steam's Steam Deck compatibility warning is not asked (user's choice, 2026-11-25): the Deck's ratings
+  // do not describe this device either way.
+  mgr.BShowDeckCompatForInstall = function () { return false; };
+  mgr.StartRequestedInstall = function () {
+    if (!quiet) { started = start.apply(this, arguments); return started; }
+    started = (async () => {
+      let eulas = [];
+      if (!asks) {
+        try { eulas = await Promise.race([SteamClient.Apps.LoadEula(appid), new Promise(r => setTimeout(() => r([]), 5000))]); }
+        catch (e) { eulas = []; }
+      }
+      if (asks || (Array.isArray(eulas) && eulas.length)) { asks = true; await cancel(); return; }
+      return start.apply(this, arguments);
+    })();
+    return started;
+  };
   const before = mgr.m_InstallManager;
+  // A web helper just woken has Steam's modules up a moment before its wizard listens (MANGMI Air X:
+  // the wizard answered from 2.4 s after the wake, not at 1 s): no wizard event at all in 5 s is that,
+  // and the caller tries again (quiet).
+  let events = 0, reg = null;
+  try { reg = SteamClient.Installs.RegisterForShowInstallWizard(() => { events++; }); } catch (e) {}
   try {
     mgr.ResetInstallState();
     mgr.InstallApp(appid, "0");
-    for (let i = 0; i < 60 && !started; i++) await new Promise(r => setTimeout(r, 250));
+    for (let i = 0; i < 60 && !started; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      if (quiet && reg && i >= 19 && !events) break;
+    }
   } finally {
     for (const [k, d] of saved) { if (d) Object.defineProperty(mgr, k, d); else delete mgr[k]; }
+    try { if (reg) reg.unregister(); } catch (e) {}
   }
   if (started) {
     // Steam's continue moves the wizard on: Complete (14), or None (0) after it, is the download queued;
     // a screen state is Steam asking (8: the game's EULAs, shown in Big Picture); Failed/Canceled not done.
     try { await Promise.race([started, new Promise(r => setTimeout(r, 10000))]); } catch (e) { return "none"; }
+    if (asks) return "screen";
     for (let i = 0; i < 60; i++) {
       let st; try { st = (await SteamClient.Installs.GetInstallManagerInfo()).eInstallState; } catch (e) { st = -1; }
       if (st === 14 || st === 0) return "silent";
-      if ([4, 6, 8, 11, 12, 13].includes(st)) return "screen";
+      if ([4, 6, 8, 11, 12, 13].includes(st)) { if (quiet) await cancel(); return "screen"; }
       if (st === 15 || st === 16) return "none";
       await new Promise(r => setTimeout(r, 250));
     }
+    if (quiet) await cancel();
     return "screen";
   }
-  if (mgr.m_InstallManager && mgr.m_InstallManager !== before) return "screen";
-  mgr.ResetInstallState();
+  if (mgr.m_InstallManager && mgr.m_InstallManager !== before) { if (quiet) await cancel(); return "screen"; }
+  if (quiet) await cancel(); else mgr.ResetInstallState();
   return "none";
+})()"""
+
+
+# The number of Steam's webpack modules loaded, 0 before any: a web helper just woken loads them for ~2.5 s
+# after its page is up (544, 2730, 2745: MANGMI Air X), and the install call made meanwhile stalled ~16 s
+# and missed Steam's wizard; made once the count holds, it answered in 0.4 s.
+READY = """(() => {
+  if (!window.webpackChunksteamui) return 0;
+  let req;
+  window.webpackChunksteamui.push([[Symbol("retroforge-ready")], {}, r => { req = r; }]);
+  return req ? Object.keys(req.m).length : 0;
 })()"""
 
 
@@ -168,27 +237,81 @@ def evaluate(url, expr):
                 return m.get("result", {}).get("result", {}).get("value")
 
 
-def main():
-    if len(sys.argv) != 2 or not sys.argv[1].isdigit():
-        log("usage: steam-install-app APPID")
-        return 2
-    appid = int(sys.argv[1])
+def client_running():
+    """~/.steam/steam.pid names a live process called steam (retroforge-steam-keep's test too)."""
+    try:
+        with open(os.path.join(os.environ.get("HOME", ""), ".steam", "steam.pid")) as f:
+            pid = f.read().strip()
+        with open(f"{PROC}/{pid}/comm") as f:
+            return pid.isdigit() and f.read().strip() == "steam"
+    except OSError:
+        return False
+
+
+def keep(*args):
+    """retroforge-steam-keep's output (status: on or off), "" when it cannot run."""
+    try:
+        return subprocess.run([KEEP, *args], capture_output=True, text=True, timeout=60).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def install(appid, quiet):
     url = page_url()
     if not url:
         log(f"app {appid}: no DevTools page from Steam's UI at {DEVTOOLS}")
         return 1
-    try:
-        res = evaluate(url, JS % appid)
-    except (OSError, ValueError) as err:
-        log(f"app {appid}: DevTools: {err}")
-        return 1
+    # A web helper just woken serves its page before Steam's modules are up: the call waits for their
+    # count to hold (READY), and is tried again while Steam's manager is not there yet ("nomgr"), or its
+    # install wizard does not listen yet ("none", quiet), until WAIT s have passed.
+    deadline = time.monotonic() + WAIT
+    last = -1
+    while time.monotonic() < deadline:
+        try:
+            n = evaluate(url, READY)
+        except (OSError, ValueError):
+            n = 0
+        if isinstance(n, int) and n > 0 and n == last:
+            break
+        last = n
+        time.sleep(0.5)
+    while True:
+        try:
+            res = evaluate(url, JS % (appid, "true" if quiet else "false"))
+        except (OSError, ValueError) as err:
+            log(f"app {appid}: DevTools: {err}")
+            return 1
+        if res not in ("nomgr", "none") or res == "none" and not quiet or time.monotonic() >= deadline:
+            break
+        time.sleep(1)
     if res == "silent":
         return 0
     if res == "screen":
-        log(f"app {appid}: Steam shows its own screen for this install")
+        log(f"app {appid}: Steam {'needs to ask (a EULA, the folder): left to its UI' if quiet else 'shows its own screen for this install'}")
         return 3
     log(f"app {appid}: Steam's install manager {'was not found' if res == 'nomgr' else 'did not answer'}")
     return 1
+
+
+def main():
+    args = sys.argv[1:]
+    quiet = args[:1] == ["--quiet"]
+    if quiet:
+        args = args[1:]
+    if len(args) != 1 or not args[0].isdigit():
+        log("usage: steam-install-app [--quiet] APPID")
+        return 2
+    appid = int(args[0])
+    if not quiet:
+        return install(appid, False)
+    if keep("status") != "on" or not client_running():
+        log(f"app {appid}: no kept Steam client runs: not installed in the background")
+        return 1
+    keep("full", str(os.getpid()))   # wakes the frozen web helper, held while this runs
+    try:
+        return install(appid, True)
+    finally:
+        keep("minimal", str(os.getpid()))
 
 
 if __name__ == "__main__":
