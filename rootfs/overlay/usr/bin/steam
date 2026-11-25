@@ -352,8 +352,8 @@ fex_server() {  # fex_server ARG...
   done
   case "$id" in ''|*[!0-9]*) return 0 ;; esac
   data="$RETROFORGE_STEAM_ROOT/steamapps/compatdata/$id"
-  # An x86 game's graphics driver (Game settings: the device's own GL and Vulkan, through FEX's
-  # thunks, by default) and its FEX TSO; a Proton game's FEX TSO only when the client starts it (a
+  # An x86 game's graphics driver (Game settings: x86 Mesa in FEX's guest by default, the device's own
+  # GL and Vulkan through FEX's thunks when chosen) and its FEX TSO; a Proton game's FEX TSO only when the client starts it (a
   # launch without it gets its own, and Python's start is ~0.2 s)
   if [ ! -d "$data/pfx" ] || [ -z "$direct" ]; then
     [ -x "$direct_cli" ] && "$direct_cli" fex "$id"

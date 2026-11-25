@@ -56,7 +56,7 @@ const STEAM_DIRECT := "/usr/bin/retroforge-steam-direct"
 const TSO_CHOICES := ["default", "on", "off"]
 const TSO_ABOUT := "How closely FEX keeps x86 memory ordering between a game's threads. Off is faster on this CPU; some games then crash or glitch. Default: Valve's tested setting for the game, else On."
 const DRIVER_CHOICES := ["default", "native", "x86"]
-const DRIVER_ABOUT := "An x86 game's OpenGL and Vulkan driver. Native: the device's own, which FEX hands the game's calls to (less CPU, faster loading; a 32-bit game's Vulkan stays on x86). x86 Mesa: our x86 driver, emulated with the game, for a game that misdraws on Native. Default: Native."
+const DRIVER_ABOUT := "An x86 game's OpenGL and Vulkan driver. x86 Mesa: our x86 driver, emulated with the game. Native: the device's own, which FEX hands the game's calls to (less CPU, faster loading; a 32-bit game's Vulkan stays on x86), but some games crash on it. Default: x86 Mesa."
 const DisplaySettings := preload("display_settings.gd")
 var _steam_app := 0  # the Steam app id of the game being configured, 0 for none
 var _tso: Control  # OGUI Dropdowns: the Steam game's own choices
@@ -266,7 +266,7 @@ func _fill_steam_rows() -> void:
 	for row in [_tso, _launch, _resolution]:
 		row.description = str(row.get_meta("about")) + ("" if data.get("direct", "on") == "on" else DIRECT_OFF)
 	_driver.clear()
-	for text in ["Default (Native)", "Native", "x86 Mesa"]:
+	for text in ["Default (x86 Mesa)", "Native", "x86 Mesa"]:
 		_driver.add_item(text)
 	_driver.select(maxi(DRIVER_CHOICES.find(settings.get("driver", "default")), 0))
 	_tso.visible = true

@@ -457,7 +457,10 @@ def save_game_setting(appid, key, value):
 # (appinfo common/steam_frame_compatibility/configuration/tso_enable), as Valve's client sets it on the
 # Steam Frame; neither, and FEX's own default (on) stays. An x86 game never starts without the client,
 # so this file is the only way a TSO choice reaches it.
-# Native is the default; x86 removes our files. A file without our "RetroForge" key is the player's own
+# x86 Mesa is the default, Native the player's choice: FEX's thunks hand some games' callbacks to the
+# host's driver as x86 code (a debug callback through Vulkan's instance creation or GL's proc-address
+# path: Parking Garage Rally Circuit, verbose Godot, SIGILL on both, Air X, 2026-11-25), so a game gets
+# them only when asked. x86 removes our files. A file without our "RetroForge" key is the player's own
 # and stays. Proton games (a pfx in their compat data) and games with no x86 program are left alone.
 # TEST SEAMS: RETROFORGE_STEAM_FEX_DEPTH (how deep the game's folder is searched, 3);
 # RETROFORGE_VULKAN_ICD (the device's Turnip manifest; none there: GL only).
@@ -632,7 +635,7 @@ def fex_driver(appid):
     if not game:
         return
     folder, programs = game
-    native = game_settings(appid)["driver"] in ("default", "native")
+    native = game_settings(appid)["driver"] == "native"
     icd = host_vulkan_icd() if native else None
     icd_path = os.path.join(folder, ICD_NAME)
     tso = fex_tso(appid)

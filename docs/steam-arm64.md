@@ -796,9 +796,19 @@ writes two kinds of file into the game's FEX folder (`<library>/steamapps/compat
 Each file carries a `RetroForge` key; one without it is the player's own and stays as it is. That
 covers a game's first launch too: an installed game with an x86 program and no Proton prefix in its
 compat data is an x86 game. Game settings > RetroForge > "Graphics driver" (shown for x86 games
-only) offers Default (Native), Native and x86 Mesa; x86 Mesa removes our files, from the next launch.
-It is the `driver` key in `steam-games.json` (`retroforge-steam-direct game APPID set driver
-native|x86|default`).
+only) offers Default (x86 Mesa), Native and x86 Mesa; only Native writes these files, and the others
+remove ours, from the next launch. It is the `driver` key in `steam-games.json`
+(`retroforge-steam-direct game APPID set driver native|x86|default`).
+
+The default is x86 Mesa since 2026-11-25 (it was Native from 2026-11-23). FEX's thunks pass some of a
+game's own callbacks to the host's driver as they are, as x86 code the host then jumps into: a debug
+messenger chained into Vulkan's instance creation (FEX's host `vkCreateInstance` swaps out only the older
+debug-report callbacks), and GL functions the game fetches through `glXGetProcAddress`, which FEX's
+generic host-pointer wrapper calls with every argument as it came, past the callback stubs its direct
+thunks use. Parking Garage Rally Circuit (Godot 4.5, verbose output, so it sets both) died of SIGILL on
+the Vulkan thunk and on the GL thunk (`--rendering-driver opengl3`), the core's pc in the game and its
+return address in the host's `libvulkan.so.1` or `libgallium`; on x86 Mesa it ran (Air X). The fix is
+FEX's, in its thunk libraries.
 
 Megabonk on the Air X, with and without in turn (2026-11-23): the game maps `libGL-host.so` and the
 host's `libgallium-26.3.1-retroforge` (`/run/host/usr/lib`, no x86 Mesa), Unity reports `FD610`, `Mesa 26.3.1-retroforge1.1.1`, GL 4.6, and the
@@ -830,15 +840,16 @@ again, as the shell's report, and the client the session starts at boot gets the
 (`/usr/bin/steam` and `store` had dropped them from 2026-11-23); Proton's DXVK sees the same 512 MiB
 heap. `retroforge-launch` still drops them for emulators, which get their own report.
 
-So Vulkan now goes through the thunk too, by default (2026-11-24), for 64-bit programs (Valve's tool
+With Native, Vulkan goes through the thunk too (since 2026-11-24), for 64-bit programs (Valve's tool
 has no 32-bit Vulkan guest library): `retroforge-steam-direct fex` adds the Vulkan entry to the
 game's `ThunksDB.json`, writes `retroforge-vulkan-icd.json` (the host's Turnip manifest with the
 library under `/run/host`) beside it, and each program's app config names it (`HostEnv
 VK_DRIVER_FILES`) and empties `VK_INSTANCE_LAYERS` on the host side (`AppOverrides "*"`, one
 `HostEnv` per block). Megabonk on Vulkan, Air X: its menu 108-111% of a core against 116-118% on x86
 Turnip, a run 207-233% against 237-244%, 19-20 frames a second against 18; it also gets the gamescope
-WSI layer, which x86 Turnip does not load. Game settings > Graphics driver > x86 Mesa puts GL and
-Vulkan back on the guest's driver; the same app config carries the game's FEX TSO either way.
+WSI layer, which x86 Turnip does not load. Game settings > Graphics driver > Native turns these
+thunks on for a game; the default, x86 Mesa, keeps GL and Vulkan on the guest's driver (above). The
+same app config carries the game's FEX TSO either way.
 
 ## Proton-CachyOS arm64, and DXVK-Sarek for the Adreno 610/613 (downloaded, not shipped)
 

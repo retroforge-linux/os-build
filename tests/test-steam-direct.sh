@@ -416,10 +416,19 @@ cfg() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(js
 jget() { python3 -c 'import json, sys; d = json.load(open(sys.argv[1]))
 for k in sys.argv[2:]: d = d.get(k, {}) if isinstance(d, dict) else {}
 print(d if d != {} else "")' "$@" 2>&1; }
-[ "$RC" = 0 ] && [ "$(cfg Megabonk.x86_64)" = '{"GL": 1, "Vulkan": 1} ours' ] && [ "$(ls "$FX/AppConfig")" = "$(printf 'Steam_3405340_Megabonk.x86_64.json\nSteam_3405340_tool32.json')" ] \
-  && ok "native by default: FEX's GL and Vulkan thunks on for each x86 program, by app id and program (not its library, not arm64)" || bad "rc=$RC $(ls "$FX/AppConfig") $(cfg Megabonk.x86_64) err=$ERR"
-[ "$(cfg tool32)" = '{"GL": 0} theirs' ] && ok "a file of the player's own is left as it is" || bad "$(cfg tool32)"
 M="$FX/AppConfig/Steam_3405340_Megabonk.x86_64.json"
+# x86 Mesa by default: FEX's thunks hand some games' callbacks to the host's driver as x86 code (Parking
+# Garage Rally Circuit, verbose Godot: SIGILL on both thunks)
+[ "$RC" = 0 ] && [ ! -e "$FX/ThunksDB.json" ] && [ ! -e "$FX/retroforge-vulkan-icd.json" ] && [ "$(cfg Megabonk.x86_64)" = 'null ours' ] \
+  && [ "$(jget "$M" Config TSOEnabled)" = 1 ] && grep -q "through the x86 driver in FEX's guest, FEX TSO on" <<<"$ERR" \
+  && ok "x86 Mesa by default: no thunks, only the game's FEX TSO (Valve's hint) in its file" || bad "rc=$RC $(ls "$FX" "$FX/AppConfig") $(cat "$M" 2>&1) err=$ERR"
+direct -- game 3405340
+python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["x86"] is True and d["settings"]["driver"] == "default" and d["tso_hint"] == "1", d' "$OUT" \
+  && ok "game: an x86 game, its driver at its default, Valve's TSO shown" || bad "out=$OUT"
+direct -- game 3405340 set driver native; direct -- fex 3405340
+[ "$RC" = 0 ] && [ "$(cfg Megabonk.x86_64)" = '{"GL": 1, "Vulkan": 1} ours' ] && [ "$(ls "$FX/AppConfig")" = "$(printf 'Steam_3405340_Megabonk.x86_64.json\nSteam_3405340_tool32.json')" ] \
+  && ok "native when chosen: FEX's GL and Vulkan thunks on for each x86 program, by app id and program (not its library, not arm64)" || bad "rc=$RC $(ls "$FX/AppConfig") $(cfg Megabonk.x86_64) err=$ERR"
+[ "$(cfg tool32)" = '{"GL": 0} theirs' ] && ok "a file of the player's own is left as it is" || bad "$(cfg tool32)"
 [ "$(jget "$M" Config HostEnv)" = "VK_DRIVER_FILES=$FX/retroforge-vulkan-icd.json" ] && [ "$(jget "$M" AppOverrides '*' HostEnv)" = "VK_INSTANCE_LAYERS=" ] \
   && [ "$(jget "$FX/retroforge-vulkan-icd.json" ICD library_path)" = /run/host/usr/lib/libvulkan_freedreno.so ] \
   && ok "the host side gets the device's Turnip (its manifest under /run/host) and none of Steam's x86 layers" || bad "$(cat "$M") $(cat "$FX/retroforge-vulkan-icd.json" 2>&1)"
@@ -430,9 +439,6 @@ v = d["DB"]["Vulkan"]; assert v["Library"] == "libvulkan-guest.so"; assert "/usr
 grep -q "app 3405340: GL and Vulkan through the device's own driver" <<<"$ERR" && grep -q "FEX TSO on" <<<"$ERR" && ok "it says so" || bad "err=$ERR"
 direct -- fex 3405340
 [ "$RC" = 0 ] && [ -z "$ERR" ] && ok "again: nothing to change, nothing said" || bad "rc=$RC err=$ERR"
-direct -- game 3405340
-python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["x86"] is True and d["settings"]["driver"] == "default" and d["tso_hint"] == "1", d' "$OUT" \
-  && ok "game: an x86 game, its driver at its default, Valve's TSO shown" || bad "out=$OUT"
 direct -- game 3405340 set tso off; direct -- fex 3405340
 [ "$(jget "$M" Config TSOEnabled)" = 0 ] && ok "the player's TSO choice over Valve's" || bad "$(cat "$M")"
 direct -- game 3405340 set tso default
@@ -441,7 +447,7 @@ direct -- fex 3405340
 [ "$(ls "$FX/AppConfig")" = "$(printf 'Steam_3405340_Megabonk.x86_64.json\nSteam_3405340_tool32.json')" ] && [ ! -e "$FX/ThunksDB.json" ] \
   && [ ! -e "$FX/retroforge-vulkan-icd.json" ] && [ "$(cfg Megabonk.x86_64)" = 'null ours' ] && [ "$(jget "$M" Config TSOEnabled)" = 1 ] \
   && grep -q "through the x86 driver in FEX's guest, FEX TSO on" <<<"$ERR" \
-  && ok "x86: no thunks, the TSO setting stays (an x86 game has no other way to get it), the player's file kept" || bad "$(ls "$FX" "$FX/AppConfig") $(cat "$M" 2>&1) err=$ERR"
+  && ok "x86 again: our thunk files go, the TSO setting stays (an x86 game has no other way to get it), the player's file kept" || bad "$(ls "$FX" "$FX/AppConfig") $(cat "$M" 2>&1) err=$ERR"
 direct -- game 3405340 set driver vulkan
 [ "$RC" = 2 ] && ok "set: a driver that is not a choice is refused" || bad "rc=$RC"
 rm "$FX/AppConfig/Steam_3405340_tool32.json"; direct -- game 3405340 set driver native; direct -- fex 3405340
