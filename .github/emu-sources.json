@@ -9,6 +9,7 @@
   "ppsspp": {"repo": "hrydgard/ppsspp", "tag": "(v[0-9.]+)", "ref": "{0}"},
   "retroarch": {"repo": "libretro/RetroArch", "tag": "([^@-]+)(?:-[0-9]+)?@.*", "ref": "v{0}", "ignore": {
     "input_l2_axis": "autoconfig key built at run time: \"input\" + bind name \"l2\" (DECLARE_BIND table) + \"_axis\" (configuration.c save_keybind_axis)",
-    "input_r2_axis": "autoconfig key built at run time: \"input\" + bind name \"r2\" (DECLARE_BIND table) + \"_axis\" (configuration.c save_keybind_axis)"}},
+    "input_r2_axis": "autoconfig key built at run time: \"input\" + bind name \"r2\" (DECLARE_BIND table) + \"_axis\" (configuration.c save_keybind_axis)",
+    "armn64_resolution": "armN64's own core option (its libretro/libretro.c option table), written to the core's .opt: RetroArch's source holds no core's keys"}},
   "rpcs3": {"repo": "RPCS3/rpcs3", "tag": "build-([0-9a-f]{40})", "ref": "{0}"}
 }

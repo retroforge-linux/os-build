@@ -4,6 +4,11 @@
       "path": ".config/retroarch/retroarch.cfg",
       "format": "ini",
       "separator": " = "
+    },
+    "armn64": {
+      "path": ".config/retroarch/config/armN64/armN64.opt",
+      "format": "ini",
+      "separator": " = "
     }
   },
   "options": [
@@ -163,6 +168,76 @@
       ]
     },
     {
+      "id": "n64_resolution",
+      "label": "N64 internal resolution",
+      "description": "Draws N64 games at a higher resolution for a sharper image. Higher settings cost speed. Automatic picks the step that fits the screen.",
+      "systems": [
+        "n64"
+      ],
+      "choices": [
+        {
+          "value": "auto",
+          "label": "Automatic (fit the screen)",
+          "set": [
+            {
+              "file": "armn64",
+              "section": "",
+              "key": "armn64_resolution",
+              "value": "\"auto\""
+            }
+          ]
+        },
+        {
+          "value": "1x",
+          "label": "Native",
+          "set": [
+            {
+              "file": "armn64",
+              "section": "",
+              "key": "armn64_resolution",
+              "value": "\"1\""
+            }
+          ]
+        },
+        {
+          "value": "2x",
+          "label": "2x (480p)",
+          "set": [
+            {
+              "file": "armn64",
+              "section": "",
+              "key": "armn64_resolution",
+              "value": "\"2\""
+            }
+          ]
+        },
+        {
+          "value": "3x",
+          "label": "3x (720p)",
+          "set": [
+            {
+              "file": "armn64",
+              "section": "",
+              "key": "armn64_resolution",
+              "value": "\"3\""
+            }
+          ]
+        },
+        {
+          "value": "4x",
+          "label": "4x (960p)",
+          "set": [
+            {
+              "file": "armn64",
+              "section": "",
+              "key": "armn64_resolution",
+              "value": "\"4\""
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": "picture_window",
       "label": "Picture-sized window",
       "description": "Draws the game at its own size and lets the display scale it up, which is lighter on the GPU. Breaks shaders: turn it off to use them.",
@@ -204,6 +279,7 @@
   "notes": [
     "retroarch.cfg is RetroArch's own settings file: `key = \"value\"` lines, no sections (section \"\"), every value quoted; RetroArch rewrites it whole on exit (config_save_on_exit), keeping these keys. Keys and values from RetroArch 1.22.2 configuration.c and gfx/video_defines.h.",
     "aspect_ratio_index is enum aspect_ratio: 22 ASPECT_RATIO_CORE (the core's own shape), 24 ASPECT_RATIO_FULL (the whole screen). video_scale_integer, video_smooth (bilinear), video_vsync and fps_show are booleans.",
-    "Left out: renderer (Vulkan; N64 alone runs on RetroArch's GL driver through the seeded per-core override armN64.cfg), resolution and widescreen_hack (core options, not RetroArch settings: N64 rendering size is armN64's own, later if needed), shaders (RetroArch's own Quick Menu > Shaders; the presets come with RetroArch, catalog \"folders\"). Core options (armGBA's BIOS choice, Genesis Plus GX's region, armN64's renderer and resolution) stay in RetroArch's Quick Menu > Core Options."
+    "Left out: renderer (Vulkan; N64 alone runs on RetroArch's GL driver through the seeded per-core override armN64.cfg), widescreen_hack (a core option, not a RetroArch setting), shaders (RetroArch's own Quick Menu > Shaders; the presets come with RetroArch, catalog \"folders\"). Core options (armGBA's BIOS choice, Genesis Plus GX's region, armN64's renderer) stay in RetroArch's Quick Menu > Core Options.",
+    "n64_resolution is armN64's own core option armn64_resolution (auto, 1-8; armN64 1.3 libretro/libretro.c), N64 games only (\"systems\"). RetroArch 1.22.2 reads a core's options from config/<library_name>/<library_name>.opt (global_core_options false by default; runloop_init_core_options_path), so armN64's are .config/retroarch/config/armN64/armN64.opt, beside the seeded armN64.cfg; a game's own .opt saved from the Quick Menu (config/armN64/<rom>.opt) still wins over it. Lines RetroArch's own: `key = \"value\"`. The window follows the picture (window_size retroarch-log), so a 2x picture gets a 2x window."
   ]
 }

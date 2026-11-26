@@ -479,6 +479,20 @@ func _init() -> void:
 	LaunchArgs.set_game_cpus("psx", rom, "")
 	check("game fast cores: back to the emulator default", LaunchArgs.game_cpus("psx", rom), "")
 	check("game fast cores: an unknown value saves the default", LaunchArgs.set_game_cpus("psx", rom, "fast") and LaunchArgs.game_cpus("psx", rom) == "", true)
+	check("game screen size: saved as SCREEN=WxH beside CPUS",
+		[LaunchArgs.set_game_cpus("psx", rom, "big"), LaunchArgs.set_game_value("psx", rom, LaunchArgs.SCREEN_KEY, "960x540"),
+			LaunchArgs.game_value("psx", rom, "SCREEN"), FileAccess.get_file_as_string(LaunchArgs.game_conf_path("psx", rom))],
+		[true, true, "960x540", "CPUS=big\nSCREEN=960x540\n"])
+	LaunchArgs.set_game_value("psx", rom, LaunchArgs.FPS_KEY, "30")
+	check("game frame rate limit: FPS_LIMIT=30", LaunchArgs.game_value("psx", rom, "FPS_LIMIT"), "30")
+	LaunchArgs.set_game_value("psx", rom, LaunchArgs.SCREEN_KEY, "")
+	LaunchArgs.set_game_value("psx", rom, LaunchArgs.FPS_KEY, "")
+	LaunchArgs.set_game_cpus("psx", rom, "")
+	check("game screen size and limit: Default removes the lines, and the empty conf",
+		[LaunchArgs.game_value("psx", rom, "SCREEN"), FileAccess.file_exists(LaunchArgs.game_conf_path("psx", rom))], ["", false])
+	check("frame rate limits: the even divisors from 20 fps up",
+		[LaunchArgs.fps_choices(60), LaunchArgs.fps_choices(120), LaunchArgs.fps_choices(90), LaunchArgs.fps_choices(144), LaunchArgs.fps_choices(30)],
+		[[30, 20], [60, 40, 30, 24, 20], [45, 30], [72, 48, 36, 24], []])
 	test_rom_watch()
 	test_game_dirs()
 	test_credits()
@@ -916,6 +930,18 @@ func test_emu_options() -> void:
 		check("options: refused with " + what, EmuOptions.parse(JSON.stringify({"options": [option]})), [])
 	var one := {"id": "aspect", "label": "A", "choices": [{"value": "a", "label": "x", "set": [{"args": ["-x"]}]}]}
 	check("options: refused with a repeated option id", EmuOptions.parse(JSON.stringify({"options": [one, one]})), [])
+	# An option for some systems (RetroArch's N64 resolution): offered to games of those only.
+	var n64 := one.duplicate(true)
+	n64.merge({"id": "n64_res", "systems": ["n64"]}, true)
+	var some := EmuOptions.parse(JSON.stringify({"options": [one, n64]}))
+	check("systems: carried to the pages", some[1].get("systems"), ["n64"])
+	check("systems: a game of another system does not get it, one of those does",
+		[EmuOptions.for_system(some, "snes").map(func(o): return o["id"]), EmuOptions.for_system(some, "n64").map(func(o): return o["id"])],
+		[["aspect"], ["aspect", "n64_res"]])
+	for wrong in ["n64", [], ["../n64"], [3]]:
+		var bad := n64.duplicate(true)
+		bad["systems"] = wrong
+		check("systems: refused when %s" % str(wrong), EmuOptions.parse(JSON.stringify({"options": [bad]})), [])
 	write(OS.get_environment("XDG_CONFIG_HOME") + "/../data/fakeemu/options.json", json)
 	check("options: read from <data dir>/<emulator>/options.json",
 		EmuOptions.options_for("fakeemu", OS.get_environment("XDG_CONFIG_HOME") + "/../data").size(), 1)

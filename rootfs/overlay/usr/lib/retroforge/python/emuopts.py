@@ -16,6 +16,7 @@
 #                       "separator": " = "}},           how an added line is written (ini/toml; default "=")
 #    "options": [{"id": "aspect", "label": "Aspect ratio", "description": "...",
 #                 "default": "16:9",                      optional, below
+#                 "systems": ["n64"],                     optional, below
 #                 "choices": [{"value": "16:9", "label": "16:9", "set": [ACTION, ...]}, ...]}],
 #    "notes": ["..."]}
 #
@@ -25,7 +26,8 @@
 #          | {"window_size": false}                                 the definition's window_size on or off
 #
 # "default" names the choice the emulator level has when none is saved: such an option never leaves the
-# emulator's own setting alone. "window_size" is for the launcher (window_size below): false runs the
+# emulator's own setting alone. "systems" limits an option to games of those systems (an emulator that runs
+# several, RetroArch's N64 resolution): a run of another system leaves it out at both levels, Open keeps it. "window_size" is for the launcher (window_size below): false runs the
 # emulator without the picture-sized window or display its definition asks for, which breaks shaders.
 #
 # A file action names the setting by section and key: an INI/TOML [section] ("" = before the first
@@ -173,8 +175,8 @@ def _check_choice(choice, files, seen, where):
 
 
 def _check_option(option, files, path):
-    if not (isinstance(option, dict) and set(option) <= {"id", "label", "description", "default", "choices"}):
-        raise OptionsError(f"{path}: an option is {{id, label, description, default, choices}}")
+    if not (isinstance(option, dict) and set(option) <= {"id", "label", "description", "default", "systems", "choices"}):
+        raise OptionsError(f"{path}: an option is {{id, label, description, default, systems, choices}}")
     oid = option.get("id")
     if not (isinstance(oid, str) and OPTION_ID.fullmatch(oid)):
         raise OptionsError(f"{path}: option id {oid!r} must be lowercase letters, digits and _")
@@ -195,6 +197,9 @@ def _check_option(option, files, path):
         raise OptionsError(f"{where}: every choice must set window_size, or none")
     if "default" in option and not (_str(option["default"]) and option["default"] in seen):
         raise OptionsError(f"{where}: default {option['default']!r} is not one of its choices")
+    systems = option.get("systems", ["s"])
+    if not (isinstance(systems, list) and systems and all(_str(s) and re.fullmatch(r"[a-z0-9_]+", s) for s in systems)):
+        raise OptionsError(f"{where}: systems must be a non-empty list of system ids")
 
 
 def load_options(data_dir, emulator):
@@ -527,6 +532,13 @@ def patch_file(path, fmt, edits, separator="="):
 
 # ------------------------------------------------------------------------------------ applying --
 
+def for_system(options, system):
+    """options without the ones whose "systems" leave out `system` (None, Open: all of them)."""
+    if system is None:
+        return options
+    return {**options, "options": [o for o in options["options"] if system in o.get("systems", [system])]}
+
+
 def resolve(options, emulator_conf, game_conf):
     """[(emulator choice or None, game choice or None)] per option chosen at some level (valid values
     only); an option with a default always has an emulator choice."""
@@ -644,7 +656,8 @@ def apply(options, home, state_dir, emulator, emulator_conf, game_conf, warn, sy
     """Write the chosen values; -> (args, env) for the emulator. Emulator-level values first (kept),
     then game-level ones, journalled before they are written. A file that cannot be patched is a
     warning: the game still starts. `systems`: the emulator's systems, `system`: the run's (None for
-    Open), for "{system}" paths."""
+    Open), for "{system}" paths and options limited to some systems."""
+    options = for_system(options, system)
     for level, conf in (("game", game_conf), ("emulator", emulator_conf)):
         for oid, value in unknown_values(options, conf):
             warn(f"{level} setting {oid}={value} is not one of {emulator}'s choices: ignored")

@@ -22,9 +22,15 @@ const UNSET_GAME := "Emulator default"
 
 
 ## The options of an emulator, in options.json's order: [{id, label, description, choices: [{value,
-## label}]}], and "default" for an option that has one. [] when it has none or the file is not what retroforge-launch reads.
+## label}]}], and "default" and "systems" for an option that has one. [] when it has none or the file is not what retroforge-launch reads.
 static func options_for(emulator: String, data_dir: String = DATA_DIR) -> Array:
 	return parse(LaunchArgs.read_text(data_dir.path_join(emulator).path_join("options.json")))
+
+
+## The options a game of `system` has: an option with "systems" only for those (RetroArch's N64
+## resolution), as retroforge-launch applies them.
+static func for_system(options: Array, system: String) -> Array:
+	return options.filter(func(o: Dictionary) -> bool: return system in o.get("systems", [system]))
 
 
 ## options.json text -> the options the pages show; [] on anything unexpected (the launcher would
@@ -75,6 +81,13 @@ static func _option(option) -> Dictionary:
 		if not (option["default"] is String and seen.has(option["default"])):
 			return {}
 		out["default"] = option["default"]
+	if option.has("systems"):
+		if not (option["systems"] is Array and not option["systems"].is_empty()):
+			return {}
+		for s in option["systems"]:
+			if not (s is String and _matches("^[a-z0-9_]+$", s)):
+				return {}
+		out["systems"] = option["systems"].duplicate()
 	return out
 
 

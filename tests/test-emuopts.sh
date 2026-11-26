@@ -280,6 +280,12 @@ PER_SYSTEM["files"]["main"]["path"] = ".config/fake/{system}/settings.ini"
 check("a '{system}' settings folder loads", load(PER_SYSTEM)["files"]["main"]["path"], ".config/fake/{system}/settings.ini")
 refused("another placeholder in a path", lambda d: d["files"]["main"].update(path=".config/{rom}/settings.ini"))
 refused("'{system}' then '..'", lambda d: d["files"]["main"].update(path=".config/{system}/../../x.ini"))
+SOME = json.loads(json.dumps(GOOD))
+SOME["options"][0]["systems"] = ["n64"]
+check("an option for some systems loads", load(SOME)["options"][0]["systems"], ["n64"])
+refused("systems that are not a list", lambda d: d["options"][0].update(systems="n64"))
+refused("systems empty", lambda d: d["options"][0].update(systems=[]))
+refused("a system that is not an id", lambda d: d["options"][0].update(systems=["../n64"]))
 for emu in sorted(os.listdir(DATA)):
     if os.path.exists(os.path.join(DATA, emu, "options.json")):
         try:
@@ -358,8 +364,10 @@ for emu in sorted(os.listdir(DATA)):
     # A "{system}" file is the run's system's: the game level is applied for the first one.
     systems = sorted(s for s, e in LAUNCH.items() if e == emu)
     system = systems[0] if systems else None
-    paths = {n: eo.expand_path(f["path"], [system] if system else []) for n, f in opts["files"].items()}
     for option in opts["options"]:
+        # An option for some systems is applied in a game of the first of them.
+        osys = option["systems"][0] if "systems" in option else system
+        paths = {n: eo.expand_path(f["path"], [osys] if osys else []) for n, f in opts["files"].items()}
         for choice in option["choices"]:
             for name, fdef in opts["files"].items():
                 for path in eo.expand_path(fdef["path"], systems):
@@ -368,7 +376,7 @@ for emu in sorted(os.listdir(DATA)):
             originals = {p: read(os.path.join(home, p)) for n in paths for p in paths[n]}
             got = []
             eo.apply(opts, home, f"{home}/state", emu, {}, {option["id"]: choice["value"]}, got.append,
-                     systems=systems, system=system)
+                     systems=systems, system=osys)
             where = f"{emu} {option['id']}={choice['value']}"
             ok = not got and all(paths.values())
             for a in (a for a in choice["set"] if "file" in a):
@@ -533,6 +541,23 @@ check("no system known at all: nothing written, no journal", ([read(p) for p in 
       (before, False))
 check("a system that is not an id never becomes a path", eo.expand_path("a/{system}/b", ["md", "../x", "a/b"]), ["a/md/b"])
 check("a path without '{system}' is itself", eo.expand_path("a/b", ["md"]), ["a/b"])
+
+# ================================================================================================
+CASE = "an option for some systems"
+# RetroArch's N64 resolution: armN64's file, N64 games only; Open (no system) keeps it.
+SO = load(SOME)
+write(SETTINGS, BASE)
+eo.apply(SO, HOME, STATE, "x", {"aspect": "4:3"}, {"aspect": "16:9"}, warn, systems=["n64", "snes"], system="snes")
+check("another system's game: neither level written, no journal",
+      (read(SETTINGS), os.path.exists(JOURNAL)), (BASE, False))
+eo.apply(SO, HOME, STATE, "x", {"aspect": "4:3"}, {"aspect": "16:9"}, warn, systems=["n64", "snes"], system="n64")
+check("its system's game: the game's value for the run", eo.ini_get(read(SETTINGS), "Display", "AspectRatio"), "16:9")
+eo.restore(HOME, STATE, "x", warn)
+check("...and the emulator's after", eo.ini_get(read(SETTINGS), "Display", "AspectRatio"), "4:3")
+eo.apply(SO, HOME, STATE, "x", {"aspect": "16:9"}, {}, warn, systems=["n64", "snes"], system=None)
+check("Open: the emulator level is written", eo.ini_get(read(SETTINGS), "Display", "AspectRatio"), "16:9")
+check("for_system: the option for n64 only", ([o["id"] for o in eo.for_system(SO, "n64")["options"]],
+      eo.for_system(SO, "snes")["options"], len(eo.for_system(SO, None)["options"])), (["aspect"], [], 1))
 check("no warnings", warnings, [])
 
 print(f"\n{PASS} passed, {FAIL} failed")

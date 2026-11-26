@@ -1048,9 +1048,20 @@ int XChangeProperty(void *d, unsigned long w, unsigned long p, unsigned long t, 
     if (g) { fprintf(g, "%lux%lu\n", v[1], v[2]); fclose(g); }
     return 1;
   }
+  if (fmt == 32 && len == 1 && !strcmp(names[p - 1], "GAMESCOPE_FPS_LIMIT")) {  /* frame_cap: kept in FAKE_FPS_FILE */
+    unsigned long v = *(const unsigned long *)data; FILE *f = fopen(getenv("FAKE_X11_LOG"), "a");
+    if (f) { fprintf(f, "fps %lu\n", v); fclose(f); }
+    const char *s = getenv("FAKE_FPS_FILE"); FILE *g = s ? fopen(s, "w") : NULL;
+    if (g) { fprintf(g, "%lu\n", v); fclose(g); }
+    return 1;
+  }
   out("set", p, t, data, len); return 1;
 }
-int XDeleteProperty(void *d, unsigned long w, unsigned long p) { (void)d; (void)w; out("delete", p, 0, NULL, 0); return 1; }
+int XDeleteProperty(void *d, unsigned long w, unsigned long p) {
+  (void)d; (void)w; out("delete", p, 0, NULL, 0);
+  const char *s = getenv("FAKE_FPS_FILE"); if (s && !strcmp(names[p - 1], "GAMESCOPE_FPS_LIMIT")) remove(s);
+  return 1;
+}
 int XSync(void *d, int x) { (void)d; (void)x; return 1; }
 int XCloseDisplay(void *d) { (void)d; return 0; }
 void *XSetErrorHandler(void *h) { (void)h; return NULL; }
@@ -1097,6 +1108,8 @@ int XGetWindowProperty(void *d, unsigned long w, unsigned long prop, long off, l
   unsigned long pid = w == 42 ? win_pid() : 0;
   const char *gs = getenv("FAKE_GAMESCOPE");
   if (w == 1 && gs && *gs && !strcmp(names[prop - 1], "GAMESCOPE_XWAYLAND_SERVER_ID")) pid = 1;  /* the games server */
+  const char *fp = getenv("FAKE_FPS_FILE"); FILE *ff = fp && w == 1 && !strcmp(names[prop - 1], "GAMESCOPE_FPS_LIMIT") ? fopen(fp, "r") : NULL;
+  if (ff) { if (fscanf(ff, "%lu", &pid) != 1) pid = 0; fclose(ff); }  /* the frame cap set, if any */
   if (!pid) { *type = 0; *fmt = 0; *items = 0; *data = NULL; return 0; }
   unsigned long *v = malloc(sizeof *v); *v = pid; *type = 6; *fmt = 32; *items = 1; *data = (unsigned char *)v; return 0;
 }
@@ -1346,6 +1359,7 @@ else
   bad "no stand-in libX11 for the games display"
 fi
 rm -f "$GD_CONF"; [ -f "$GD_SAVED" ] && cp "$GD_SAVED" "$GD_CONF"
+
 bad_def "window_size without scale" 'd["window_size"] = {"lines": {"psx": 240}}'
 bad_def "window_size lines that are not whole numbers" 'd["window_size"] = {"lines": {"psx": "240"}, "scale": {"arg": "s"}}'
 bad_def "window_size scale with both arg and file" 'd["window_size"] = {"lines": {"psx": 240}, "scale": {"arg": "s", "file": "main", "key": "k"}}'
@@ -1363,6 +1377,76 @@ fly = {"lines": {"dc": 480}, "scale": {"file": "main", "section": "config", "key
 ok = ok and w.display_lines(fly, "dc", [], {"main": {"path": "nope.cfg", "format": "ini"}}, "/nonexistent", warn) == 480
 sys.exit(not ok)
 PY
+
+# =================================================================================================
+CASE="a game's own screen size and frame rate limit (SCREEN, FPS_LIMIT)"
+# Game settings > RetroForge: SCREEN=WxH gives the games display that size for the run, over the picture's;
+# FPS_LIMIT=<fps> sets gamescope's GAMESCOPE_FPS_LIMIT on the game's X server. Both come back at exit, and
+# from their journals when a killed run could not.
+OWN_GCONF="$HOME/.config/retroforge/games/psx/$(basename "$ROM").conf"; mkdir -p "${OWN_GCONF%/*}"
+OWN_SAVED="$T/own-gconf-saved"; rm -f "$OWN_SAVED"; [ -f "$OWN_GCONF" ] && cp "$OWN_GCONF" "$OWN_SAVED"
+FC_JOURNAL="$HOME/.local/state/retroforge/restore/frame-cap.json"
+if [ -f "$T/libfakex11.so" ]; then
+  own_run() {  # own_run: one game; $own_screen / $own_fps = the screen and the cap while it runs
+    rm -f "$T/x11.log"; reset_logs
+    DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" RETROFORGE_LIBXRANDR="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE=1 \
+      FAKE_SCREEN_FILE="$T/screen" FAKE_FPS_FILE="$T/fps" start_launcher
+    wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
+    own_screen="$(cat "$T/screen")"; own_fps="$(cat "$T/fps" 2>/dev/null)"
+    touch "$T/stop-emu"; reap_launcher "$lpid"
+  }
+  modes() { sed -n 's/^mode //p' "$T/x11.log" 2>/dev/null | tr '\n' ' '; }
+  caps() { sed -n 's/^fps //p; s/^delete GAMESCOPE_FPS_LIMIT$/none/p' "$T/x11.log" 2>/dev/null | tr '\n' ' '; }
+  echo 1280x720 > "$T/screen"; rm -f "$T/fps"; printf 'resolution=2x\n' > "$GD_CONF"
+  printf 'SCREEN=960x540\n' > "$OWN_GCONF"; own_run
+  [ "$own_screen" = 960x540 ] && [ "$(modes)" = "1 960x540 1 1280x720 " ] && [ ! -e "$GD_JOURNAL" ] \
+    && grep -q "games display 960x540 for this game's screen size (it was 1280x720)" "$T/launch.err" \
+    && ok "SCREEN=960x540: that size over the 2x picture's 853x480, 1280x720 back at exit" \
+    || bad "SCREEN: up $own_screen, modes '$(modes)', log: $(tr '\n' '|' < "$T/launch.err")"
+  printf 'resolution=2x\npicture_window=off\n' > "$GD_CONF"; own_run
+  [ "$own_screen" = 960x540 ] && [ "$(modes)" = "1 960x540 1 1280x720 " ] \
+    && ok "SCREEN with picture_window off: the game's size all the same" || bad "SCREEN + picture_window off: up $own_screen, modes '$(modes)'"
+  printf 'resolution=2x\n' > "$GD_CONF"; printf 'SCREEN=big\n' > "$OWN_GCONF"; own_run
+  [ "$own_screen" = 853x480 ] && grep -q "game setting SCREEN=big is not WIDTHxHEIGHT: ignored" "$T/launch.err" \
+    && ok "a SCREEN that is not WxH: a warning, the picture's size as without it" || bad "bad SCREEN: up $own_screen, log: $(tr '\n' '|' < "$T/launch.err")"
+  printf 'SCREEN=1280x720\n' > "$OWN_GCONF"; own_run
+  [ "$own_screen" = 1280x720 ] && [ -z "$(modes)" ] && ok "SCREEN the display already has: nothing changed" || bad "same SCREEN: modes '$(modes)'"
+  printf 'FPS_LIMIT=30\n' > "$OWN_GCONF"; own_run
+  [ "$own_fps" = 30 ] && [ ! -e "$T/fps" ] && [ "$(caps)" = "30 none " ] && [ ! -e "$FC_JOURNAL" ] \
+    && grep -q "frame rate limited to 30 fps (it was off)" "$T/launch.err" \
+    && ok "FPS_LIMIT=30: gamescope capped at 30 while it runs, no cap again at exit" \
+    || bad "FPS_LIMIT: up '$own_fps', caps '$(caps)', log: $(tr '\n' '|' < "$T/launch.err")"
+  echo 20 > "$T/fps"; own_run
+  [ "$own_fps" = 30 ] && [ "$(cat "$T/fps" 2>/dev/null)" = 20 ] && [ "$(caps)" = "30 20 " ] \
+    && ok "a cap that was there before (20, Steam's): 30 for the run, 20 again after" || bad "cap before: up '$own_fps', after '$(cat "$T/fps" 2>/dev/null)', caps '$(caps)'"
+  rm -f "$T/fps"; printf 'FPS_LIMIT=5\n' > "$OWN_GCONF"; own_run
+  [ -z "$own_fps" ] && [ -z "$(caps)" ] && grep -q "game setting FPS_LIMIT=5 is not a frame rate from 10 to 240: ignored" "$T/launch.err" \
+    && ok "FPS_LIMIT=5: a warning, no cap" || bad "bad FPS_LIMIT: up '$own_fps', caps '$(caps)'"
+  # A run SIGKILLed with its cap on, its watcher gone too: the next launch takes the cap off first.
+  mkdir -p "${FC_JOURNAL%/*}"
+  printf '{"display": ":9", "before": null, "set": 30, "pid": 2147483646}' > "$FC_JOURNAL"
+  echo 30 > "$T/fps"; rm -f "$OWN_GCONF"; own_run
+  [ -z "$own_fps" ] && [ ! -e "$FC_JOURNAL" ] && [ "$(caps)" = "none " ] \
+    && ok "a journal a killed run left: no cap before the next start" || bad "killed cap: up '$own_fps', caps '$(caps)'"
+  printf '{"display": ":9", "before": null, "set": 30, "pid": 2147483646}' > "$FC_JOURNAL"
+  echo 45 > "$T/fps"; own_run
+  [ "$own_fps" = 45 ] && [ ! -e "$FC_JOURNAL" ] && [ -z "$(caps)" ] \
+    && ok "...but a cap someone set since stays" || bad "cap set since: up '$own_fps', caps '$(caps)'"
+  rm -f "$T/fps"
+  # The watcher: a SIGKILLed launcher's cap comes off with no next launch.
+  printf 'FPS_LIMIT=30\n' > "$OWN_GCONF"; rm -f "$T/x11.log"; reset_logs
+  DISPLAY=:9 RETROFORGE_LIBX11="$T/libfakex11.so" RETROFORGE_LIBXRANDR="$T/libfakex11.so" FAKE_X11_LOG="$T/x11.log" FAKE_GAMESCOPE=1 \
+    FAKE_SCREEN_FILE="$T/screen" FAKE_FPS_FILE="$T/fps" RETROFORGE_LAUNCH_DETACH="setsid -f" start_launcher
+  wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
+  wait_for '[ "$(cat "$T/fps" 2>/dev/null)" = 30 ]'
+  kill -KILL "$lpid"; wait "$lpid" 2>/dev/null
+  wait_for '[ ! -e "$T/fps" ] && [ ! -e "$FC_JOURNAL" ]' && [ "$(caps)" = "30 none " ] \
+    && ok "SIGKILLed launcher: its watcher takes the cap off" || bad "cap watcher: fps '$(cat "$T/fps" 2>/dev/null)', caps '$(caps)'"
+  touch "$T/stop-emu"; wait_for '! emu_up || grep -qx term "$T/emu.log" || [ -z "$(pgrep -f "$T/mnt")" ]'; sleep 0.3
+else
+  bad "no stand-in libX11 for a game's screen size and frame rate limit"
+fi
+rm -f "$OWN_GCONF" "$GD_CONF"; [ -f "$OWN_SAVED" ] && cp "$OWN_SAVED" "$OWN_GCONF"; [ -f "$GD_SAVED" ] && cp "$GD_SAVED" "$GD_CONF"
 
 # =================================================================================================
 CASE="a card moved to a board with the other panel count"

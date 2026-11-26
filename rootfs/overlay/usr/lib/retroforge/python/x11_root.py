@@ -148,6 +148,41 @@ def remove(display, name, warn):
     return _with_root(display, action, warn)
 
 
+def set_cardinal(display, name, value, warn):
+    """Set root property `name` to one 32-bit CARDINAL (gamescope's GAMESCOPE_FPS_LIMIT). True when done."""
+    def action(x, dpy, root):
+        data = (ctypes.c_ulong * 1)(value)  # format 32 goes as longs
+        x.XChangeProperty(dpy, root, x.XInternAtom(dpy, name.encode(), 0), XA_CARDINAL, 32,
+                          PROP_MODE_REPLACE, ctypes.cast(data, ctypes.c_char_p), 1)
+
+    return _with_root(display, action, warn)
+
+
+def get_cardinal(display, name, warn):
+    """(True, value) of root property `name` as one CARDINAL, (True, None) when it is not set, (False,
+    None) when the display cannot be read."""
+    def action(x, dpy, root):
+        _window_calls(x)
+        atom = x.XInternAtom(dpy, name.encode(), 1)
+        kind, fmt, count, left = ctypes.c_ulong(), ctypes.c_int(), ctypes.c_ulong(), ctypes.c_ulong()
+        data = ctypes.c_void_p()
+        value = None
+        if atom and x.XGetWindowProperty(dpy, root, atom, 0, 1, 0, XA_CARDINAL, ctypes.byref(kind), ctypes.byref(fmt),
+                                         ctypes.byref(count), ctypes.byref(left), ctypes.byref(data)) == 0:
+            if data.value and fmt.value == 32 and count.value == 1:
+                value = ctypes.cast(data, ctypes.POINTER(ctypes.c_ulong))[0]
+            if data.value:
+                x.XFree(data)
+        return ("read", value)
+
+    try:
+        got = _with_root(display, action, warn, fail=None)
+    except AttributeError as err:
+        warn(f"{LIBX11} lacks a call: {err}")
+        return False, None
+    return (True, got[1]) if isinstance(got, tuple) else (False, None)
+
+
 def _window_calls(x):
     """Bind what screen_size and resize_window_of use (not every caller's libX11 needs them)."""
     x.XGetGeometry.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)] + \

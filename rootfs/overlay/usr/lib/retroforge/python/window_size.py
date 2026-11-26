@@ -61,6 +61,12 @@
 # emuopts.window_size): shaders are drawn at the window's size, too few pixels for a CRT or LCD mask, and
 # then scaled up. Off, the launcher never comes here and the emulator fills the games display.
 #
+# A GAME'S OWN SCREEN SIZE (Game settings > RetroForge > Screen size: SCREEN=WxH in its conf, the sizes of
+# Settings > Display > Game resolution): the games display gets that size for the run, the same way and
+# with the same journal and watcher, in place of the picture's size. A fullscreen emulator then fills it as
+# with picture_window off; RetroArch's window still follows its picture inside it. Without the line the
+# display is sized as above, or left at Settings > Display's size.
+#
 # NEVER RAISES: an X11 failure is a warning, and the game keeps the window RetroArch made, or runs on the
 # display as it was.
 
@@ -82,6 +88,8 @@ GEOMETRY = re.compile(rb"\[(?:Core\] Geometry|Environ\] SET_GEOMETRY|Environ\] S
 QUIET = re.compile(rb"^\[(?:libretro )?(?:INFO|DEBUG)\]")
 STRETCH = "24"  # RetroArch's aspect_ratio_index for Full, options.json "Stretch to screen"
 MIN_HEIGHT = 430  # lines: smaller pictures go up by whole steps (above)
+SCREEN_KEY = "SCREEN"  # a game conf's own games display size
+SCREEN_VALUE = re.compile(r"([1-9][0-9]{1,4})x([1-9][0-9]{1,4})")
 RETRY = 0.1  # s between looks for a window that is not there yet
 WAIT_WINDOW = 30.0  # s a size waits for its window before it is dropped
 
@@ -300,6 +308,18 @@ def display_lines(spec, system, args, files, home, warn):
     return max(1, round(lines * k)) if k > 0 else None
 
 
+def chosen_screen(game_conf, warn):
+    """(width, height) a game's conf asks for its games display (SCREEN=WxH), or None for its default."""
+    value = game_conf.get(SCREEN_KEY, "")
+    if not value:
+        return None
+    m = SCREEN_VALUE.fullmatch(value)
+    if not m:
+        warn(f"game setting {SCREEN_KEY}={value} is not WIDTHxHEIGHT: ignored")
+        return None
+    return int(m.group(1)), int(m.group(2))
+
+
 def display_size(lines, current):
     """The games display for a picture of `lines`: that height stepped up to MIN_HEIGHT, the current
     display's shape."""
@@ -374,10 +394,11 @@ def restore_display(state_dir, warn, owner=None, say=None):
         pass
 
 
-def size_display(display, lines, state_dir, say, warn):
-    """Size `display` (one of gamescope's X servers) for a picture of `lines`; a callable that gives the
-    old size back, or None when nothing changed. The journal names this process and, once gamescope has
-    answered, the size it gave: restore_display gives the old one back only from that size."""
+def size_display(display, lines, state_dir, say, warn, size=None):
+    """Size `display` (one of gamescope's X servers) for a picture of `lines`, or to `size` (a game's own
+    screen size); a callable that gives the old size back, or None when nothing changed. The journal names
+    this process and, once gamescope has answered, the size it gave: restore_display gives the old one
+    back only from that size."""
     if not display:
         warn("no DISPLAY: the games display keeps its size")
         return None
@@ -386,7 +407,7 @@ def size_display(display, lines, state_dir, say, warn):
         warn(f"{display} is not one of gamescope's X servers: the games display keeps its size")
         return None
     server, before = now[0], (now[1], now[2])
-    size = display_size(lines, before)
+    size = size or display_size(lines, before)
     if size == before:
         return None
     path = _journal(state_dir)
@@ -411,7 +432,8 @@ def size_display(display, lines, state_dir, say, warn):
             _write_journal(path, record)
         except OSError as err:
             warn(f"cannot update {path}: {err}")
-    say(f"games display {got[0]}x{got[1]} for the {lines}-line picture (it was {before[0]}x{before[1]})")
+    why = f"the {lines}-line picture" if lines else "this game's screen size"
+    say(f"games display {got[0]}x{got[1]} for {why} (it was {before[0]}x{before[1]})")
     pid = os.getpid()
     return lambda: restore_display(state_dir, warn, owner=pid)
 
