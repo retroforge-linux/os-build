@@ -90,6 +90,11 @@ grep -q 'if words.size() < 3:' "$SRC/library_roms.gd" && grep -q 'for file_path 
   && grep -q '"one of " + ", ".join(files)' "$SRC/library_roms.gd" \
   && ok "library_roms.gd names every file a missing-file status lists" \
   || bad "library_roms.gd reads only one missing-file path (system_requires lists choices)"
+# missing-files (gui_requires: DSperate's Open needs the DS BIOS and firmware dumps) lists files that
+# are ALL needed: the message names them as a list ("a, b and c"), not as choices.
+grep -q '"missing-files":' "$SRC/library_roms.gd" && grep -q 'needs %s and %s' "$SRC/library_roms.gd" \
+  && ok "library_roms.gd turns a missing-files status into one message naming every file" \
+  || bad "library_roms.gd has no missing-files message (gui_requires)"
 
 # A Revert row runs its own args: a RetroArch core's carries --core=<core>, which a hardcoded
 # ["rollback", id] would drop (and revert RetroArch itself instead).

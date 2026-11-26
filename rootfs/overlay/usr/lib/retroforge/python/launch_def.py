@@ -22,6 +22,7 @@
 #    "system_requires": {"segacd": [{"any": ["bios/a.bin", "bios/b.bin"]}],   files under $HOME a
 #                        "snes": [{"any": ["emulators/x/cores/c.so"],        game of that system
 #                                  "status": "not-installed"}]},              needs (below)
+#    "gui_requires": [{"any": ["bios/bios9.bin"]}],  files under $HOME Open (--gui) needs (below)
 #    "system_settings": [{"file": ".config/x/x.cfg",  settings written into the emulator's own file
 #                         "format": "ini", "separator": " = ",   before every GAME, "{system}" in the
 #                         "set": [{"section": "", "key": "save_folder",   file and the values = the
@@ -84,6 +85,11 @@
 # launch with exit 3 and `<status> <emulator>[ <path>...]` in the status file, without starting the
 # emulator (a core it cannot load, or a BIOS it does not have, is a black screen). Never for --gui.
 # Paths are relative to $HOME, no '..', no whitespace (the status line is split on spaces).
+# Open's own (gui_requires): the same entries, checked only for --gui, for an emulator whose UI
+# cannot come up without them (DSperate with no game boots the DS menu, which needs the BIOS and
+# firmware dumps; without them it quit at once and OpenGamepadUI's menu came back with no word).
+# Every missing entry is reported at once: one as system_requires does, several as
+# `missing-files <emulator> <path>...` (each entry's first path; all of them are needed).
 #
 # The second screen's window (secondary_window_title): an emulator that shows the DS/3DS bottom screen
 # in a window of its own (DSperate's "DSperate (Bottom)", Azahar's "... | Secondary Window") names it
@@ -129,7 +135,7 @@ from launch_formats import FORMATS
 LAUNCH_CONF = ENV.get("RETROFORGE_LAUNCH_CONF", "/etc/retroforge/launch.conf")
 SEED_BOARD_DIR = os.path.join(HOME, ".config", "retroforge", "seed-board")
 SYSTEM_ID = re.compile(r"[a-z0-9_]+")
-DEFINITION_KEYS = {"format", "root", "binary", "args", "gui_args", "system_args", "system_requires",
+DEFINITION_KEYS = {"format", "root", "binary", "args", "gui_args", "gui_requires", "system_args", "system_requires",
                    "system_settings", "env",
                    "seed", "sync", "install", "stub", "core_dumps", "exit_resend",
                    "gamepad_profile", "achievements", "secondary_window_title", "dual_screen_args",
@@ -236,6 +242,11 @@ def load_definition(emulator):
         raise bad('system_requires must map system names to lists of {"any": [<path under $HOME>, ...]'
                   f'[, "status": one of {sorted(REQUIRE_STATUSES)}]}}, paths relative, without '
                   "'..' or whitespace")
+    gui_requires = d.get("gui_requires", [])
+    if not (isinstance(gui_requires, list) and all(requirement_ok(r) for r in gui_requires)):
+        raise bad('gui_requires must be a list of {"any": [<path under $HOME>, ...]'
+                  f'[, "status": one of {sorted(REQUIRE_STATUSES)}]}}, paths relative, without '
+                  "'..' or whitespace")
     system_settings = d.get("system_settings", [])
     if not (isinstance(system_settings, list) and all(system_settings_entry_ok(s) for s in system_settings)):
         raise bad('system_settings entries must be {"file": <path under $HOME>, "format": <one of '
@@ -310,7 +321,7 @@ def load_definition(emulator):
     elif size is not None and not (isinstance(size, str) and size in window_size.KINDS):
         raise bad(f"window_size must be one of {sorted(window_size.KINDS)} or a games display object")
     return {"format": d["format"], "root": d.get("root"), "binary": d["binary"], "args": args, "gui_args": gui_args,
-            "system_args": system_args, "system_requires": system_requires, "system_settings": system_settings, "env": env, "seed": seed,
+            "system_args": system_args, "system_requires": system_requires, "gui_requires": gui_requires, "system_settings": system_settings, "env": env, "seed": seed,
             "sync": sync, "install": install, "stub": stub, "core_dumps": core_dumps,
             "exit_resend": exit_resend, "gamepad_profile": gamepad_profile, "achievements": cheevos,
             "secondary_window_title": title, "dual_screen_args": dual_screen_args, "window_size": size}
@@ -335,12 +346,15 @@ def requirement_ok(r):
             and r.get("status", "missing-file") in REQUIRE_STATUSES)
 
 
+def missing_requirements(entries):
+    """Every entry none of whose files exists under $HOME, in order."""
+    return [r for r in entries if not any(os.path.isfile(os.path.join(HOME, p)) for p in r["any"])]
+
+
 def missing_requirement(entries):
     """The first entry none of whose files exists under $HOME, or None."""
-    for r in entries:
-        if not any(os.path.isfile(os.path.join(HOME, p)) for p in r["any"]):
-            return r
-    return None
+    missing = missing_requirements(entries)
+    return missing[0] if missing else None
 
 
 def system_settings_entry_ok(s):

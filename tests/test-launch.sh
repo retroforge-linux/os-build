@@ -1006,6 +1006,37 @@ bad_def "a system_requires status the plugin does not know" 'd["system_requires"
 bad_def "a system_requires entry with an unknown key" 'd["system_requires"] = {"psx": [{"any": ["bios/x"], "run": "sh"}]}'
 bad_def "system_requires for a bad system name" 'd["system_requires"] = {"../x": [{"any": ["bios/x"]}]}'
 
+# What Open needs (gui_requires): DSperate with no game boots the DS menu, which needs three dumps;
+# without them it quit at once and the player got OGUI's menu back with no word. Checked only for
+# --gui; every missing file is named at once (missing-files, all needed), one as system_requires does.
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["gui_requires"] = [
+  {"any": ["bios/g9.bin"]}, {"any": ["bios/g7.bin"]}, {"any": ["bios/gfw.bin"]}]
+json.dump(d, open(sys.argv[2], "w"))' "$DS_DEF" "$REQ/duckstation/emulator.json"
+rm -f "$HOME/bios/g9.bin" "$HOME/bios/g7.bin" "$HOME/bios/gfw.bin" "$ST"; reset_logs
+rc=$(RETROFORGE_EMU_DATA_DIR="$REQ" RETROFORGE_LAUNCH_STATUS="$ST" code --gui duckstation)
+[ "$rc" = 3 ] && [ "$(cat "$ST" 2>/dev/null)" = "missing-files duckstation bios/g9.bin bios/g7.bin bios/gfw.bin" ] && [ ! -e "$T/emu.log" ] \
+  && ok "Open without any gui_requires file: exit 3, status 'missing-files <emu> <path>...' (all needed), not started" \
+  || bad "gui_requires, none: rc=$rc status='$(cat "$ST" 2>/dev/null)'"
+mkdir -p "$HOME/bios"; : > "$HOME/bios/g9.bin"; : > "$HOME/bios/g7.bin"; reset_logs
+rc=$(RETROFORGE_EMU_DATA_DIR="$REQ" RETROFORGE_LAUNCH_STATUS="$ST" code --gui duckstation)
+[ "$rc" = 3 ] && [ "$(cat "$ST" 2>/dev/null)" = "missing-file duckstation bios/gfw.bin" ] \
+  && ok "one gui_requires file missing: the system_requires status for it (missing-file)" \
+  || bad "gui_requires, one missing: rc=$rc status='$(cat "$ST" 2>/dev/null)'"
+: > "$HOME/bios/gfw.bin"; reset_logs
+RETROFORGE_EMU_DATA_DIR="$REQ" "$LAUNCH" --gui duckstation 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
+wait_for emu_up && ok "every gui_requires file there: Open starts" || bad "Open did not start: $(cat "$T/launch.err")"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null; reset_logs
+rm -f "$HOME/bios/g9.bin" "$HOME/bios/g7.bin" "$HOME/bios/gfw.bin"
+RETROFORGE_EMU_DATA_DIR="$REQ" start_launcher
+wait_for emu_up && ok "a ROM launch ignores gui_requires" || bad "gui_requires blocked a game: $(cat "$T/launch.err")"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null; rm -f "$ST"; reset_logs
+bad_def "gui_requires that are not a list" 'd["gui_requires"] = {"any": ["bios/x"]}'
+bad_def "a gui_requires path out of \$HOME (..)" 'd["gui_requires"] = [{"any": ["../x"]}]'
+bad_def "a gui_requires path with whitespace" 'd["gui_requires"] = [{"any": ["bios/a b.bin"]}]'
+bad_def "a gui_requires status the plugin does not know" 'd["gui_requires"] = [{"any": ["bios/x"], "status": "boom"}]'
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(d.get("gui_requires") != [{"any": ["bios/bios9.bin"]}, {"any": ["bios/bios7.bin"]}, {"any": ["bios/firmware.bin"]}])' \
+  "$SEED_DIR/dsperate/emulator.json" && ok "dsperate: Open needs bios9.bin, bios7.bin and firmware.bin (the DS menu; seeded [paths])" \
+  || bad "dsperate: gui_requires is not the three DS dumps"
 
 CASE="first-run settings on a dual-screen board"
 # A dual-screen board (device-env declares a second panel) gets the seed's dual_screen_file instead.

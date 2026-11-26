@@ -234,6 +234,18 @@ class LaunchFailure extends AppLifecycleHook:
 				var what := files[0] if files.size() == 1 else "one of " + ", ".join(files)
 				msg = "%s needs %s.\nCopy it to the %s folder (network share), then start the game again." \
 						% [name, what, words[2].get_base_dir()]
+			"missing-files":
+				# retroforge-launch: `missing-files <emulator> <path under the player's home>...`, every one
+				# needed (gui_requires: DSperate's Open needs the DS BIOS and firmware dumps).
+				if words.size() < 3:
+					return
+				var needed := PackedStringArray()
+				for file_path in words.slice(2):
+					needed.append(file_path.get_file())
+				var last := needed[needed.size() - 1]
+				needed.remove_at(needed.size() - 1)
+				msg = "%s needs %s and %s.\nCopy them to the %s folder (network share), then try again." \
+						% [name, ", ".join(needed), last, words[2].get_base_dir()]
 			"install-failed":
 				msg = "%s could not install its firmware or system files.\nCheck the file in the bios folder, then try again." % name
 			"bad-stub":

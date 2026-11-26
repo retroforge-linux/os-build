@@ -142,7 +142,8 @@ import gui_mouse  # noqa: E402
 from launch_common import (CONFIG_HOME, EMU_DATA_DIR, EMU_DIR, ENV, HOME, VRAM_REPORT_LIMIT_VARS,  # noqa: E402
                            Exit, device_field, emulator_child, log)
 from launch_def import (FILE, ROM, SYSTEM, SYSTEM_ID, TEXT, apply_system_settings,  # noqa: E402
-                        dual_screen, emulator_for, load_definition, missing_requirement, seed_first_run,
+                        dual_screen, emulator_for, load_definition, missing_requirement,
+                        missing_requirements, seed_first_run,
                         sync_files, systems_of)
 from launch_formats import FORMATS  # noqa: E402
 from psn_inbox import PSN_SYSTEM, psn_install, try_psn_lock  # noqa: E402
@@ -276,6 +277,15 @@ def fail(reason, emulator, msg, detail=None):
     except OSError:
         pass
     raise Exit(3, msg)
+
+
+def fail_requirement(emulator, what, req):
+    """A requirement entry none of whose files exists (launch_def: system_requires, gui_requires)."""
+    if req is None:
+        return
+    status = req.get("status", "missing-file")
+    fail(status, emulator, f"{what} needs ~/{' or ~/'.join(req['any'])} (not found)",
+         " ".join(req["any"]) if status == "missing-file" else None)
 
 
 def stub_boot_target(emulator, rom, stub):
@@ -484,11 +494,13 @@ def run(argv):
                 fail("psn-installing", emulator,
                      "a PSN install is running; launch again when it finishes")
     if rom is not None:  # a core or BIOS the system needs (launch_def: system_requires)
-        req = missing_requirement(definition["system_requires"].get(system, []))
-        if req is not None:
-            status = req.get("status", "missing-file")
-            fail(status, emulator, f"{system} needs ~/{' or ~/'.join(req['any'])} (not found)",
-                 " ".join(req["any"]) if status == "missing-file" else None)
+        fail_requirement(emulator, system, missing_requirement(definition["system_requires"].get(system, [])))
+    else:  # what Open needs (launch_def: gui_requires), every missing file named at once
+        missing = missing_requirements(definition["gui_requires"])
+        if len(missing) > 1:
+            paths = [r["any"][0] for r in missing]
+            fail("missing-files", emulator, f"Open needs ~/{' and ~/'.join(paths)} (not found)", " ".join(paths))
+        fail_requirement(emulator, "Open", missing[0] if missing else None)
     # One emulator can serve several systems (ClownMDEmu: md, segacd; armGBA: gb, gbc, gba) with
     # per-system folders, on its command line or in its settings file.
     # A stub ROM boots what its first line names (after the not-installed check: that message wins).
