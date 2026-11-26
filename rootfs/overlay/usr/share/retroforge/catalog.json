@@ -80,11 +80,10 @@
         "psx"
       ],
       "github": "stenzek/duckstation",
-      "tag": "v0.1-11894",
-      "tag_pattern": "^v0\\.1-[0-9]+$",
+      "tag": "latest",
+      "tag_pattern": "^latest$",
       "asset": "^DuckStation-arm64\\.AppImage$",
-      "sha256": "d67758c25fe3772558662e39bb508620c997cc6cd3d66ecca835e754923f158a",
-      "size": 85995776,
+      "size": 89501952,
       "homepage": "https://www.duckstation.org/",
       "licence": {
         "name": "CC BY-NC-ND 4.0",

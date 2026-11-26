@@ -762,6 +762,8 @@ func test_credits() -> void:
 		Credits.version_text("v0.1-11894"), "v0.1-11894")
 	check("version: a nightly build (retroforge-emu's nightly-<id>) says Nightly",
 		[Credits.version_text("nightly-cc6fea125"), Credits.version_text("nightly")], ["Nightly cc6fea125", "Nightly"])
+	check("version: a rolling latest build (retroforge-emu's latest-<12 hex>) says Latest with 8",
+		[Credits.version_text("latest-3cd9e8465a69"), Credits.version_text("latest")], ["Latest 3cd9e846", "Latest"])
 	check("version: an RPCS3 build-<commit> keeps 8 digits",
 		Credits.version_text("build-64ba740c27be6946074cd91db85be4d48146d768"), "Build 64ba740c")
 

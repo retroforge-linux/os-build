@@ -49,7 +49,8 @@
 # Neither a token nor a name is ever logged. A sign-in that is not a RetroAchievements name and token
 # (a hand edit) is treated as signed out, never written into another file.
 #
-# DUCKSTATION encrypts its token (src/core/achievements.cpp EncryptLoginToken, tag v0.1-11894):
+# DUCKSTATION encrypts its token (src/core/achievements.cpp EncryptLoginToken, tag v0.1-11894, unchanged
+# at `latest` 2c79bd36, 2026-11-25):
 # base64(AES-128-CBC(token zero-padded to 16 bytes)), with SHA-256(the bytes of /etc/machine-id, newline
 # included, then the user name) re-hashed 100 more times: its first 16 bytes the key, its last 16 the
 # IV. The machine-id is the device's (made at first boot, kept across updates), so this runs on the

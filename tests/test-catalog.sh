@@ -7,9 +7,10 @@
 # WHY THIS EXISTS. The catalog decides which emulator build a player gets, so a bad row is a
 # broken game for everyone who downloads after it:
 #
-#   - a rolling tag (DuckStation's `latest` / `preview`) replaces its asset in place, so a pin on
-#     one silently ships an untested build: pins must be numbered releases -- unless the entry has no
-#     tested build at all (Cemu, user decision 2026-10-07): then no sha256 (retroforge-emu checks
+#   - a rolling tag (Cemu's `nightly`, DuckStation's `latest`) replaces its asset in place, so a pin
+#     on one silently ships an untested build: pins must be numbered releases -- unless the entry has
+#     no tested build at all (Cemu, user decision 2026-10-07; DuckStation, whose numbered releases
+#     lost their Linux AppImages in 2026-11): then no sha256 (retroforge-emu checks
 #     GitHub's own digest), "size" is an estimate, and tag_pattern is ^<that rolling tag>$;
 #   - "tag_pattern" (plan emulator-latest) decides which upstream release is the newest and gets
 #     installed by default: it must match the tested pin, and never a rolling tag (a build swapped
@@ -351,9 +352,11 @@ for emu, e in emus.items():
             bad(case, f"asset pattern {pattern!r} must be ^...$ and name arm64/aarch64")
     if nightly:
         if rx and rx.groups >= 1:
-            ok(case, "asset pattern captures the build id (installed as nightly-<id>)")
+            ok(case, "asset pattern captures the build id (installed as <tag>-<id>)")
         elif rx:
-            bad(case, "a nightly asset pattern needs a capture group for the build id")
+            # A fixed file name (DuckStation-arm64.AppImage) names no build: retroforge-emu names
+            # it after GitHub's digest instead (<tag>-<first 12 hex>), so each new build still differs.
+            ok(case, "asset pattern names no build: installed as <tag>-<digest's first 12 hex>")
     elif re.fullmatch(r"[0-9a-f]{64}", str(e["sha256"])):
         ok(case, "sha256 is 64 lowercase hex")
     else:

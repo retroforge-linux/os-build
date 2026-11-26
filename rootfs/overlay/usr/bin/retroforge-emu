@@ -19,10 +19,10 @@
 # page of GET /releases, by published_at (RPCS3's list is sorted by tag name, not by date), the first
 # release that is not a draft, whose tag fully matches `tag_pattern`, and that has exactly one asset
 # matching `asset`. The tag pattern alone decides: GitHub's prerelease flag is NOT a filter (Cemu's
-# nightlies carry it), and a rolling tag that replaces its asset in place
-# (DuckStation's `latest`) is kept out by the pattern. A newest build REQUIRES GitHub's per-asset
-# sha256 digest (exit 4 without one) and the bytes must hash to it; nobody at RetroForge tested it,
-# and `list` says so (installed != tested). `check` resolves it without installing, cached in
+# nightlies carry it), and a rolling tag that replaces its asset in place is kept out by the
+# pattern, unless the entry has no tested build (NO TESTED BUILD below). A newest build REQUIRES
+# GitHub's per-asset sha256 digest (exit 4 without one) and the bytes must hash to it; nobody at
+# RetroForge tested it, and `list` says so (installed != tested). `check` resolves it without installing, cached in
 # ~/.cache/retroforge/emu-check.json for CHECK_TTL (GitHub allows 60 unauthenticated requests an
 # hour per IP); a failed check is reported as its error, never as a version.
 # The pin ("tag" + "sha256" + "size", the arm64 asset's) stays as the TESTED build: `install
@@ -46,7 +46,9 @@
 # `current`, rolling or not: nothing is downloaded and stderr says "already the latest".
 # NO TESTED BUILD (no "sha256"; "size" is only an estimate for the page; tag_pattern "^<tag>$" on a
 # rolling tag): Cemu, whose only aarch64 release (2.6) predates its AArch64 recompiler and dies with
-# SIGILL (user decision 2026-10-07). --tested is refused; the page says "Nightly".
+# SIGILL (user decision 2026-10-07); DuckStation, whose numbered releases lost their Linux AppImages
+# in 2026-11 (only the rolling `latest` and `preview` carry one). --tested is refused; the page says
+# the build is untested and names it "Nightly <id>" / "Latest <id>".
 #
 # DATA FILES (catalog "data": [{"url": "https://...", "to": "<path under $HOME>"}], optional): files
 # an emulator needs but never fetches the way RetroForge runs it -- RPCS3 downloads its per-game config

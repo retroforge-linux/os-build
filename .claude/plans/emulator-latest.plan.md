@@ -137,7 +137,7 @@ tests/test-catalog.sh` gains a "latest resolves to exactly one asset" check):
 | armsx2 | `^[0-9]+(\.[0-9]+)+$` | stable since 2.9 (2026-10-26, its first stable Linux AppImage; nightlies before); asset must stay the 4K-pages build |
 | azahar, clownmdemu, dolphin, flycast, melonds, snes9x | `^[0-9][0-9.]*(-[0-9]+)?@[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]+$` | pkgforge-dev `<ver>@<date>_<id>`; Azahar's repo also has a `nightly` (prerelease) tag, kept out by the pattern |
 | cemu | `^nightly$` | replaces `channel` |
-| duckstation | `^v0\.1-[0-9]+$` | NEVER `latest` (asset replaced in place) |
+| duckstation | `^latest$` | was `^v0\.1-[0-9]+$`; 2026-11-26 upstream dropped the Linux AppImages from every numbered release, so no tested build, as Cemu |
 | ppsspp | `^v[0-9]+\.[0-9]+(\.[0-9]+)?$` | |
 | rpcs3 | `^build-[0-9a-f]{40}$` | a build per upstream commit |
 | xemu | `^v[0-9]+\.[0-9]+\.[0-9]+$` | |

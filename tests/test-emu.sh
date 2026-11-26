@@ -588,7 +588,7 @@ newest v3 "the newest only in /releases/latest (RPCS3's list is sorted by tag na
 newest v2 "no /releases/latest (404): the list alone" - "v2:02-01" "v1:01-01"
 newest v2 "a draft is skipped" - "v3:03-01:draft" "v2:02-01"
 newest v3 "a prerelease is NOT skipped: the tag pattern decides (Cemu's nightlies)" - "v3:03-01:pre" "v2:02-01"
-newest v2 "a tag the pattern does not match is skipped (DuckStation's rolling 'latest')" "latest:04-01" "latest:04-01" "v2:02-01"
+newest v2 "a tag the pattern does not match is skipped (a rolling 'latest')" "latest:04-01" "latest:04-01" "v2:02-01"
 newest v2 "a release without a matching asset is skipped" - "v3:03-01:noasset" "v2:02-01"
 newest v2 "a release with two matching assets is skipped" - "v3:03-01:twoassets" "v2:02-01"
 reset; latest_catalog; releases - "v3:03-01:noasset" "latest:04-01"; run install dummy
