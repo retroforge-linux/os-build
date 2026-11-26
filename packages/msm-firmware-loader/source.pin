@@ -21,10 +21,12 @@
 #         hexagonrpcd serves writable (its 0004): the Pocket FIT's sensors PD rebuilds its registry.
 #   0015  ours: a qsh_ble_config with a UART that does not exist in that copy, unless persist has
 #         one: the ADSP's Bluetooth sensing hub on its default UART kept the ADSP awake (issue #46).
+#   0016  ours: hexagonrpcd's socinfo as a downstream kernel has it (hw_platform, platform_subtype,
+#         platform_version from debugfs's qcom_socinfo): the sensors PD picks its configs by them.
 #
 # After adding or bumping this: `make relock` (the package must land in rootfs/manifest.lock; it is
 # listed in PKGS in rootfs/customize-base.sh).
 name: msm-firmware-loader
 pkgbuild_local: PKGBUILD
-patches: 0001-msm-firmware-loader-read-the-active-slot-from-the-GP.patch 0002-msm-firmware-loader-link-the-sensors-registry-withou.patch 0003-msm-firmware-loader-expose-blobs-only-under-device-f.patch 0004-msm-firmware-loader-map-the-dynamic-partitions-of-th.patch 0005-msm-firmware-loader-scan-and-link-without-forking-pe.patch 0006-msm-firmware-loader-mount-persist-and-dsp-without-re.patch 0007-msm-firmware-loader-prefer-the-vendor-partition-s-bl.patch 0008-msm-firmware-loader-fork-less-on-the-boot-path.patch 0009-msm-firmware-loader-build-the-hexagonrpc-tree-after-.patch 0010-msm-firmware-loader-link-the-blobs-in-image-subfolde.patch 0011-msm-firmware-loader-serve-qcom-and-the-SoC-s-folder-.patch 0012-msm-firmware-loader-serve-Bluetooth-firmware-from-th.patch 0013-msm-firmware-loader-let-an-override-folder-win-over-.patch 0014-msm-firmware-loader-give-hexagonrpcd-a-writable-copy.patch 0015-msm-firmware-loader-keep-the-Bluetooth-sensing-hub-o.patch
+patches: 0001-msm-firmware-loader-read-the-active-slot-from-the-GP.patch 0002-msm-firmware-loader-link-the-sensors-registry-withou.patch 0003-msm-firmware-loader-expose-blobs-only-under-device-f.patch 0004-msm-firmware-loader-map-the-dynamic-partitions-of-th.patch 0005-msm-firmware-loader-scan-and-link-without-forking-pe.patch 0006-msm-firmware-loader-mount-persist-and-dsp-without-re.patch 0007-msm-firmware-loader-prefer-the-vendor-partition-s-bl.patch 0008-msm-firmware-loader-fork-less-on-the-boot-path.patch 0009-msm-firmware-loader-build-the-hexagonrpc-tree-after-.patch 0010-msm-firmware-loader-link-the-blobs-in-image-subfolde.patch 0011-msm-firmware-loader-serve-qcom-and-the-SoC-s-folder-.patch 0012-msm-firmware-loader-serve-Bluetooth-firmware-from-th.patch 0013-msm-firmware-loader-let-an-override-folder-win-over-.patch 0014-msm-firmware-loader-give-hexagonrpcd-a-writable-copy.patch 0015-msm-firmware-loader-keep-the-Bluetooth-sensing-hub-o.patch 0016-msm-firmware-loader-give-hexagonrpcd-the-socinfo-a-d.patch
 pkgrel_suffix: 1

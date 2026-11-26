@@ -25,7 +25,11 @@
 # which hexagonrpcd serves writable (persist itself stays read-only; the copy is per boot); 0015
 # adds a qsh_ble_config to that copy's registry, unless persist has one, giving the ADSP firmware's
 # Bluetooth sensing hub a UART that does not exist: on its default one it kept the ADSP awake for
-# good once the sensors process had started, and the SoC out of low power in suspend (issue #46).
+# good once the sensors process had started, and the SoC out of low power in suspend (issue #46);
+# 0016 builds the tree's socinfo as a downstream kernel has it (hw_platform, platform_subtype,
+# platform_version, from the SMEM socinfo mainline shows in debugfs) in place of a link to mainline's
+# soc0: the sensors PD picks the vendor's sensor configs by them, and with mainline's soc0 the Air X's
+# rebuilt registry had no accelerometer.
 #
 # It runs on every board, serving whatever its partitions hold under qcom/ (GPU microcode), the
 # SoC's qcom/<soc>/ (zap shaders, SM8250 DSPs), the devicetree's device folders (e.g. adsp/cdsp

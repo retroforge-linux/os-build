@@ -1,0 +1,153 @@
+From 3f508c21944c9107be02134821ba60aa56f79002 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 22 Nov 2026 13:45:53 -0800
+Subject: [PATCH] msm-firmware-loader: give hexagonrpcd the socinfo a
+ downstream kernel has
+
+The sensors PD picks which of the vendor's sensor configs to load by 
+/sys/devices/soc0/hw_platform, platform_subtype, platform_subtype_id and 
+platform_version, as sns_reg_config lists them, the attributes a 
+downstream kernel has there. hexagonrpcd served mainline's soc0, 
+which has soc_id and revision but none of those, so a sensors PD that 
+builds its registry could keep only the configs with no filter; every 
+accelerometer and gyro config has one. Build the directory instead: soc_id 
+and revision from soc0 as before, and the rest from the same SMEM socinfo, 
+which mainline shows only as numbers in debugfs (qcom_socinfo), named as 
+downstream's socinfo.c names them. Where debugfs is not mounted, it is 
+mounted for the read and unmounted.
+
+---
+ msm-firmware-loader.sh | 110 +++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 107 insertions(+), 3 deletions(-)
+
+diff --git a/msm-firmware-loader.sh b/msm-firmware-loader.sh
+index 0a0f478..abd2d37 100644
+--- a/msm-firmware-loader.sh
++++ b/msm-firmware-loader.sh
+@@ -99,6 +99,111 @@ link_path() {
+ 	fi
+ }
+ 
++# Print the name a downstream kernel gives SMEM hardware platform type $1 in
++# /sys/devices/soc0/hw_platform; fail for a type it has no name for.
++hw_platform_name() {
++	case "$1" in
++	0) echo Unknown ;;
++	1) echo Surf ;;
++	2) echo FFA ;;
++	3) echo Fluid ;;
++	4) echo SVLTE_FFA ;;
++	5) echo SLVTE_SURF ;;
++	7) echo MDM_MTP_NO_DISPLAY ;;
++	8) echo MTP ;;
++	9) echo Liquid ;;
++	10) echo Dragon ;;
++	11) echo QRD ;;
++	13) echo HRD ;;
++	14) echo DTV ;;
++	21) echo RCM ;;
++	23) echo STP ;;
++	24) echo SBC ;;
++	25) echo ADP ;;
++	31) echo HDK ;;
++	32) echo IOT ;;
++	33) echo ATP ;;
++	34) echo IDP ;;
++	36) echo WDP ;;
++	40) echo CRD ;;
++	47) echo EVK ;;
++	*) return 1 ;;
++	esac
++}
++
++# Print the name a downstream kernel gives subtype $2 of hardware platform
++# type $1 in /sys/devices/soc0/platform_subtype. QRDs have their own names.
++platform_subtype_name() {
++	if [ "$1" = 11 ]
++	then
++		case "$2" in
++		0) echo QRD ;;
++		1) echo SKUAA ;;
++		2) echo SKUF ;;
++		3) echo SKUAB ;;
++		5) echo SKUG ;;
++		*) echo INVALID ;;
++		esac
++	else
++		case "$2" in
++		0) echo Unknown ;;
++		1) echo charm ;;
++		2) echo strange ;;
++		3) echo strange_2a ;;
++		*) echo Invalid ;;
++		esac
++	fi
++}
++
++# Build in $1 the directory hexagonrpcd serves the DSP as /sys/devices/soc0.
++# The sensors registry chooses the vendor's sensor configs by the attributes a
++# downstream kernel has there (hw_platform, platform_subtype, platform_version),
++# and without them it can only reuse the registry Android left in persist.
++# Mainline has soc_id and revision in the same format, and the rest only as
++# numbers in debugfs, read from the same SMEM socinfo.
++build_socinfo() {
++	mkdir -p "$1"
++	for attr in family machine revision serial_number soc_id
++	do
++		if [ -r "/sys/devices/soc0/$attr" ]
++		then
++			cat "/sys/devices/soc0/$attr" > "$1/$attr"
++		fi
++	done
++
++	debugfs=/sys/kernel/debug
++	if ! [ -d "$debugfs/qcom_socinfo" ]
++	then
++		debugfs="$BASEDIR/debugfs"
++		mkdir -p "$debugfs"
++		mount -t debugfs none "$debugfs" 2> /dev/null || :
++	fi
++	smem="$debugfs/qcom_socinfo"
++
++	hw_type=
++	if [ -r "$smem/hardware_platform" ]
++	then
++		read -r hw_type < "$smem/hardware_platform"
++		hw_platform_name "$hw_type" > "$1/hw_platform" || rm -f "$1/hw_platform"
++	fi
++	if [ -r "$smem/hardware_platform_subtype" ]
++	then
++		read -r hw_subtype < "$smem/hardware_platform_subtype"
++		echo "$hw_subtype" > "$1/platform_subtype_id"
++		platform_subtype_name "$hw_type" "$hw_subtype" > "$1/platform_subtype"
++	fi
++	if [ -r "$smem/platform_version" ]
++	then
++		cat "$smem/platform_version" > "$1/platform_version"
++	fi
++
++	if [ "$debugfs" != /sys/kernel/debug ]
++	then
++		umount "$debugfs" 2> /dev/null || :
++		rmdir "$debugfs"
++	fi
++}
++
+ # Configurations:
+ 
+ # List of partitions to be mounted and inspected for blobs. bluetooth's are
+@@ -218,9 +323,8 @@ then
+ 			break
+ 		fi
+ 	done
+-	# hexagonrpc expects socinfo packaged from downstream here, but because it is
+-	# runtime-specific, the closest we have is socinfo from runtime kernel.
+-	link_path "/sys/devices/soc0" "$BASEDIR/hexagonrpc/socinfo"
++	# hexagonrpc expects socinfo as a downstream kernel has it here
++	build_socinfo "$BASEDIR/hexagonrpc/socinfo"
+ 	exit 0
+ fi
+ 
+-- 
+2.56.1
+
