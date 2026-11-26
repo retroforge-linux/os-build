@@ -1,0 +1,117 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Thu, 26 Nov 2026 12:00:00 +0000
+Subject: [PATCH] feat(GameCard): the other cards dim while one has the focus
+
+The focused game card was hard to find: it rose 40 px and grew 2%, and
+the shine and god rays that also marked it are off unless Animated
+Effects is on (patch 0008: their shaders redraw the interface every
+frame). Now every other card's art is at 60% brightness while a card has
+the focus, with nothing animated. Only the card that had the focus and
+the one that has it change when the focus moves between cards; all of
+them when it comes to the cards or leaves them. A card added meanwhile
+comes dimmed; the lit card leaving the tree (no focus_exited then) has
+the focus looked at again next frame.
+
+The player's choice (MANGMI Air X, 2026-11-26), after trying an outline
+in the theme's colors and the game's name on the focused card as well.
+---
+ core/ui/components/card.gd | 48 ++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 48 insertions(+)
+
+diff --git a/core/ui/components/card.gd b/core/ui/components/card.gd
+index b69928d..3770baf 100644
+--- a/core/ui/components/card.gd
++++ b/core/ui/components/card.gd
+@@ -36,6 +36,12 @@ signal unhighlighted
+ ## The panel's mask, used only while something besides the art is drawn over it (_update_clip).
+ @export var art_mask: StyleBox
+ 
++## The focused card stands out: every other card's art is dimmed. Nothing animated, so the
++## interface still idles once the focus has moved.
++const GROUP := "game_cards"
++const DIMMED := Color(0.6, 0.6, 0.6, 1.0)
++static var _lit: GameCard  # the card with the focus, while one has it: the others are dimmed
++
+ var library_item: LibraryItem
+ var tapped_count := 0
+ var logger := Log.get_logger("GameCard")
+@@ -68,6 +74,9 @@ func _ready() -> void:
+ 		node.visibility_changed.connect(_update_clip)
+ 	_update_art_shape()
+ 	_update_clip()
++	add_to_group(GROUP)
++	if is_instance_valid(_lit) and _lit != self:
++		_set_dimmed(true)
+ 
+ 	# Setup a timer callback to clear number of taps on the card
+ 	var on_timeout := func():
+@@ -156,6 +165,10 @@ func _enter_tree() -> void:
+ 
+ 
+ func _exit_tree() -> void:
++	# The lit card leaving takes the focus with it, and no focus_exited comes: look again next frame.
++	if _lit == self:
++		_lit = null
++		(Engine.get_main_loop() as SceneTree).process_frame.connect(func() -> void: GameCard._relight(), CONNECT_ONE_SHOT)
+ 	if _art_window:
+ 		_art_window.remove(self)
+ 		_art_window = null
+@@ -173,6 +186,7 @@ func _follow_art_window() -> bool:
+ 
+ func _on_focus() -> void:
+ 	highlighted.emit()
++	_light(self)
+ 	# The god-rays and shine shaders are animated, so a focused card keeps the interface
+ 	# redrawing every frame; only use them when animated effects are enabled.
+ 	var settings := load("res://core/global/settings_manager.tres") as SettingsManager
+@@ -208,6 +222,7 @@ func _shader_shine_fade_in() -> void:
+ 
+ func _on_unfocus() -> void:
+ 	unhighlighted.emit()
++	_follow_focus.call_deferred()
+ 	if god_rays_rect.visible:
+ 		_shader_godrays_fade_out()
+ 	if shine_rect.visible:
+@@ -226,6 +241,39 @@ func _shader_godrays_fade_out() -> void:
+ 	tween.tween_property(god_rays_rect, "visible", false, 0.0)
+ 
+ 
++func _set_dimmed(dim: bool) -> void:
++	if panel:
++		panel.modulate = DIMMED if dim else Color.WHITE
++
++
++## `card` is lit and the others dimmed: all of them the first time, then only the card that had it.
++static func _light(card: GameCard) -> void:
++	if _lit == card:
++		return
++	if is_instance_valid(_lit):
++		_lit._set_dimmed(true)
++	else:
++		card.get_tree().call_group(GROUP, "_set_dimmed", true)
++	_lit = card
++	card._set_dimmed(false)
++
++
++## After the lit card lost the focus: light the card that has it now, or none when it went elsewhere.
++func _follow_focus() -> void:
++	if _lit == self:
++		_relight()
++
++
++static func _relight() -> void:
++	var tree := Engine.get_main_loop() as SceneTree
++	var focused := tree.root.gui_get_focus_owner()
++	if focused is GameCard:
++		_light(focused)
++	else:
++		_lit = null
++		tree.call_group(GROUP, "_set_dimmed", false)
++
++
+ func _shader_shine_fade_out() -> void:
+ 	var tween := create_tween()
+ 	var shader := shine_rect.material as ShaderMaterial
+-- 
+2.47.0
