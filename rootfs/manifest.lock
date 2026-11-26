@@ -297,7 +297,7 @@ mobile-broadband-provider-info 20251101-1 any snapshot 1b0146d8b72f6ffc3edcccd57
 mpdecimal 4.0.1-3 aarch64 snapshot 93a0e16603858a8d78c4ab3a924ff2ccd9554cd2019c1f65d411c5276334cb86
 mpfr 4.2.2-1 aarch64 snapshot 25f827431b1a13a6f524d76e62c0b0bdc5c1bf6ffd3d849cf73b5f840172ac2f
 mpg123 1.33.5-1 aarch64 snapshot 1a84c4c68b6843c31a1f5be957189d9402d6f3b68140329690727aa83188ed8d
-msm-firmware-loader 1.9.0-1.1 aarch64 retroforge 37b8c707456c3a2a91e6b458b1eaa65635b79b39b2f7aa0b02cd5025d2aad1b2
+msm-firmware-loader 1.9.0-1.1 aarch64 retroforge 4cecfe5fccafc34a586445e905cbc6ffabc520cc76994eb90d91a4f9628de5ea
 mtdev 1.1.7-1 aarch64 snapshot ddc6848de75a95048baacb5a27f06980dc1f8384f41bd5346d0dd048ee8ebd86
 mtools 1:4.0.49-1 aarch64 snapshot 1dde2158e72277060b0a7722d223985200cc377a8dc1e1d7b8adcfbc474d0aa4
 ncurses 6.6-2 aarch64 snapshot 2fe037384c433ce0c80c1b6e272844ccd4850ddc7d091e060c72eec7315d756a
