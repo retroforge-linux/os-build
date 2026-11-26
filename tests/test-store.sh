@@ -654,8 +654,8 @@ r = store("gog", "games")
 games = json.loads(r.stdout or "[]")
 ok(r.returncode == 0 and [g["id"] for g in games] == ["1"], "owned Windows games only (no DLC, no Linux-only, no other platform)", r.stdout + r.stderr)
 ok(games and games[0]["title"] == "Game One" and games[0]["art"].get("portrait") == "https://images.gog.com/v1_glx_vertical_cover.jpg"
-   and games[0]["art"].get("logo") == "https://images.gog.com/l1_glx_logo.png" and games[0]["installed"] is False,
-   "title, art sized by GOG's suffixes, not installed", str(games))
+   and "logo" not in games[0]["art"] and games[0]["installed"] is False,
+   "title, art sized by GOG's suffixes, no logo (GOG's is the key art), not installed", str(games))
 r = store("gog", "games", env={"RETROFORGE_STORE_API": "http://127.0.0.1:9"})
 ok(r.returncode == 0 and [g["id"] for g in json.loads(r.stdout or "[]")] == ["1"] and "as last listed" in r.stderr,
    "offline: the library as last listed", r.stderr)

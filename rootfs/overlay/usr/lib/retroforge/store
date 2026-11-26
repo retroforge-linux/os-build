@@ -1149,10 +1149,11 @@ class Gog:
             title = (meta.get("title") or {}).get("*") or (game.get("title") or {}).get("*") or gid
             # GOG's image service sizes by a suffix ("{formatter}"): a cover is 54 KB as it is
             # and 30 KB as _glx_vertical_cover (both 342x482), a background 365 KB and 63 KB at
-            # _800, a logo 2.1 MB and 14 KB as _glx_logo.
+            # _800. No logo: GOG's "logo" is the key art with the title on it (Greak: 1600x740, opaque;
+            # 100x60 as _glx_logo), which OGUI's launch menu drew small and blurry over the same art.
             art = {}
             for key, field, size, ext in (("portrait", "vertical_cover", "_glx_vertical_cover", "jpg"), ("landscape", "background", "_800", "jpg"),
-                                          ("hero", "background", "_1600", "jpg"), ("logo", "logo", "_glx_logo", "png")):
+                                          ("hero", "background", "_1600", "jpg")):
                 fmt = (game.get(field) or {}).get("url_format", "")
                 if fmt:
                     art[key] = fmt.replace("{formatter}", size).replace("{ext}", ext)
