@@ -53,10 +53,10 @@
 #   STEAM_COMPAT_SHADER_PATH           <library>/steamapps/shadercache/<appid>
 #   STEAM_COMPAT_LIBRARY_PATHS         every library's steamapps (what pressure-vessel shares)
 #   STEAM_COMPAT_TOOL_PATHS            the command's compat tools (folders with a toolmanifest.vdf)
-#   STEAM_COMPAT_CONFIG                Valve's per-game Proton setting, when there is one (appinfo.vdf,
+#   STEAM_COMPAT_CONFIG                Valve's per-game Proton setting, when there is one (app cache,
 #                                      app 891390 "SteamPlay 2.0 Manifests", app_compat_configs)
 #   SteamDeck=1                        as the client sets it: /usr/bin/steam starts it with -steamdeck
-# from the working folder of the appinfo.vdf launch entry that runs that executable, else the
+# from the working folder of the app cache's launch entry that runs that executable, else the
 # executable's own folder. And at the resolution Steam is set to run it at (its Properties > General >
 # Game resolution: ResolutionOverride2 in the signed-in account's localconfig.vdf) or the one the player
 # chose for it in Game settings, which the client gives the game's X server through gamescope
@@ -514,7 +514,7 @@ def fex_tso(appid):
         return "1" if choice == "on" else "0"
     sl = steam_library()
     try:
-        app = sl.read_app_nodes(os.path.join(STEAM_ROOT, "appcache", "appinfo.vdf"), {appid}).get(appid, {})
+        app = sl.app_nodes(STEAM_ROOT, {appid}).get(appid, {})
     except (OSError, sl.Unreadable):
         return ""
     return tso_hint(app)
@@ -693,7 +693,7 @@ def game_program(appid, app=None):
     game = os.path.join(found[0], "steamapps", "common", found[1])
     if app is None:
         try:
-            app = sl.read_app_nodes(os.path.join(STEAM_ROOT, "appcache", "appinfo.vdf"), {appid}).get(appid, {})
+            app = sl.app_nodes(STEAM_ROOT, {appid}).get(appid, {})
         except (OSError, sl.Unreadable):
             app = {}
     entries = launch_entries(app, beta_key(sl, appid))
@@ -909,9 +909,9 @@ def plan(appid):
 
     appinfo = {}
     try:
-        appinfo = sl.read_app_nodes(os.path.join(STEAM_ROOT, "appcache", "appinfo.vdf"), {appid, STEAMPLAY_MANIFESTS})
+        appinfo = sl.app_nodes(STEAM_ROOT, {appid, STEAMPLAY_MANIFESTS})
     except (OSError, sl.Unreadable) as err:
-        log(f"appinfo.vdf: {err}; the game runs from its executable's folder, without Valve's Proton setting")
+        log(f"Steam's app cache: {err}; the game runs from its executable's folder, without Valve's Proton setting")
     entry_dir = ""
     if choice["launch"] != "default":
         app = appinfo.get(appid, {})
@@ -1196,9 +1196,9 @@ def main(argv):
         appid = int(argv[1])
         sl = steam_library()
         try:
-            app = sl.read_app_nodes(os.path.join(STEAM_ROOT, "appcache", "appinfo.vdf"), {appid}).get(appid, {})
-        except Exception as err:  # appinfo.vdf missing or unreadable: no launch options to offer
-            log(f"appinfo.vdf: {err}")
+            app = sl.app_nodes(STEAM_ROOT, {appid}).get(appid, {})
+        except Exception as err:  # the app cache missing or unreadable: no launch options to offer
+            log(f"Steam's app cache: {err}")
             app = {}
         entries = launch_entries(app, beta_key(sl, appid))
         x86 = bool(x86_game(appid))

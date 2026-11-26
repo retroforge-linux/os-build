@@ -13,19 +13,22 @@
 # v27/v28): each package lists its app ids. Package 0 is left out: every account has it, and it
 # holds Valve's default free apps (Team Fortress 2, Dota 2, the Spacewar test app), not the player's.
 # A delisted or shut-down game the player owns stays, as in Steam's own library. Of those apps, the
-# ones appcache/appinfo.vdf (binary VDF, v27/v28/v29) types as a game, with its name from there:
+# ones the client's app cache types as a game, with its name from there:
 # no DLC, demo, tool (Proton, the Steam Linux Runtimes, FEX), application or soundtrack. Before the
 # client has signed in once the two files are not there: owned_known is false and only the installed
 # games are listed.
 #
 # INSTALLED: one app manifest per installed app, steamapps/appmanifest_<appid>.acf, in the client's
 # root and every folder steamapps/libraryfolders.vdf names, with the fully-installed bit (4) in its
-# StateFlags (set too while an update is pending). An installed app is listed when appinfo.vdf types
-# it as a game or demo, or, when appinfo.vdf does not know it, unless its name is one of Steam's tools.
+# StateFlags (set too while an update is pending). An installed app is listed when the app cache types
+# it as a game or demo, or, when the app cache does not know it, unless its name is one of Steam's tools.
 #
-# appinfo.vdf is the client's cache of every app it has looked at, tens of MB on a large account:
-# only the owned and installed apps' entries are parsed, the others skipped by their size. The owned
-# list is cached in ~/.cache/retroforge/steam-library.json until either file changes (the client
+# The app cache holds every app the client has looked at, tens of MB on a large account. The current
+# client writes it as 256 shards, appcache/appinfo/appinfo_00.vdf ... appinfo_ff.vdf, each with its own
+# index and string table; older ones wrote the single appcache/appinfo.vdf (binary VDF, v27/v28/v29).
+# Both there (a client updated since), the one written last is read. Only the owned and installed apps'
+# entries are parsed, the others skipped by their size. The owned list is cached in
+# ~/.cache/retroforge/steam-library.json until the app cache or packageinfo.vdf changes (the client
 # rewrites them as it runs, so a game bought on another device shows once Steam has run here).
 #
 # Exit 0 with the JSON, also when there is no Steam (an empty list); 2 for bad arguments. A cache
@@ -46,12 +49,22 @@ CACHE_FILE = os.path.join(CACHE, "steam-library.json")
 CACHE_VERSION = 1
 
 # appinfo.vdf: v27 keys inline and one sha1; v28 adds the binary data's sha1; v29 keys by index into a
-# string table at the offset after the universe.
+# string table at the offset after the universe. (Valve counts them 39-41: these are the magic's last
+# byte in hex.)
 APPINFO_MAGIC = {0x07564427: 27, 0x07564428: 28, 0x07564429: 29}
+# appinfo/appinfo_<xx>.vdf, Valve's version 42 (SteamDatabase/SteamAppInfo, AppInfo.cs ReadShard): after
+# magic and universe, shard index, shard count, app count, index size, string count, string table
+# size, data size and two crc32s. Then the index, per app: app id, data offset, data size, summary
+# size and that many bytes of summary; the string table; the data. An app's data is its binary data's
+# sha1 and its KeyValues, keyed by the shard's string table. The shard an app is in does not follow
+# from its id (not its low byte, nor a common hash of it), so each shard's index is looked at.
+APPINFO_SHARD_MAGIC = 0x0756442A
+SHARD_HEADER = struct.Struct("<11I")
+SHARD_NAME = re.compile(r"appinfo_[0-9a-f]+\.vdf")
 # packageinfo.vdf: v28 adds a PICS token after the change number.
 PACKAGEINFO_MAGIC = {0x06565527: 27, 0x06565528: 28}
 FULLY_INSTALLED = 4
-# Names of Steam's tools, for an installed app appinfo.vdf does not know.
+# Names of Steam's tools, for an installed app the app cache does not know.
 TOOL_NAMES = ("Proton ", "Proton-", "Steam Linux Runtime", "Steamworks Common Redistributables")
 
 
@@ -141,7 +154,7 @@ def read_packages(path):
 
 
 def read_apps(path, wanted):
-    """{appid: (type, name)} from appinfo.vdf, for the app ids in `wanted` only."""
+    """{appid: (type, name)} from the app cache at `path` (appinfo_path), for the app ids in `wanted` only."""
     apps = {}
     for appid, root in read_app_nodes(path, wanted).items():
         common = root.get("appinfo", root).get("common", {})
@@ -149,9 +162,54 @@ def read_apps(path, wanted):
     return apps
 
 
+def shard_files(folder):
+    """[(path, os.stat_result)] of the app cache's shards in `folder`, by name; [] without the folder."""
+    try:
+        entries = sorted(os.scandir(folder), key=lambda e: e.name)
+    except OSError:
+        return []
+    shards = []
+    for entry in entries:
+        if SHARD_NAME.fullmatch(entry.name):
+            try:
+                shards.append((entry.path, entry.stat()))
+            except OSError:  # replaced while listed: the client writes a shard and renames it in
+                continue
+    return shards
+
+
+def appinfo_path(root):
+    """The client's app cache: the shard folder appcache/appinfo when it holds shards, else
+    appcache/appinfo.vdf (there or not); both there, the one written last."""
+    single, folder = os.path.join(root, "appcache", "appinfo.vdf"), os.path.join(root, "appcache", "appinfo")
+    shards = shard_files(folder)
+    if not shards:
+        return single
+    try:
+        single_time = os.stat(single).st_mtime_ns
+    except OSError:
+        return folder
+    return folder if max(st.st_mtime_ns for _, st in shards) >= single_time else single
+
+
+def app_nodes(root, wanted):
+    """read_app_nodes of the client's app cache under Steam root `root`."""
+    return read_app_nodes(appinfo_path(root), wanted)
+
+
 def read_app_nodes(path, wanted):
-    """{appid: its whole KeyValues tree} from appinfo.vdf, for the app ids in `wanted` only
-    (retroforge-steam-direct reads their launch entries too)."""
+    """{appid: its whole KeyValues tree} from the app cache at `path` (the shard folder or appinfo.vdf,
+    as appinfo_path picks), for the app ids in `wanted` only (retroforge-steam-direct reads their
+    launch entries too)."""
+    if os.path.isdir(path):
+        apps, left = {}, set(wanted)
+        for shard, _ in shard_files(path):
+            if not left:
+                break
+            found = read_shard(shard, left)
+            apps.update(found)
+            left -= found.keys()
+        return apps
     with open(path, "rb") as f:
         data = f.read()
     try:
@@ -183,6 +241,48 @@ def read_app_nodes(path, wanted):
             pos += 8 + size
     except (struct.error, IndexError, ValueError) as err:
         raise Unreadable(f"appinfo.vdf is cut short or damaged: {err}")
+
+
+def read_shard(path, wanted):
+    """read_app_nodes for one shard: its header and index, and the rest only when it holds a wanted app."""
+    name = f"appinfo/{os.path.basename(path)}"
+    try:
+        with open(path, "rb") as f:
+            (magic, _universe, _shard, _shards, count, index_size, strings, table_size, data_size,
+             _crc, _header_crc) = SHARD_HEADER.unpack(f.read(SHARD_HEADER.size))
+            if magic != APPINFO_SHARD_MAGIC:
+                raise Unreadable(f"unknown {name} format {magic:#x}")
+            index = f.read(index_size)
+            if len(index) != index_size:
+                raise ValueError(f"index of {index_size} bytes, {len(index)} there")
+            entries, pos = [], 0
+            for _ in range(count):
+                appid, offset, size, summary = struct.unpack_from("<4I", index, pos)
+                pos += 16 + summary
+                if appid in wanted:
+                    entries.append((appid, offset, size))
+            if pos > index_size:
+                raise ValueError("the index runs past its size")
+            if not entries:
+                return {}
+            rest = f.read(table_size + data_size)
+        if len(rest) != table_size + data_size:
+            raise ValueError(f"string table and data of {table_size + data_size} bytes, {len(rest)} there")
+        names, p = [], 0
+        for _ in range(strings):
+            end = rest.index(b"\0", p, table_size)
+            names.append(rest[p:end].decode("utf-8", "replace"))
+            p = end + 1
+        apps = {}
+        for appid, offset, size in entries:
+            start = table_size + offset
+            if size < 20 or start + size > len(rest):
+                raise ValueError(f"app {appid}'s data runs past the shard")
+            # After the binary data's sha1; the app's own bytes only, so a damaged tree stops at its end.
+            apps[appid] = BinaryKV(rest[start:start + size], 20, names).node()
+        return apps
+    except (struct.error, IndexError, ValueError) as err:
+        raise Unreadable(f"{name} is cut short or damaged: {err}")
 
 
 # ------------------------------------------------------------------------------------------------
@@ -257,6 +357,11 @@ def installed_apps(root):
 def cache_key(paths):
     key = []
     for path in paths:
+        if os.path.isdir(path):  # the shard folder: its shards' number, total size and newest write
+            shards = shard_files(path)
+            key.append([path, len(shards), sum(st.st_size for _, st in shards),
+                        max((st.st_mtime_ns for _, st in shards), default=0)])
+            continue
         st = os.stat(path)
         key.append([path, st.st_size, st.st_mtime_ns])
     return key
@@ -264,7 +369,7 @@ def cache_key(paths):
 
 def owned_games(root):
     """[{"appid", "name"}] of the owned games, or None when the client's caches are not there."""
-    appinfo = os.path.join(root, "appcache", "appinfo.vdf")
+    appinfo = appinfo_path(root)
     packageinfo = os.path.join(root, "appcache", "packageinfo.vdf")
     try:
         key = cache_key([appinfo, packageinfo])
@@ -304,12 +409,12 @@ def library(root):
     for game in owned or []:
         games[game["appid"]] = {"appid": game["appid"], "name": game["name"], "installed": False, "dir": ""}
     # Types for the installed apps the owned list does not have (a tool, a demo, a game shared by
-    # family): from appinfo.vdf when it knows them.
+    # family): from the app cache when it knows them.
     types = {}
     unknown = set(installed) - set(games)
     if unknown:
         try:
-            types = read_apps(os.path.join(root, "appcache", "appinfo.vdf"), unknown)
+            types = read_apps(appinfo_path(root), unknown)
         except (OSError, Unreadable):
             types = {}
     for appid, app in installed.items():

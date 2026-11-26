@@ -8,8 +8,9 @@
 # background, and once it is, it becomes entry "0" of config.vdf's CompatToolMapping while the client
 # is not running, and each installed Windows-only game's own entry unless the game is set to another
 # tool (a game set to the Valve-based ARMv8.0 builds offered before moves to it); the rest of config.vdf
-# stays byte for byte; a missing section is created; an unreadable appinfo.vdf leaves the default
-# alone; there is no channel; steam-compat-tools takes proton-cachyos-armv8.pin on ARMv8.0.
+# stays byte for byte; a missing section is created; the games' platforms come from the client's app
+# cache, the current client's shards or an older client's appinfo.vdf, and one it cannot read leaves
+# the default alone; there is no channel; steam-compat-tools takes proton-cachyos-armv8.pin on ARMv8.0.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -83,25 +84,19 @@ e = m and re.search(r'"%s"\s*\{\s*"name"\s*"([^"]*)"\s*"config"\s*"[^"]*"\s*"pri
 print(f"{e.group(1)} {e.group(2)}" if e else "")
 PY2
 }
-game() {  # game <appid> <name> <type> <oslist>: an installed app and its appinfo.vdf entry
+game() {  # game <appid> <name> <type> <oslist>: an installed app and its app cache entry
   mkdir -p "$S/steamapps"
   printf '"AppState"\n{\n\t"appid"\t\t"%s"\n\t"name"\t\t"%s"\n\t"StateFlags"\t\t"4"\n\t"installdir"\t\t"%s"\n}\n' "$1" "$2" "$2" >"$S/steamapps/appmanifest_$1.acf"
   printf '%s\t%s\t%s\t%s\n' "$@" >>"$T/apps"
 }
-appinfo() {  # appcache/appinfo.vdf (v28) of the games game() listed
-  python3 - "$T/apps" "$S/appcache/appinfo.vdf" <<'PY2'
-import os, struct, sys
-def kv(tree):
-    return b"".join(b"\x00" + k.encode() + b"\0" + kv(v) + b"\x08" if isinstance(v, dict)
-                    else b"\x01" + k.encode() + b"\0" + v.encode() + b"\0" for k, v in tree.items())
-body = b""
+appinfo() {  # appinfo [format]: the app cache of the games game() listed (shards, or 28: appinfo.vdf v28)
+  python3 - "$T/apps" "$T/apps.json" <<'PY2' && python3 "$ROOT/tests/lib-steam-appinfo.py" "${1:-shards}" "$S" "$T/apps.json"
+import json, sys
+apps = {}
 for line in open(sys.argv[1]):
     appid, name, kind, oslist = line.rstrip("\n").split("\t")
-    data = kv({"appinfo": {"appid": appid, "common": {"name": name, "type": kind, "oslist": oslist}}}) + b"\x08"
-    head = struct.pack("<IIQ", 2, 1700000000, 0) + b"\x11" * 20 + struct.pack("<I", 7) + b"\x22" * 20
-    body += struct.pack("<II", int(appid), len(head) + len(data)) + head + data
-os.makedirs(os.path.dirname(sys.argv[2]), exist_ok=True)
-open(sys.argv[2], "wb").write(struct.pack("<II", 0x07564428, 1) + body + struct.pack("<I", 0))
+    apps[appid] = {"appinfo": {"appid": appid, "common": {"name": name, "type": kind, "oslist": oslist}}}
+json.dump(apps, open(sys.argv[2], "w"))
 PY2
 }
 
@@ -175,12 +170,20 @@ run "$T/v80" apply
   && ok "games set to the Valve-based ARMv8.0 builds move to it" || bad "4000=$(tool_of 4000) 4500=$(tool_of 4500)"
 cp "$VDF" "$T/once"; run "$T/v80" apply
 cmp -s "$VDF" "$T/once" && [ -z "$ERR" ] && ok "again: unchanged and quiet" || bad "err=$ERR $(diff "$T/once" "$VDF")"
+vdf; appinfo 28; run "$T/v80" apply
+[ "$(tool_of 2000)" = "proton-cachyos-armv8-retroforge 250" ] && [ -z "$(tool_of 3000)" ] \
+  && ok "an older client's appinfo.vdf: the same" || bad "2000=$(tool_of 2000) 3000=$(tool_of 3000) err=$ERR"
 
-CASE="an unreadable appinfo.vdf"
+CASE="an unreadable app cache"
 vdf; printf 'junk' >"$S/appcache/appinfo.vdf"
 run "$T/v80" apply
 [ "$RC" = 0 ] && [ "$(default_of)" = proton-cachyos-armv8-retroforge ] && [ -z "$(tool_of 2000)" ] && grep -q "could not read" <<<"$ERR" \
-  && ok "the default is still set" || bad "rc=$RC default=$(default_of) err=$ERR"
+  && ok "appinfo.vdf: the default is still set" || bad "rc=$RC default=$(default_of) err=$ERR"
+vdf; appinfo; shard="$(grep -l "Win Game" "$S"/appcache/appinfo/appinfo_*.vdf)"; head -c 60 "$shard" >"$T/cut"; mv "$T/cut" "$shard"
+run "$T/v80" apply
+[ "$RC" = 0 ] && [ "$(default_of)" = proton-cachyos-armv8-retroforge ] && [ -z "$(tool_of 2000)" ] \
+  && grep -q "could not read.*appinfo/$(basename "$shard") is cut short" <<<"$ERR" \
+  && ok "a shard cut short: the default is still set, the shard named" || bad "rc=$RC default=$(default_of) err=$ERR"
 rm -rf "$S/steamapps" "$S/appcache"
 
 # A kept client that started without our build (Steam open while Steam Client's install ran) is

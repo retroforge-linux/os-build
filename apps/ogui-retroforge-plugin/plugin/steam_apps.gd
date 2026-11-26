@@ -302,13 +302,18 @@ static func fetch_art(cache_dir: String, appid: int, kind: int) -> String:
 
 ## What a rescan depends on, for steam_watch.gd, as "path size mtime", sorted: the client's caches
 ## of the account's licenses and apps (a game bought elsewhere), libraryfolders.vdf, and every app
-## manifest (Steam rewrites one when an install starts, progresses and ends).
+## manifest (Steam rewrites one when an install starts, progresses and ends). The current client's
+## app cache is a folder of 256 shards, each written aside and renamed in: the folder's own mtime
+## moves with every one, so it counts by that (size 0) instead of 256 files every poll.
 static func snapshot(root: String) -> PackedStringArray:
 	var lines := PackedStringArray()
 	for file in ["appcache/packageinfo.vdf", "appcache/appinfo.vdf", "steamapps/libraryfolders.vdf"]:
 		var path := root.path_join(file)
 		if FileAccess.file_exists(path):
 			lines.append("%s %d %d" % [path, FileAccess.get_size(path), FileAccess.get_modified_time(path)])
+	var shards := root.path_join("appcache/appinfo")
+	if DirAccess.dir_exists_absolute(shards):
+		lines.append("%s 0 %d" % [shards, FileAccess.get_modified_time(shards)])
 	for lib in library_dirs(root):
 		var apps := lib.path_join("steamapps")
 		if not DirAccess.dir_exists_absolute(apps):

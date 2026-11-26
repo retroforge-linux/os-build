@@ -161,12 +161,17 @@ instead, so signing into Steam Client is enough (`apps/ogui-retroforge-plugin`: 
 - **Owned games**: the account's licenses, as the client caches them in `appcache/packageinfo.vdf`
   (binary VDF): each package lists its app ids. Package 0 is left out: every account has it, and it
   holds Valve's default free apps (Team Fortress 2, Dota 2, the Spacewar test app). Of those apps,
-  the ones `appcache/appinfo.vdf` (binary VDF, v27-v29) types as a game, named from there: no DLC,
-  demos, tools (Proton, the Steam Linux Runtimes, FEX), applications or soundtracks. A delisted or
-  shut-down game the player owns stays, as in Steam's own library. Measured on a real account (a Mac
-  client's caches, same formats, 2026-10-21): 64 packages, 349 apps, 66 owned games, in 0.04 s; only
-  the owned and installed apps' entries of `appinfo.vdf` are parsed, and the list is cached in
-  `~/.cache/retroforge/steam-library.json` until either file changes.
+  the ones the client's app cache types as a game, named from there: no DLC, demos, tools (Proton,
+  the Steam Linux Runtimes, FEX), applications or soundtracks. A delisted or shut-down game the
+  player owns stays, as in Steam's own library. The app cache is 256 shards,
+  `appcache/appinfo/appinfo_00.vdf` ... `appinfo_ff.vdf` (magic `0x0756442A`, each with its own index
+  and string table; the Air X's client, 2026-11-26), or the single `appcache/appinfo.vdf` (binary
+  VDF, v27-v29) of older clients; with both there, the one written last is read. An app's shard does
+  not follow from its id, so each shard's index is read (the Air X's 256 shards, 365 apps: ~11 ms
+  for one app there, the owned list of 69 games in 0.26 s with Python's start). Measured on a real
+  account (a Mac client's caches, 2026-10-21): 64 packages, 349 apps, 66 owned games, in 0.04 s;
+  only the owned and installed apps' entries are parsed, and the list is cached in
+  `~/.cache/retroforge/steam-library.json` until the app cache or `packageinfo.vdf` changes.
 - **Installed**: one app manifest per installed app, `steamapps/appmanifest_<appid>.acf`, in the
   client's root and every other folder `steamapps/libraryfolders.vdf` names (an SD card), with the
   fully-installed bit (4) in its `StateFlags`. An installed game the licenses do not list (shared by
@@ -395,8 +400,8 @@ app id and OGUI's Steam handling (patch 0017) works as with the client.
   (every library); `STEAM_COMPAT_TOOL_PATHS` (the command's compat tools, Proton first);
   `SteamDeck=1` (the client runs with `-steamdeck`).
 - **Valve's per-game Proton setting.** `STEAM_COMPAT_CONFIG` comes from `app_compat_configs` of
-  app 891390, "SteamPlay 2.0 Manifests", in `appinfo.vdf`. Hades has none.
-- **Working folder.** The working folder of the `appinfo.vdf` launch entry that runs that
+  app 891390, "SteamPlay 2.0 Manifests", in the client's app cache. Hades has none.
+- **Working folder.** The working folder of the app cache's launch entry that runs that
   executable (Hades: `x64Vk\`), else the executable's own folder.
 - **Before it runs.** `/usr/bin/steam` still does the D-Bus check, then execs the
   helper. It skips the kept client and the x86 guest. `check` has already checked everything `run`

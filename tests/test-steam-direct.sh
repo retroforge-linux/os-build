@@ -71,13 +71,13 @@ acf "$S" 1145360 Hades 4
 acf "$S" 4185400 SteamLinuxRuntime_4-arm64 4
 acf "$S" 4628740 "Proton 11.0 (ARM64)" 4
 
-# appinfo.vdf (v29): Hades's launch entries (the Vulkan one runs from x64Vk; one entry names a working
-# folder that is not its executable's), and Valve's per-game Proton settings (app 891390).
+# The app cache (mkappinfo [format]: the current client's shards, or 29 for an older client's
+# appinfo.vdf; tests/lib-steam-appinfo.py): Hades's launch entries (the Vulkan one runs from x64Vk; one
+# entry names a working folder that is not its executable's), and Valve's per-game Proton settings
+# (app 891390).
 mkappinfo() {
-  python3 - "$S/appcache/appinfo.vdf" <<'PY'
-import os, struct, sys
-out = sys.argv[1]
-os.makedirs(os.path.dirname(out), exist_ok=True)
+  python3 - "$T/apps.json" <<'PY' && python3 "$ROOT/tests/lib-steam-appinfo.py" "${1:-shards}" "$S" "$T/apps.json"
+import json, sys
 apps = {
     1145360: {"appinfo": {"appid": 1145360, "common": {"name": "Hades", "type": "Game",
                                                        "steam_frame_compatibility": {"configuration": {"tso_enable": 0}}}, "config": {
@@ -100,29 +100,7 @@ apps = {
         "app_compat_configs": {"2310": {"appid": 2310, "config": "oldglstr", "comment": "QUAKE"},
                                "1145360": {"appid": 1145360, "config": "gamedrive,heapdelayfree", "comment": "test"}}}}},
 }
-table = []
-def key(k):
-    if k not in table:
-        table.append(k)
-    return struct.pack("<I", table.index(k))
-def kv(tree):
-    b = b""
-    for k, v in tree.items():
-        if isinstance(v, dict):
-            b += b"\x00" + key(k) + kv(v) + b"\x08"
-        elif isinstance(v, int):
-            b += b"\x02" + key(k) + struct.pack("<i", v)
-        else:
-            b += b"\x01" + key(k) + v.encode() + b"\0"
-    return b
-body = b""
-for appid, tree in sorted(apps.items()):
-    data = kv(tree) + b"\x08"
-    head = struct.pack("<IIQ", 2, 1700000000, 0) + b"\x11" * 20 + struct.pack("<I", 7) + b"\x22" * 20
-    body += struct.pack("<II", appid, len(head) + len(data)) + head + data
-body += struct.pack("<I", 0)
-strings = struct.pack("<I", len(table)) + b"".join(s.encode() + b"\0" for s in table)
-open(out, "wb").write(struct.pack("<IIq", 0x07564429, 1, 16 + len(body)) + body + strings)
+json.dump(apps, open(sys.argv[1], "w"))
 PY
 }
 mkappinfo
@@ -357,6 +335,15 @@ GAMES="$H/.config/retroforge/steam-games.json"
 direct -- game 1145360
 [ "$RC" = 0 ] && python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["settings"] == {"tso": "default", "launch": "default", "resolution": "default", "driver": "default", "api": "default"}, d; assert d["apis"] == [], d; assert d["x86"] is False, d; assert d["tso_hint"] == "0", d; assert [e["key"] for e in d["launch"]] == ["0", "1", "2", "3", "4", "15"], d; assert d["launch"][-1]["description"] == "Hades (Steam Deck)", d; assert d["direct"] in ("on", "off"), d' "$OUT" \
   && ok "game: every choice at its default, and the launch entries Steam's dialog offers here, in its order" || bad "rc=$RC out=$OUT err=$ERR"
+[ -z "$ERR" ] && ok "game: the current client's app cache shards read without a word" || bad "err=$ERR"
+mkappinfo 29; ENTRIES="$OUT"
+direct -- game 1145360
+[ "$RC" = 0 ] && [ "$OUT" = "$ENTRIES" ] && [ -z "$ERR" ] && ok "game: an older client's appinfo.vdf, the same" || bad "rc=$RC out=$OUT err=$ERR"
+rm -f "$S/appcache/appinfo.vdf"
+direct -- game 1145360
+[ "$RC" = 0 ] && grep -q "Steam's app cache: .*appinfo.vdf" <<<"$ERR" && python3 -c 'import json, sys; assert json.loads(sys.argv[1])["launch"] == []' "$OUT" \
+  && ok "game: no app cache at all: no launch entries, and says so" || bad "rc=$RC out=$OUT err=$ERR"
+mkappinfo
 direct -- game 1145360 set launch 0
 [ "$RC" = 0 ] && python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"1145360": {"launch": "0"}}' "$GAMES" \
   && ok "set: saved in steam-games.json" || bad "rc=$RC $(cat "$GAMES" 2>&1)"
@@ -583,10 +570,10 @@ reset_run; mkdir -p "$GAME/Other"; touch "$GAME/Other/Game.exe"
 logline "$SLOG" "2026-10-22 11:20:00" 1145360 "$(cmdline 1145360 "$SLR" "$PROTON" "$GAME/Other/Game.exe")"
 direct -- run 1145360
 [ "$(cat "$T/ran.cwd")" = "$GAME/Other" ] && ok "with no launch entry for the executable, its own folder" || bad "cwd: $(cat "$T/ran.cwd")"
-rm -f "$S/appcache/appinfo.vdf"; reset_run; fresh_log
+rm -rf "$S/appcache/appinfo"; reset_run; fresh_log
 direct -- run 1145360
 [ "$RC" = 0 ] && [ "$(cat "$T/ran.cwd")" = "$GAME/x64Vk" ] && [ -z "$(ran_env STEAM_COMPAT_CONFIG)" ] \
-  && ok "without appinfo.vdf the game still starts, from its executable's folder" || bad "rc=$RC cwd=$(cat "$T/ran.cwd" 2>&1) err=$ERR"
+  && ok "without the app cache the game still starts, from its executable's folder" || bad "rc=$RC cwd=$(cat "$T/ran.cwd" 2>&1) err=$ERR"
 mkappinfo
 
 CASE="run: SD card"

@@ -21,10 +21,10 @@
 # recommendation for it (85), the default (75). Valve recommends its own Proton for most Windows games,
 # so the client ran them with Valve's build while the launches without the client ran ours, and each
 # switch made the next launch redo Wine's prefix set-up (~45 s on the Air X: Hades, 2026-10-24). So each
-# installed game appinfo.vdf lists for Windows and not Linux gets its own entry for our build, as the
-# player would set it in its Properties; a game set to any other tool keeps it, one set to an ARMv8.0
-# build RetroForge offered before (Valve's Proton rebuilt, OLD_DIRS) moves to this one. Native Linux
-# games are left to Steam.
+# installed game Steam's app cache lists for Windows and not Linux gets its own entry for our build, as
+# the player would set it in its Properties; a game set to any other tool keeps it, one set to an
+# ARMv8.0 build RetroForge offered before (Valve's Proton rebuilt, OLD_DIRS) moves to this one. Native
+# Linux games are left to Steam.
 #
 # A RUNNING CLIENT. config.vdf is the client's while it runs (it writes its own when it exits), so apply
 # leaves it alone then, and our build is set at the client's next start. A client kept running in the
@@ -226,7 +226,7 @@ def mappings(text):
 
 
 def steam_library():
-    """/usr/lib/retroforge/steam-library as a module: its manifest and appinfo.vdf readers."""
+    """/usr/lib/retroforge/steam-library as a module: its manifest and app cache readers."""
     loader = importlib.machinery.SourceFileLoader("steam_library", STEAM_LIBRARY)
     spec = importlib.util.spec_from_loader("steam_library", loader)
     module = importlib.util.module_from_spec(spec)
@@ -235,12 +235,12 @@ def steam_library():
 
 
 def windows_games():
-    """{appid: name} of the installed games appinfo.vdf lists for Windows and not for Linux."""
+    """{appid: name} of the installed games Steam's app cache lists for Windows and not for Linux."""
     lib = steam_library()
     installed = lib.installed_apps(STEAM_ROOT)
     if not installed:
         return {}
-    nodes = lib.read_app_nodes(os.path.join(STEAM_ROOT, "appcache", "appinfo.vdf"), set(installed))
+    nodes = lib.app_nodes(STEAM_ROOT, set(installed))
     games = {}
     for appid, node in nodes.items():
         common = node.get("appinfo", node).get("common", {})
@@ -265,7 +265,7 @@ def plan(name):
     keys = ["0"] if new != text else []
     try:
         games = windows_games()
-    except Exception as err:  # appinfo.vdf unreadable: the default alone
+    except Exception as err:  # the app cache unreadable: the default alone
         log(f"could not read the installed games' platforms: {err}")
         games = {}
     tools, added = mappings(new), []

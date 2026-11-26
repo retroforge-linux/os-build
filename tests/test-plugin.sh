@@ -1137,6 +1137,17 @@ func test_steam_apps() -> void:
 	check("steam rescan: a new license in the client's cache (a game bought elsewhere) is due",
 		[watch.poll(false), watch.poll(false)], [false, true])
 	watch.mark_loaded()
+	var shards := root + "/appcache/appinfo"
+	write(shards + "/appinfo_00.vdf", "apps")
+	OS.execute("touch", ["-d", "@1700000000", shards])  # Godot's mtimes are whole seconds
+	check("steam rescan: the current client's app cache shards appearing is due",
+		[watch.poll(false), watch.poll(false)], [false, true])
+	watch.mark_loaded()
+	write(shards + "/appinfo_00.vdf.tmp", "apps, more")
+	DirAccess.rename_absolute(shards + "/appinfo_00.vdf.tmp", shards + "/appinfo_00.vdf")
+	check("steam rescan: a shard written aside and renamed in, as the client does, is due (the folder's mtime)",
+		[watch.poll(false), watch.poll(false)], [false, true])
+	watch.mark_loaded()
 	DirAccess.remove_absolute(apps + "/appmanifest_1145360.acf")
 	check("steam rescan: never while a game (or Steam's UI) runs", [watch.poll(true), watch.poll(true)], [false, false])
 	check("steam rescan: an uninstall is due after it", [watch.poll(false), watch.poll(false)], [false, true])
