@@ -29,7 +29,8 @@
 #    "env": {"NAME": "value"},                     added to the emulator's environment
 #    "gamepad_profile": "guide-hotkeys.yaml",      an InputPlumber device profile next to this
 #                                                  file, declared to OpenGamepadUI for the run:
-#                                                  it loads it while the game has focus (below)
+#                                                  it loads it while the game has focus (below);
+#                                                  Open (--gui) adds the mouse (gui_mouse)
 #    "core_dumps": false,                          no core file when it crashes (default true; below)
 #    "secondary_window_title": "^X \\(Bottom\\)$",   the title of its second screen's window: the
 #                                                  second panel of a dual-screen board (below)

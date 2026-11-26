@@ -138,6 +138,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
 import achievements  # noqa: E402
 import emuopts  # noqa: E402
+import gui_mouse  # noqa: E402
 from launch_common import (CONFIG_HOME, EMU_DATA_DIR, EMU_DIR, ENV, HOME, VRAM_REPORT_LIMIT_VARS,  # noqa: E402
                            Exit, device_field, emulator_child, log)
 from launch_def import (FILE, ROM, SYSTEM, SYSTEM_ID, TEXT, apply_system_settings,  # noqa: E402
@@ -174,6 +175,8 @@ EMU_ID = re.compile(r"[a-z0-9_-]+")
 # below): the profile's path, then the pid owning the declaration. Same env knob for the tests.
 GAME_PROFILE_DECL = ENV.get("RETROFORGE_GAME_PROFILE",
                             os.path.join(ENV.get("XDG_RUNTIME_DIR") or "/tmp", "opengamepadui", "game_profile"))
+# The mouse rows Open adds to the emulator's profile, and the whole profile of one without (gui_mouse).
+GUI_MOUSE_PROFILE = ENV.get("RETROFORGE_GUI_MOUSE_PROFILE", "/usr/share/retroforge/gamepad/gui-mouse.yaml")
 SCRIPT_SHELL = "/bin/bash"  # what a scripts-format game card's script runs with
 # A stub's game id: strictly ASCII letters, digits and underscore (PSN title ids are [A-Z]{4}[0-9]{5}),
 # so an id can never carry a path (/, ..), an option (-x) or control characters into the command line.
@@ -349,12 +352,22 @@ def run_installs(emulator, binary, env, todo, interrupted):
 # while the game has, so the two never race over a device. The declaration names our pid, and a
 # launcher that dies leaves one OpenGamepadUI ignores. ALL OF IT IS BEST-EFFORT: a declaration
 # that cannot be written means a game without hotkeys and one log line, never no game.
+# Open (--gui) declares that profile with a mouse added (right stick, R1/L1 clicks), for the
+# emulator's own windows: gui_mouse, whose composed copy sits beside the declaration.
 
-def declare_gamepad_profile(emulator, name):
-    """Declare the definition's profile for this run. True when declared (withdraw it on exit)."""
-    if name is None:
+def run_gamepad_profile(emulator, name, gui):
+    """The profile path to declare for this run, or None: the definition's, with the mouse on --gui."""
+    own = os.path.join(EMU_DATA_DIR, emulator, name) if name is not None else None
+    if not gui:
+        return own
+    return gui_mouse.gui_profile(emulator, own, GUI_MOUSE_PROFILE, os.path.dirname(GAME_PROFILE_DECL), log)
+
+
+def declare_gamepad_profile(profile):
+    """Declare a profile for this run. True when declared (withdraw it on exit)."""
+    if profile is None:
         return False
-    profile = os.path.join(EMU_DATA_DIR, emulator, name)
+    name = os.path.basename(profile)
     if not os.path.isfile(profile):
         log(f"gamepad profile: {profile} is not in the image; no hotkeys")
         return False
@@ -538,7 +551,8 @@ def run(argv):
         run_installs(emulator, binary, env, todo, interrupted)
         # Last before the start: nothing below but the start itself can fail, so no declaration
         # outlives a launch that said no.
-        profile_declared = declare_gamepad_profile(emulator, definition["gamepad_profile"])
+        profile_declared = declare_gamepad_profile(
+            run_gamepad_profile(emulator, definition["gamepad_profile"], rom is None))
         title_set = set_secondary_window_title(emulator, definition["secondary_window_title"])
         args = one_window_per_panel(emulator, definition["dual_screen_args"]) + args
         program = SCRIPT_SHELL if package.runs_rom and rom is not None else binary

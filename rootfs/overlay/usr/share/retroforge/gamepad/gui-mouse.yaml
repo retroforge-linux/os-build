@@ -1,0 +1,100 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/ShadowBlip/InputPlumber/main/rootfs/usr/share/inputplumber/schema/device_profile_v1.json
+#
+# The mouse an emulator's own UI gets in Open (Apps > an emulator > Open: `retroforge-launch --gui`),
+# for the windows and dialogs no pad drives (Azahar, Cemu and Dolphin have none at all). On for the
+# whole Open session, set at launch, no hotkey (user decision 2026-11-26); a game started from a ROM
+# card never gets it.
+#
+# The rows between the two markers are what Open adds: the right stick moves the pointer, R1 is the
+# left button and L1 the right one. Bumpers, not R2/L2 (the first try): on the Pocket FIT a held R2
+# would not keep a drop-down open (HW 2026-11-26, cause not traced; a trigger is analog and
+# InputPlumber re-sends the click at each value change past its deadzone), while a bumper is digital,
+# one press and one release (user decision). A/B/X/Y, the D-pad, the triggers and the left stick
+# stay the pad, so pad-driven UIs (RetroArch's menu, the big-picture modes) keep working, minus
+# L1/R1 (their tab switch) while Open runs.
+# retroforge-launch (python/gui_mouse.py) copies these rows into the emulator's own gamepad_profile
+# at the top of its `mapping:`, so Open keeps that emulator's Guide hotkeys; held Guide, its layer
+# wins over these rows (Guide+L1/R1 are still the hotkeys). An emulator with no gamepad_profile
+# (PortMaster) gets this whole file: OGUI's Guide (layer, ui_guide tap, Guide+A/X) and the rows.
+# The rows between the "guide layer rows" markers go into that profile's Guide layer the same way:
+# Guide+B sends Escape, which closes a Qt dialog (RPCS3's Cheat Manager): gamescope is the window
+# manager and draws no title bar or close button. B is free in every emulator's Guide layer, so B
+# alone stays the pad's B (user decision 2026-11-26).
+# 800 pixels per second is InputPlumber's own default pointer speed.
+# TARGET_DEVICES is explicit, with the mouse: the MANGMI Pocket Max ships without keyboard/mouse
+# targets (emulators/azahar/guide-hotkeys.yaml has why); the profiles the rows go into list it too.
+version: 1
+kind: DeviceProfile
+name: RetroForge emulator UI mouse
+description: Right stick moves the pointer, R1 left click, L1 right click, Guide+B Escape
+target_devices:
+  - xbox-elite
+  - keyboard
+  - mouse
+
+mapping:
+  - name: Guide holds the Guide layer (and goes to the shell's menu over DBus)
+    source_event:
+      gamepad:
+        button: Guide
+    target_events:
+      - layer:
+          name: guide
+          on_deactivation:
+            only_when_unused: true
+            emit_events:
+              - dbus: ui_guide
+
+# >>> mouse rows
+  - name: Right stick -> mouse pointer (Open)
+    source_event:
+      gamepad:
+        axis:
+          name: RightStick
+    target_events:
+      - mouse:
+          motion:
+            speed_pps: 800
+
+  - name: R1 -> left click (Open)
+    source_event:
+      gamepad:
+        button: RightBumper
+    target_events:
+      - mouse:
+          button: Left
+
+  - name: L1 -> right click (Open)
+    source_event:
+      gamepad:
+        button: LeftBumper
+    target_events:
+      - mouse:
+          button: Right
+# <<< mouse rows
+
+layers:
+  - name: guide
+    mapping:
+# >>> guide layer rows
+      - name: Guide+B -> Escape (closes the dialog in front; gamescope draws no close button) (Open)
+        source_event:
+          gamepad:
+            button: East
+        target_events:
+          - keyboard: KeyEsc
+# <<< guide layer rows
+
+      - name: Guide+A -> ui_quick (OpenGamepadUI quick bar)
+        source_event:
+          gamepad:
+            button: South
+        target_events:
+          - dbus: ui_quick
+
+      - name: Guide+X -> ui_osk (OpenGamepadUI on-screen keyboard)
+        source_event:
+          gamepad:
+            button: North
+        target_events:
+          - dbus: ui_osk

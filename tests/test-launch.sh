@@ -148,6 +148,11 @@ export HOME="$T/home"
 printf '0123456789abcdef0123456789abcdef\n' > "$T/machine-id"; export RETROFORGE_MACHINE_ID="$T/machine-id"
 unset XDG_CONFIG_HOME  # the player conf must be found under $HOME/.config
 export RETROFORGE_LAUNCH_STATUS="$T/launch.status.default"
+# The OpenGamepadUI declaration (gamepad_profile) and Open's mouse profile: never the host's runtime
+# dir, and the repo's copy of the shared mouse file.
+export RETROFORGE_GAME_PROFILE="$T/ogui-default/game_profile"
+GUI_MOUSE="$ROOT/rootfs/overlay/usr/share/retroforge/gamepad/gui-mouse.yaml"
+export RETROFORGE_GUI_MOUSE_PROFILE="$GUI_MOUSE"
 mkdir -p "$HOME"
 
 reset_logs() { rm -f "$T"/{emu,appimage,fusermount}.log "$T/stop-emu" "$T/one-term-seen"; }
@@ -1000,6 +1005,7 @@ bad_def "a system_requires entry with no file" 'd["system_requires"] = {"psx": [
 bad_def "a system_requires status the plugin does not know" 'd["system_requires"] = {"psx": [{"any": ["bios/x"], "status": "boom"}]}'
 bad_def "a system_requires entry with an unknown key" 'd["system_requires"] = {"psx": [{"any": ["bios/x"], "run": "sh"}]}'
 bad_def "system_requires for a bad system name" 'd["system_requires"] = {"../x": [{"any": ["bios/x"]}]}'
+
 
 CASE="first-run settings on a dual-screen board"
 # A dual-screen board (device-env declares a second panel) gets the seed's dual_screen_file instead.
@@ -2008,6 +2014,128 @@ pl n64 "$NROM" 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
 wait_for emu_up && grep -q "gamepad profile" "$T/launch.err" && [ ! -e "$DECL" ] \
   && ok "a profile the image lacks: a log line, no declaration, the game starts" \
   || bad "missing profile: up=$(emu_up && echo yes || echo no), decl=$(cat "$DECL" 2>/dev/null), err=$(tail -1 "$T/launch.err" 2>/dev/null)"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
+
+# =================================================================================================
+CASE="Open's mouse (--gui: the profile + gamepad/gui-mouse.yaml's rows)"
+# Open declares the emulator's profile with the mouse rows of gamepad/gui-mouse.yaml at the top of
+# its mapping (right stick = pointer, R1 = left click, L1 = right click; never the analog triggers), or
+# gui-mouse.yaml itself for an emulator with none. A ROM launch never gets them.
+mouse_rows_ok() {
+  perl -MCPAN::Meta::YAML -e '
+    my $p = CPAN::Meta::YAML->read($ARGV[0]) or exit 1; $p = $p->[0];
+    exit 1 unless grep { $_ eq "mouse" } @{ $p->{target_devices} || [] };
+    my %got;
+    for my $m (@{ $p->{mapping} || [] }) {
+      my $g = ($m->{source_event} || {})->{gamepad} || next;
+      my ($kind) = grep { exists $g->{$_} } qw(button trigger axis);
+      next unless $kind;
+      my $src = ref $g->{$kind} ? $g->{$kind}{name} : $g->{$kind};
+      for my $t (@{ $m->{target_events} || [] }) {
+        my $mo = $t->{mouse} || next;
+        $got{"$kind:$src"} = exists $mo->{motion} ? "motion" : $mo->{button};
+      }
+    }
+    exit !(($got{"axis:RightStick"} // "") eq "motion"
+        && ($got{"button:RightBumper"} // "") eq "Left" && ($got{"button:LeftBumper"} // "") eq "Right"
+        && !grep { /Trigger/ } keys %got);
+  ' "$1"
+}
+# esc_row_ok <file>: the layer Guide holds maps B (East) to Escape, which closes a Qt dialog
+# (gamescope draws no close button).
+esc_row_ok() {
+  perl -MCPAN::Meta::YAML -e '
+    my $p = CPAN::Meta::YAML->read($ARGV[0]) or exit 1; $p = $p->[0];
+    for my $l (@{ $p->{layers} || [] }) {
+      next unless $l->{name} eq "guide";
+      for my $m (@{ $l->{mapping} || [] }) {
+        next unless ((($m->{source_event} || {})->{gamepad} || {})->{button} // "") eq "East";
+        exit 0 if grep { ($_->{keyboard} // "") eq "KeyEsc" } @{ $m->{target_events} || [] };
+      }
+    }
+    exit 1;
+  ' "$1"
+}
+guide_layer_ok "$GUI_MOUSE" && ok "gui-mouse.yaml alone carries OGUI's Guide (for an emulator with no profile)" \
+  || bad "gui-mouse.yaml lacks OGUI's Guide layer"
+mouse_rows_ok "$GUI_MOUSE" && ok "gui-mouse.yaml: right stick pointer, R1 left / L1 right click, no trigger rows" \
+  || bad "gui-mouse.yaml's mouse rows are not all there"
+esc_row_ok "$GUI_MOUSE" && ok "gui-mouse.yaml: Guide+B sends Escape (closes a dialog; no close button under gamescope)" \
+  || bad "gui-mouse.yaml's Guide layer lacks B -> Escape"
+GM_PY="$ROOT/rootfs/overlay/usr/lib/retroforge/python"
+mkdir -p "$T/gui-composed"
+for def in "$SEED_DIR"/*/emulator.json; do
+  emu="$(basename "$(dirname "$def")")"
+  profile="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("gamepad_profile") or "")' "$def")"
+  [ -n "$profile" ] || continue
+  out="$T/gui-composed/$emu.yaml"
+  python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import gui_mouse as g
+s = open(sys.argv[2]).read()
+open(sys.argv[4], "w").write(g.compose(open(sys.argv[3]).read(), g.marked_rows(s, g.MOUSE), g.marked_rows(s, g.GUIDE_LAYER)))' \
+    "$GM_PY" "$GUI_MOUSE" "$(dirname "$def")/$profile" "$out" 2>"$T/compose.err" \
+    && mouse_rows_ok "$out" && guide_layer_ok "$out" && esc_row_ok "$out" \
+    && ok "$emu: Open's profile = its own + the mouse rows + Guide+B Escape, OGUI's Guide kept" \
+    || bad "$emu: $profile does not take the mouse rows: $(cat "$T/compose.err")"
+done
+python3 -B -c 'import sys; sys.path.insert(0, sys.argv[1]); import gui_mouse as g
+LAYER = "layers:\n  - name: guide\n    mapping:\n"
+for text in ("version: 1\n", "target_devices:\n  - mouse\n" + LAYER,
+             "mapping:\nmapping:\ntarget_devices:\n  - mouse\n" + LAYER,
+             "mapping:\ntarget_devices:\n  - mouse\n",
+             "mapping:\ntarget_devices:\n  - mouse\n" + LAYER + LAYER):
+    try: g.compose(text, "  - x\n", "      - y\n")
+    except ValueError: continue
+    sys.exit(1)
+if g.compose("target_devices:\n  - mouse\nmapping:\n  - a\n" + LAYER + "      - b\n", "  - x\n", "      - y\n") \
+        != "target_devices:\n  - mouse\nmapping:\n  - x\n  - a\n" + LAYER + "      - y\n      - b\n":
+    sys.exit(1)
+for shared in ("mapping:\n", "# >>> mouse rows\n# <<< mouse rows\n", "# <<< mouse rows\n  - x\n# >>> mouse rows\n"):
+    try: g.marked_rows(shared, g.MOUSE)
+    except ValueError: continue
+    sys.exit(1)' "$GM_PY" && ok "rows go at the top of the mapping and of the guide layer; no single mapping:, guide layer or mouse target, or rows without both markers: refused" \
+  || bad "gui_mouse accepted a profile or rows it cannot splice"
+
+cp "$SEED_DIR/azahar/guide-hotkeys.yaml" "$BD/fakepad/guide.yaml"
+cat > "$BD/fakepad/emulator.json" <<'EOF'
+{"format": "binary", "binary": "current", "args": ["{rom}"], "gui_args": [], "gamepad_profile": "guide.yaml"}
+EOF
+rm -rf "$T/ogui"; reset_logs
+pl --gui fakepad 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
+wait_for emu_up || bad "Open never started the emulator: $(cat "$T/launch.err")"
+[ "$(sed -n 1p "$DECL" 2>/dev/null)" = "$T/ogui/gui-fakepad.yaml" ] && mouse_rows_ok "$T/ogui/gui-fakepad.yaml" \
+  && grep -q "KeyF4" "$T/ogui/gui-fakepad.yaml" && esc_row_ok "$T/ogui/gui-fakepad.yaml" \
+  && ok "Open declares gui-<emulator>.yaml beside the declaration: its hotkeys + the mouse" \
+  || bad "Open declared $(sed -n 1p "$DECL" 2>&1)"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
+reset_logs
+pl n64 "$NROM" 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
+wait_for emu_up || bad "the game never started: $(cat "$T/launch.err")"
+[ "$(sed -n 1p "$DECL" 2>/dev/null)" = "$BD/fakepad/guide.yaml" ] && ok "a ROM launch declares the plain profile (no mouse)" \
+  || bad "a ROM launch declared $(sed -n 1p "$DECL" 2>&1)"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
+
+printf 'version: 1\n' > "$BD/fakepad/guide.yaml"  # no mapping:, no mouse target
+reset_logs
+pl --gui fakepad 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
+wait_for emu_up || bad "Open never started the emulator: $(cat "$T/launch.err")"
+[ "$(sed -n 1p "$DECL" 2>/dev/null)" = "$BD/fakepad/guide.yaml" ] && grep -q "no mouse in fakepad's UI" "$T/launch.err" \
+  && ok "a profile that cannot take the rows: Open declares it plain, one log line" \
+  || bad "fallback declared $(sed -n 1p "$DECL" 2>&1), err=$(tail -1 "$T/launch.err")"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
+
+cat > "$BD/fakepad/emulator.json" <<'EOF'
+{"format": "binary", "binary": "current", "args": ["{rom}"], "gui_args": []}
+EOF
+reset_logs
+pl --gui fakepad 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
+wait_for emu_up || bad "Open never started the emulator: $(cat "$T/launch.err")"
+[ "$(sed -n 1p "$DECL" 2>/dev/null)" = "$GUI_MOUSE" ] && ok "no gamepad_profile: Open declares gui-mouse.yaml itself" \
+  || bad "no-profile Open declared $(sed -n 1p "$DECL" 2>&1)"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
+reset_logs
+pl n64 "$NROM" 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
+wait_for emu_up || bad "the game never started: $(cat "$T/launch.err")"
+[ ! -e "$DECL" ] && ok "no gamepad_profile, ROM launch: nothing declared" || bad "declared $(cat "$DECL")"
 touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
 
 # =================================================================================================
