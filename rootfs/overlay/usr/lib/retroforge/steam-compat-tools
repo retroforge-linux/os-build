@@ -70,6 +70,10 @@
 # Ours also ends Steam's driver query (d3ddriverquery64.exe) at once: on these boards the tool is Steam's
 # default (SM6115, ARMv8.0), the query's two Wine starts cost the first game after a boot ~10 s, and the
 # per-tool shader caches it selects had no shader in common with what Hades created here (2026-11-23).
+# And it keeps vkd3d-proton (D3D12) within the 4 descriptor sets Turnip offers on these GPUs (it reserves
+# the 5th): with descriptor buffers vkd3d-proton splits its heap into two sets, and a root signature with
+# static samplers and root descriptors then needs 5, so CreateRootSignature fails (Ghostrunner,
+# 2026-11-26). One mutable set without descriptor buffers needs 4. Only vkd3d-proton reads these.
 #
 # Steam is never told to use the tool (config.vdf is not edited). The player picks it per game
 # (Properties > Compatibility) or as the Steam Play default (docs/steam-arm64.md).
@@ -175,6 +179,10 @@ SAREK_SETTINGS = """\
 # Edit it and it is yours: RetroForge never writes over it or deletes it again.
 user_settings = {
     "PROTON_DXVK_SAREK": "1",
+    # vkd3d-proton (D3D12) in the 4 descriptor sets these GPUs offer: one mutable set, no descriptor
+    # buffers. Its default layout needs 5, and the game's root signatures fail.
+    "VKD3D_CONFIG": "mutable_single_set",
+    "VKD3D_DISABLE_EXTENSIONS": "VK_EXT_descriptor_buffer",
 }
 
 # Steam's driver query (d3ddriverquery64.exe, D3D11 and D3D12, at every start of the client) ends at
@@ -200,6 +208,20 @@ user_settings = {
 user_settings = {
     "PROTON_DXVK_SAREK": "1",
 }
+""", """\
+# Written by /usr/lib/retroforge/steam-compat-tools: this GPU (Adreno 610/613) needs DXVK-Sarek, the one
+# DXVK that runs without multiViewport. DXVK-Sarek instead of DXVK for every game run with this tool.
+# Edit it and it is yours: RetroForge never writes over it or deletes it again.
+user_settings = {
+    "PROTON_DXVK_SAREK": "1",
+}
+
+# Steam's driver query (d3ddriverquery64.exe, D3D11 and D3D12, at every start of the client) ends at
+# once: its two Wine starts cost the first game after a boot ~10 s on the Adreno 610 boards, and the
+# shader caches the buckets it picks brought no shader a game created here (Hades, 2026-11-23).
+import sys as _sys
+if any(_arg.endswith("d3ddriverquery64.exe") for _arg in _sys.argv[1:]):
+    raise SystemExit(1)
 """,)
 
 

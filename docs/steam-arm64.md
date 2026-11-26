@@ -919,6 +919,40 @@ exit 1). Steam then picks no per-tool bucket for it; the generic Vulkan bucket (
 does not depend on the query. A `user_settings.py` with only the Sarek line, which earlier releases
 wrote, is still ours and is rewritten.
 
+**D3D12 with Sarek on (2026-11-26).** vkd3d-proton does D3D12 on these GPUs, but with Sarek on, Proton
+copies Sarek's `dxgi.dll` too, and two things stood between a D3D12 game and its first frame
+(Ghostrunner with `-dx12`, Epic, Air X):
+- *Its swap chain.* Sarek's DXGI (a DXVK 1.10 fork) makes swap chains only for devices offering Wine's
+  `IWineDXGISwapChainFactory` (`53cb4ff0-…`). vkd3d-proton dropped that in 2.8 for DXVK 2.x's
+  `IDXGIVkSwapChainFactory` (`e7d6c3ca-…`). Logged: vkd3d's `d3d12_command_queue_QueryInterface:
+  {53cb4ff0-c25a-4164-a891-0e83db0a7aac} not implemented`, Sarek's `DXGI: CreateSwapChainForHwnd:
+  Unsupported device type`, Unreal's `WindowsD3D12Viewport.cpp:224 … DXGI_ERROR_UNSUPPORTED`. Upstream
+  DXVK's DXGI is no way out: it lists only adapters with DXVK's required features, multiViewport among
+  them, so none on the A610, and it cannot sit beside Sarek's `d3d11.dll` (the two pass C++ objects). Our
+  ARMv8.0 build patches Sarek's DXGI (retroforge-linux/proton-cachyos-armv8,
+  `patches/extras/dxvk-sarek/0001`): vkd3d-proton's presenter goes behind Sarek's swap chain through a
+  small adapter; D3D10/11 swap chains take the same path as before. Sarek keeps D3D12 out of its scope
+  (pythonlover02/DXVK-Sarek#51). The SM4450 keeps CachyOS's own build, so its D3D12 games still fail
+  here until CachyOS or Sarek carries the patch.
+- *Descriptor sets.* Turnip offers 4 (`maxBoundDescriptorSets`): a6xx has 5 and Turnip keeps one for
+  dynamic offsets (driconf `tu_dont_reserve_descriptor_set` frees it, but DXVK-Sarek uses dynamic
+  buffers, so not for every game). With descriptor buffers, vkd3d-proton keeps typed and raw views in two
+  sets beside the samplers, and a root signature with static samplers and root descriptors then needs 5:
+  `Root signature requires 5 descriptor sets, but device only supports 4`, and Unreal's
+  `CreateRootSignature … failed`. Our Sarek `user_settings.py` sets `VKD3D_CONFIG=mutable_single_set` and
+  `VKD3D_DISABLE_EXTENSIONS=VK_EXT_descriptor_buffer` (the second is needed: vkd3d-proton ignores the
+  first with descriptor buffers): one mutable set, 4 in all. Only vkd3d-proton reads them. The previous
+  text of the file is still ours and is rewritten.
+
+Measured on the Air X with the patched `dxgi.dll` (built in Proton's steamrt4 arm64-llvm SDK as ARM64X,
+as CachyOS builds Sarek) placed next to the game's exe, which Wine loads before system32's: Ghostrunner
+made its swap chain (1280x720, 3 buffers) and presented its intro; about a minute in, msm reported a GPU
+hang (`offending task: vkd3d_queue`) on a kernel without patch 0295, most likely the same hangcheck kill
+of a long submit as on its D3D11 path (0295), not re-tested with 0295. D3D11
+was unchanged: Greak: Memories of Azur (GOG, Unity) gave the same DXGI log, D3D11 log and screenshot with
+the patched and the shipped `dxgi.dll` (a black intro video in both: Sarek cannot open the video's shared
+textures, `OpenSharedResourceGeneric: Handle not found`, also separate).
+
 **Apps > Proton (2026-10-31).** One entry of the Apps list for the Proton RetroForge keeps for
 Windows games, because Steam, GOG and Epic share it: on a CPU with LSE atomics Proton-CachyOS arm64, on
 an ARMv8.0 CPU its ARMv8.0 rebuild (below). The plugin adds the entry itself (`proton_tool.gd`; no

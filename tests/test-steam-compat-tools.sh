@@ -216,6 +216,8 @@ tag_of() { sed -n 's/^tag: //p' "$1/.retroforge-pin" 2>/dev/null; }
 settings() {  # settings <tool dir>: the user_settings dict Proton would load, as JSON
   python3 -I -c 'import json, sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]); import user_settings; print(json.dumps(user_settings.user_settings, sort_keys=True))' "$1"
 }
+# The Sarek user_settings: DXVK-Sarek, and vkd3d-proton in the 4 descriptor sets the Adreno 610/613 offer.
+SAREK_JSON='{"PROTON_DXVK_SAREK": "1", "VKD3D_CONFIG": "mutable_single_set", "VKD3D_DISABLE_EXTENSIONS": "VK_EXT_descriptor_buffer"}'
 vdf_strings() {  # vdf_strings <tool dir>: compatibilitytool.vdf's quoted strings, comments dropped, |-joined
   python3 -c 'import re, sys; t = re.sub(r"//[^\n]*", "", open(sys.argv[1]).read()); print("|".join(re.findall(r"\"([^\"]*)\"", t)))' "$1/compatibilitytool.vdf"
 }
@@ -275,8 +277,8 @@ grep -q 'require_tool_appid" "4185400"' "$TOOL/toolmanifest.vdf" && ok "toolmani
 [ "$(cat "$TOOL/.retroforge-pin")" = "$(printf 'name: proton-cachyos-arm64\ntag: %s\nasset: %s.tar.xz\nsha512: %s\nsha256: %s' \
     "$R1" "$D1" "$(digest sha512 "$DL/$D1.tar.xz")" "$(digest sha256 "$DL/$D1.tar.xz")")" ] \
   && ok "its .retroforge-pin: the name, the tag, the asset, its sha512 and sha256" || bad "marker: $(cat "$TOOL/.retroforge-pin" 2>&1)"
-[ "$(settings "$TOOL")" = '{"PROTON_DXVK_SAREK": "1"}' ] \
-  && ok "user_settings.py loads as Proton loads it, with PROTON_DXVK_SAREK=1 and nothing else" || bad "settings: $(settings "$TOOL" 2>&1)"
+[ "$(settings "$TOOL")" = "$SAREK_JSON" ] \
+  && ok "user_settings.py loads as Proton loads it: PROTON_DXVK_SAREK=1, vkd3d-proton in one mutable set without descriptor buffers, nothing else" || bad "settings: $(settings "$TOOL" 2>&1)"
 loaded_by() {  # loaded_by <tool dir> <proton's arguments...>: the exit status of importing it in a proton run with them
   python3 -I -c 'import sys; sys.dont_write_bytecode = True; sys.path.insert(0, sys.argv[1]); sys.argv[1:] = sys.argv[2:]; import user_settings' "$@"
 }
@@ -387,7 +389,7 @@ tools install
   && ok "$R2: not one without an arm64 build or a .sha512sum, still uploading, a draft, a prerelease, or 10.0-sunset published after it" \
   || bad "rc=$RC out=$OUT tag=$(tag_of "$TOOL") err=$ERR"
 [ "$(vdf_strings "$TOOL")" = "$VDF_OURS" ] && ok "under the same name, compatibilitytool.vdf rewritten again" || bad "vdf: $(cat "$TOOL/compatibilitytool.vdf")"
-[ "$(settings "$TOOL")" = '{"PROTON_DXVK_SAREK": "1"}' ] && ok "with the Sarek user_settings.py" || bad "settings: $(settings "$TOOL" 2>&1)"
+[ "$(settings "$TOOL")" = "$SAREK_JSON" ] && ok "with the Sarek user_settings.py" || bad "settings: $(settings "$TOOL" 2>&1)"
 grep -q "updated $TOOL from $R1 to $R2" <<<"$ERR" && ok "says it updated, from what to what" || bad "stderr: $ERR"
 ours_only && [ -z "$(leftovers)" ] && [ ! -e "$NEXT" ] && ok "the old release is gone, no second folder, nothing left" || bad "$(ls -A "$TOOLS") left: $(leftovers)"
 [ -f "$TOOLS/GE-Proton10-1/compatibilitytool.vdf" ] && [ -f "$TOOLS/proton-cachyos-10.0-arm64/compatibilitytool.vdf" ] \
@@ -627,7 +629,9 @@ for line in sys.stdin:
     if not line.strip():
         continue
     tag, published, top, *flags = line.split()
-    path = os.path.join(dl, top + ".tar.zst")
+    # dir=<sub>: the tarball from <dl>/<sub>, for a release whose asset has another one's name
+    sub = next((f[4:] for f in flags if f.startswith("dir=")), "")
+    path = os.path.join(dl, sub, top + ".tar.zst")
     data = open(path, "rb").read()
     with open(path + ".sha512", "w") as f:
         f.write(("0" * 128 if "badsidecar" in flags else hashlib.sha512(data).hexdigest()) + f"  {top}.tar.zst\n")
@@ -665,7 +669,28 @@ grep -q "armv8 $A8" "$TOOLS8/$DIR8/proton" && [ -L "$TOOLS8/$DIR8/files/lib/libf
   && ok "unpacked whole, symlinks kept" || bad "$(ls -la "$TOOLS8/$DIR8" 2>&1 | head -5)"
 [ "$(vdf_strings "$TOOLS8/$DIR8")" = "compatibilitytools|compat_tools|$DIR8|install_path|.|display_name|Proton-CachyOS ARMv8.0 (RetroForge)|from_oslist|windows|to_oslist|linux" ] \
   && ok "named $DIR8 for Steam" || bad "$(vdf_strings "$TOOLS8/$DIR8")"
-[ "$(settings "$TOOLS8/$DIR8")" = '{"PROTON_DXVK_SAREK": "1"}' ] && ok "DXVK-Sarek on in it" || bad "$(settings "$TOOLS8/$DIR8" 2>&1)"
+[ "$(settings "$TOOLS8/$DIR8")" = "$SAREK_JSON" ] && ok "DXVK-Sarek on in it" || bad "$(settings "$TOOLS8/$DIR8" 2>&1)"
+
+CASE="armv8: the same CachyOS tag released again (the recipe's revision 2, scripts/release-tag.sh there)"
+# <tag>-armv8-r2 holds a tarball under the same name as <tag>-armv8's: proton-<tag>-armv8.tar.zst.
+mkdir -p "$DL/r2"; mktool8 "proton-$A8" "armv8 $A8 r2" && mv "$DL/proton-$A8.tar.zst" "$DL/r2/"
+mktool8 "proton-$A8" "armv8 $A8"
+releases8 <<EOF
+$A8-r2 2026-11-27T10:00:00Z proton-$A8 dir=r2
+$A8 2026-10-20T22:00:00Z proton-$A8
+$B8 2026-10-05T12:00:00Z proton-$B8
+EOF
+tools8 "$T/cpuinfo-v80" - install
+[ "$RC" = 0 ] && [ "$(tag_of "$TOOLS8/$DIR8")" = "$A8-r2" ] && grep -q "armv8 $A8 r2" "$TOOLS8/$DIR8/proton" \
+  && grep -q "updated $TOOLS8/$DIR8 from $A8 to $A8-r2" <<<"$ERR" && [ "$(settings "$TOOLS8/$DIR8")" = "$SAREK_JSON" ] \
+  && ok "it replaces the installed release of that tag, Sarek still on" || bad "rc=$RC tag=$(tag_of "$TOOLS8/$DIR8") err=$ERR"
+tools8 "$T/cpuinfo-v80" - install
+[ "$RC" = 0 ] && [ -z "$ERR" ] && ok "and once in, nothing more to do" || bad "rc=$RC err=$ERR"
+releases8 <<EOF
+$P8 2026-11-01T12:00:00Z proton-$P8 prerelease
+$A8 2026-10-20T22:00:00Z proton-$A8
+$B8 2026-10-05T12:00:00Z proton-$B8
+EOF
 
 CASE="armv8: a CPU with atomics"
 rm -rf "$T/home8"
@@ -751,11 +776,18 @@ open(sys.argv[2], "w").write(m.LEGACY_SETTINGS[int(sys.argv[3])])' "$HELPER" "$1
 }
 legacy "$TOOL/user_settings.py" 0
 tools install
-[ "$RC" = 0 ] && grep -q d3ddriverquery64 "$TOOL/user_settings.py" && [ "$(settings "$TOOL")" = '{"PROTON_DXVK_SAREK": "1"}' ] \
+[ "$RC" = 0 ] && grep -q d3ddriverquery64 "$TOOL/user_settings.py" && [ "$(settings "$TOOL")" = "$SAREK_JSON" ] \
   && ok "the Sarek text before the driver query's end: ours, rewritten in today's text" || bad "rc=$RC err=$ERR $(cat "$TOOL/user_settings.py")"
+legacy "$TOOL/user_settings.py" 2
+tools install
+[ "$RC" = 0 ] && grep -q mutable_single_set "$TOOL/user_settings.py" && [ "$(settings "$TOOL")" = "$SAREK_JSON" ] \
+  && ok "the Sarek text before the vkd3d-proton settings: ours, rewritten in today's text" || bad "rc=$RC err=$ERR $(cat "$TOOL/user_settings.py")"
+legacy "$TOOL/user_settings.py" 2
+SAREK=off tools install
+[ "$RC" = 0 ] && [ ! -e "$TOOL/user_settings.py" ] && ok "and on a GPU without the need, deleted" || bad "rc=$RC err=$ERR"
 legacy "$TOOL/user_settings.py"
 tools install
-[ "$RC" = 0 ] && ! grep -q "Settings > General" "$TOOL/user_settings.py" && [ "$(settings "$TOOL")" = '{"PROTON_DXVK_SAREK": "1"}' ] \
+[ "$RC" = 0 ] && ! grep -q "Settings > General" "$TOOL/user_settings.py" && [ "$(settings "$TOOL")" = "$SAREK_JSON" ] \
   && ok "a GPU that needs Sarek: ours, rewritten in today's text" || bad "rc=$RC err=$ERR $(cat "$TOOL/user_settings.py")"
 legacy "$TOOL/user_settings.py"
 SAREK=off tools install
@@ -769,7 +801,7 @@ $R2 2026-11-05T12:00:00Z $D2
 $R1 2026-10-04T21:30:56Z $D1
 EOF
 tools install
-[ "$RC" = 0 ] && [ "$(tag_of "$TOOL")" = "$R2" ] && [ "$(settings "$TOOL")" = '{"PROTON_DXVK_SAREK": "1"}' ] \
+[ "$RC" = 0 ] && [ "$(tag_of "$TOOL")" = "$R2" ] && [ "$(settings "$TOOL")" = "$SAREK_JSON" ] \
   && ok "keeps Sarek on in the new tree" || bad "rc=$RC err=$ERR"
 
 CASE="helper: another run going"
