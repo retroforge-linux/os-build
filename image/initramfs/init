@@ -235,6 +235,58 @@ if ! mount -t "$ROOTFSTYPE" -o ro "$ROOTDEV" "$SYSROOT"; then
 fi
 log "root $ROOTDEV mounted ro (slot=${SLOT:-?})"
 
+# ---------------------------------------------------------------------------------------------
+# A root on USB, on a board whose USB-C port the ADSP runs
+# ---------------------------------------------------------------------------------------------
+# On these boards (a pmic-glink node: SM4450, SM8550, SM8650, SM8750) the ADSP firmware runs the
+# USB-C port. When it starts it renegotiates with what is plugged in, and a dock with its own USB-C
+# chip is reset: its hubs and everything on them drop and come back as new devices about 1.7 s
+# later (Odin 2 Portal, 2026-11-26). Started by the booted system, that takes the root with it.
+# So for a USB root the ADSP starts here, from the root just mounted (its firmware loader, kmod
+# and modules), with the root unmounted again before the ADSP comes up. The drive is then watched
+# for ADSP_SETTLE_S; if it drops, the root is found again by its spec and mounted. The loader's
+# mounts are on /run, which switch_root moves into the new root, and the system's loader unit then
+# only adds the root's override links (msm-firmware-loader.service.d/20-retroforge-initramfs.conf).
+ADSP_SETTLE_S=2
+usb_root_adsp() {
+  local dev path disk out i=0
+  dev=${ROOTDEV#/dev/}
+  [ -e /sys/firmware/devicetree/base/pmic-glink/compatible ] || return 0
+  path=$(cd -P "/sys/class/block/$dev" 2>/dev/null && pwd) || return 0
+  case $path in */usb[0-9]*) ;; *) return 0 ;; esac
+  [ -x "$SYSROOT/usr/bin/msm-firmware-loader.sh" ] && [ -e "$SYSROOT/usr/bin/modprobe" ] || return 0
+  disk=${path%/*}; disk=${disk##*/}
+  [ -e "/sys/block/$disk" ] || disk=$dev   # a whole-disk root has no parent disk
+
+  log "root $ROOTDEV is on USB; starting the ADSP before the root is used"
+  echo 'module firmware_class +p' >/proc/dynamic_debug/control 2>/dev/null || :
+  out=$(PATH="$SYSROOT/usr/bin:$PATH" LD_LIBRARY_PATH="$SYSROOT/usr/lib" \
+        bash "$SYSROOT/usr/bin/msm-firmware-loader.sh" 2>&1) || warn "msm-firmware-loader failed: ${out:0:200}"
+  out=$(LD_LIBRARY_PATH="$SYSROOT/usr/lib" "$SYSROOT/usr/bin/modprobe" -d "$SYSROOT" qcom_q6v5_pas 2>&1) \
+    || warn "modprobe qcom_q6v5_pas failed: ${out:0:200}"
+  umount "$SYSROOT" || warn "cannot unmount the root before the ADSP starts; a dock reset would take it"
+
+  # The port is reset about 0.25 s after the ADSP's charger service starts, which is also when UCSI
+  # (built in) registers the USB-C port. Not the remoteproc's own "running": without the system's
+  # services the ADSP reports that about 5 s later (1.1-1.45 s from modprobe to the charger
+  # service, 6.1-6.6 s to "running", Odin 2 Portal, 2026-11-26). Not the battery driver either: it
+  # is a module, not loaded here.
+  while [ "$i" -lt 100 ] && [ ! -e /sys/class/typec/port0 ]; do sleep 0.1; i=$((i + 1)); done   # at most 10 s
+  [ "$i" -lt 100 ] || warn "the USB-C port was not registered within 10 s"
+
+  i=0
+  while [ "$i" -lt $((ADSP_SETTLE_S * 10)) ] && [ -e "/sys/block/$disk" ]; do sleep 0.1; i=$((i + 1)); done
+  if [ -e "/sys/block/$disk" ]; then
+    log "root drive stayed through the ADSP start"
+  else
+    warn "root drive dropped when the ADSP started (a USB-C dock reset); waiting for it"
+    ROOTDEV=$(resolve "$ROOTSPEC") || { warn "root device '$ROOTSPEC' did not come back — panicking"; exit 1; }
+  fi
+  mount -t "$ROOTFSTYPE" -o ro "$ROOTDEV" "$SYSROOT" || { warn "cannot mount root $ROOTDEV again — panicking"; exit 1; }
+  log "root $ROOTDEV mounted ro again"
+}
+usb_root_adsp
+
 # From here on, failures degrade instead of panicking (see the header).
 degrade() {
   warn "DEGRADED: $1"

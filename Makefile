@@ -481,6 +481,7 @@ test: verify-lock ## Run every offline suite (host, no build needed)
 	bash $(TESTS_DIR)/test-factory-reset.sh
 	bash $(TESTS_DIR)/test-factory-reset-hook.sh
 	bash $(TESTS_DIR)/test-initramfs-fsck.sh
+	bash $(TESTS_DIR)/test-initramfs-usb-adsp.sh
 	bash $(TESTS_DIR)/test-boot-disk.sh
 	bash $(TESTS_DIR)/test-pairingd.sh
 	bash $(TESTS_DIR)/test-power-led.sh

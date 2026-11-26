@@ -26,7 +26,8 @@ are invoked directly there rather than through `make test-disk` — a failure na
 
 - **Boot and update** — `test-bootctl.sh`, `test-post-install.sh`, `test-stage2-grub.sh`,
   `test-update.sh`, `test-units.sh`, `test-coredump-limit.sh`, `test-initramfs-fsck.sh` (the
-  initramfs's /var check).
+  initramfs's /var check), `test-initramfs-usb-adsp.sh` (a USB root starts the ADSP in the
+  initramfs and survives a dock reset).
 - **Storage and layout** — `test-partition-table.sh`, `test-select-target.sh`, `test-carve.sh`,
   with `lib-gptfixture.sh` rebuilding the real captured
   boards from `docs/internal-storage.md` as sparse GPTs for the two disk suites to share.

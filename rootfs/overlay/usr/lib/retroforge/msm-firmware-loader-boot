@@ -1,0 +1,19 @@
+#!/bin/sh
+# retroforge: the firmware loader's boot pass (msm-firmware-loader.service), unless the initramfs
+# already ran it. It does that for a root on USB on a board whose USB-C port the ADSP runs
+# (image/initramfs/init, usb_root_adsp): the ADSP has to start before the root is in use. Its mounts
+# are then on /run already, and running the pass again would cover them with a new tmpfs and fail to
+# map super, which is mapped already. Only the override links are missing, because their files are
+# on the root, which the initramfs had unmounted; this adds them the way the loader does.
+BASEDIR=/run/msm-firmware-loader
+OVERRIDE_DIR=/usr/lib/msm-firmware-loader/override
+
+mountpoint -q "$BASEDIR" || exec /usr/bin/msm-firmware-loader.sh "$@"
+
+if [ -d "$OVERRIDE_DIR" ]; then
+	(cd "$OVERRIDE_DIR" && find . -type f) | while read -r f; do
+		f="${f#./}"
+		case "$f" in */*) mkdir -p "$BASEDIR/target/${f%/*}" ;; esac
+		ln -sfn "$OVERRIDE_DIR/$f" "$BASEDIR/target/$f"
+	done
+fi
