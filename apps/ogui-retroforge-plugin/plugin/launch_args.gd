@@ -13,7 +13,6 @@ extends RefCounted
 const LAUNCH_CONF := "/etc/retroforge/launch.conf"
 const CPUS_VALUES := ["big", "all"]
 const SCREEN_KEY := "SCREEN"  # a game's games display size, WxH (retroforge-launch: window_size)
-const FPS_KEY := "FPS_LIMIT"  # a game's frame rate limit (retroforge-launch: frame_cap)
 
 
 ## A ROM's identity for per-game options: "<system>/<file name>". Not the card name, which
@@ -113,18 +112,7 @@ static func set_game_cpus(system: String, path: String, cpus: String) -> bool:
 	return set_conf_value(game_conf_path(system, path), "CPUS", cpus if cpus in CPUS_VALUES else "")
 
 
-## The frame rate limits worth offering on a `hz` screen: hz / 2 ... hz / 6 where that divides evenly,
-## from 20 fps up (an even divisor paces evenly).
-@warning_ignore("integer_division")
-static func fps_choices(hz: int) -> Array:
-	var out: Array = []
-	for k in range(2, 7):
-		if hz % k == 0 and hz / k >= 20:
-			out.append(hz / k)
-	return out
-
-
-## A game's own value for key ("" when unset): SCREEN_KEY, FPS_KEY.
+## A game's own value for key ("" when unset): SCREEN_KEY.
 static func game_value(system: String, path: String, key: String) -> String:
 	return conf_value(read_text(game_conf_path(system, path)), key)
 

@@ -7,8 +7,7 @@ extends ScrollContainer
 ## "Run on fast cores": the emulator's default (Main menu > Apps), On or Off for this game
 ## (CPUS=big / all in the game's conf, which retroforge-launch reads; launch_args.gd). "Screen size"
 ## (SCREEN=WxH: gamescope's games display for this game, the sizes of Settings > Display > Game
-## resolution) and "Frame rate limit" (FPS_LIMIT=<fps>: gamescope's cap), which retroforge-launch sets
-## for the run (window_size, frame_cap) and puts back after. Then one
+## resolution), which retroforge-launch sets for the run (window_size) and puts back after. Then one
 ## dropdown per option of the game's emulator (options.json, emu_options.gd): "Emulator default
 ## (<its choice>)" or a value for this game only, rebuilt at each visit (another game may run in
 ## another emulator). "Box art": scrape this game's art from ScreenScraper again (scrape_runner.gd;
@@ -50,10 +49,7 @@ const CPUS_CHOICES := ["", "big", "all"]
 var _fast_cores: Control  # OGUI Dropdown
 var _screen: Control  # OGUI Dropdown: "Screen size"
 var _screen_keys: Array = []  # "", then WxH: what each item saves
-var _fps: Control  # OGUI Dropdown: "Frame rate limit"
-var _fps_values: Array = []  # "", then frame rates
 const SCREEN_ABOUT := "The size this game runs at; the display scales it to the panel. Lower is faster on this GPU. Default: the game's picture size where its emulator draws one (Picture-sized window), else Settings > Display."
-const FPS_ABOUT := "Caps the game's frame rate: steadier for a game that cannot hold the full rate, and longer battery. A limit that divides the screen's %d Hz paces evenly."
 var _art: Control  # OGUI CardButtonSetting: "Box art"
 var _scrape := ScrapeRunner.new()  # a field: a runner must outlive its worker thread
 var _rows: VBoxContainer
@@ -145,7 +141,6 @@ func _build_page() -> void:
 	rows.add_child(_fast_cores)
 	_focus_group.current_focus = _fast_cores
 	_screen = _rom_dropdown(rows, "Screen size", SCREEN_ABOUT, _on_screen_selected)
-	_fps = _rom_dropdown(rows, "Frame rate limit", FPS_ABOUT % refresh_rate(), _on_fps_selected)
 
 	_art = setting_button_scene.instantiate()
 	_art.text = "Box art"
@@ -213,7 +208,7 @@ func _on_game_settings_entered(_from: State) -> void:
 	var steam_item = item.get_launch_item(STEAM_LIBRARY_ID) if item is LibraryItem else null
 	_steam_app = int(steam_item.metadata.get("steam_app", 0)) if steam_item and steam_item.metadata else 0
 	var show := _item != null or _steam_app > 0
-	for row in [_fast_cores, _screen, _fps, _art]:
+	for row in [_fast_cores, _screen, _art]:
 		row.visible = _item != null
 	_fill_steam_rows()
 	if button.visible != show:
@@ -230,7 +225,6 @@ func _on_game_settings_entered(_from: State) -> void:
 		_fast_cores.add_item("Off")
 		_fast_cores.select(CPUS_CHOICES.find(roms.get_cpus(_item)))
 		_fill_screen()
-		_fill_fps()
 		_art.disabled = not FileAccess.file_exists(SCRAPER_DEVID) or _scrape.running
 		if not _scrape.running:
 			_art.description = ART_DESCRIPTION if FileAccess.file_exists(SCRAPER_DEVID) else ScrapeRunner.failure_text(9, "")
@@ -413,27 +407,6 @@ func _fill_screen() -> void:
 	_screen.select(_screen_keys.find(mine))
 
 
-## Frame rate limit: Off, then the rates that divide the screen's refresh (20 fps and up).
-func _fill_fps() -> void:
-	var mine := _game_value(LaunchArgs.FPS_KEY)
-	_fps.clear()
-	_fps_values = [""]
-	_fps.add_item("Off")
-	for fps in LaunchArgs.fps_choices(refresh_rate()):
-		_fps_values.append(str(fps))
-		_fps.add_item("%d fps" % fps)
-	if mine != "" and not mine in _fps_values:
-		_fps_values.append(mine)
-		_fps.add_item("%s fps" % mine)
-	_fps.select(_fps_values.find(mine))
-
-
-## The screen's refresh rate in whole Hz (60 when the display does not say).
-static func refresh_rate() -> int:
-	var hz := roundi(DisplayServer.screen_get_refresh_rate())
-	return hz if hz > 0 else 60
-
-
 func _game_value(key: String) -> String:
 	return LaunchArgs.game_value(str(_item.metadata["system"]), str(_item.metadata["rom"]), key)
 
@@ -450,11 +423,6 @@ func _save_game_value(key: String, value: String, what: String) -> void:
 func _on_screen_selected(index: int) -> void:
 	if index >= 0 and index < _screen_keys.size():
 		_save_game_value(LaunchArgs.SCREEN_KEY, _screen_keys[index], "screen size")
-
-
-func _on_fps_selected(index: int) -> void:
-	if index >= 0 and index < _fps_values.size():
-		_save_game_value(LaunchArgs.FPS_KEY, _fps_values[index], "frame rate limit")
 
 
 func _on_fast_cores_selected(index: int) -> void:

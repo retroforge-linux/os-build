@@ -483,16 +483,10 @@ func _init() -> void:
 		[LaunchArgs.set_game_cpus("psx", rom, "big"), LaunchArgs.set_game_value("psx", rom, LaunchArgs.SCREEN_KEY, "960x540"),
 			LaunchArgs.game_value("psx", rom, "SCREEN"), FileAccess.get_file_as_string(LaunchArgs.game_conf_path("psx", rom))],
 		[true, true, "960x540", "CPUS=big\nSCREEN=960x540\n"])
-	LaunchArgs.set_game_value("psx", rom, LaunchArgs.FPS_KEY, "30")
-	check("game frame rate limit: FPS_LIMIT=30", LaunchArgs.game_value("psx", rom, "FPS_LIMIT"), "30")
 	LaunchArgs.set_game_value("psx", rom, LaunchArgs.SCREEN_KEY, "")
-	LaunchArgs.set_game_value("psx", rom, LaunchArgs.FPS_KEY, "")
 	LaunchArgs.set_game_cpus("psx", rom, "")
-	check("game screen size and limit: Default removes the lines, and the empty conf",
+	check("game screen size: Default removes the line, and the empty conf",
 		[LaunchArgs.game_value("psx", rom, "SCREEN"), FileAccess.file_exists(LaunchArgs.game_conf_path("psx", rom))], ["", false])
-	check("frame rate limits: the even divisors from 20 fps up",
-		[LaunchArgs.fps_choices(60), LaunchArgs.fps_choices(120), LaunchArgs.fps_choices(90), LaunchArgs.fps_choices(144), LaunchArgs.fps_choices(30)],
-		[[30, 20], [60, 40, 30, 24, 20], [45, 30], [72, 48, 36, 24], []])
 	test_rom_watch()
 	test_game_dirs()
 	test_credits()

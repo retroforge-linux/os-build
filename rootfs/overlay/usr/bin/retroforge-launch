@@ -4,7 +4,7 @@
 #   retroforge-launch <system> <rom>
 #   retroforge-launch --gui <emulator>
 #   retroforge-launch --psn-install
-#   retroforge-launch --restore-display <launcher pid>   (the detached watcher; window_size, frame_cap)
+#   retroforge-launch --restore-display <launcher pid>   (the detached watcher; window_size module)
 #
 # --gui starts the emulator's own UI with no ROM: Main menu > Emulators > Open, for the settings OGUI
 # does not expose. It runs exactly like a ROM (prepare, seed, own session, exit handling below),
@@ -35,9 +35,8 @@
 # in the emulator's settings, a game-level one is put back when the emulator exits (and at the next
 # launch, after a double Exit). Its header has the details.
 #
-# A game's own screen size and frame-rate limit (Game settings > RetroForge: SCREEN=WxH and FPS_LIMIT=<fps>
-# in its conf): gamescope's games display and frame cap for that run, put back when it ends (window_size
-# and frame_cap; their journals and the watcher cover a killed run).
+# A game's own screen size (Game settings > RetroForge: SCREEN=WxH in its conf): gamescope's games
+# display for that run, put back when it ends (window_size; its journal and the watcher cover a killed run).
 #
 # One-time installs (install): a file the PLAYER provides that the emulator must import before any
 # game runs (RPCS3's PS3 firmware). When `unless` is missing under $HOME, the emulator's binary is run
@@ -145,7 +144,6 @@ from launch_def import (FILE, ROM, SYSTEM, SYSTEM_ID, TEXT, apply_system_setting
                         sync_files, systems_of)
 from launch_formats import FORMATS  # noqa: E402
 from psn_inbox import PSN_SYSTEM, psn_install, try_psn_lock  # noqa: E402
-import frame_cap  # noqa: E402
 import window_size  # noqa: E402
 import x11_root  # noqa: E402
 
@@ -496,12 +494,10 @@ def run(argv):
     profile_declared = False
     title_set = False
     display_back = None
-    cap_back = None
     say = lambda msg: log(f"{emulator}: {msg}")  # noqa: E731
     warn = lambda msg: log(f"warning: {emulator}: {msg}")  # noqa: E731
-    # A games display and a frame cap a killed run left at its game's (launch_def: window_size).
+    # A games display a killed run left at its game's size (launch_def: window_size).
     window_size.restore_display(STATE_DIR, warn)
-    frame_cap.restore(STATE_DIR, warn)
     try:
         # Before the mount: the restore in `finally` must cover every way out from here on.
         opt_args, opt_env = apply_options(emulator, options, confs, system)
@@ -521,10 +517,7 @@ def run(argv):
                                               (options or {}).get("files"), HOME, warn)
             if lines:
                 display_back = window_size.size_display(ENV.get("DISPLAY", ""), lines, STATE_DIR, say, warn)
-        fps = frame_cap.chosen(confs[1], warn) if rom is not None else None
-        if fps:
-            cap_back = frame_cap.apply(ENV.get("DISPLAY", ""), fps, STATE_DIR, say, warn)
-        if display_back or cap_back:
+        if display_back:
             watch_display(warn)
         try:
             root = package.prepare()
@@ -560,8 +553,6 @@ def run(argv):
     finally:
         if display_back:
             display_back()
-        if cap_back:
-            cap_back()
         if title_set:
             x11_root.remove(ENV.get("DISPLAY", ""), SECONDARY_TITLE_PROP,
                             lambda why: log(f"warning: could not remove {SECONDARY_TITLE_PROP}: {why}"))
@@ -598,9 +589,9 @@ def one_window_per_panel(emulator, dual_args):
 
 
 def watch_display(warn):
-    """Start the watcher that gives the games display its size and gamescope its frame cap back should
-    this process die without doing it (window_size.watch_display, frame_cap.restore), detached from the
-    game's process tree. Without it the next launch still does it."""
+    """Start the watcher that gives the games display its size back should this process die without
+    doing it (window_size.watch_display), detached from the game's process tree. Without it the next
+    launch still does it."""
     cmd = shlex.split(DETACH) + [sys.executable, os.path.abspath(__file__), "--restore-display", str(os.getpid())]
     try:
         subprocess.run(cmd, check=True, timeout=15, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
@@ -638,9 +629,7 @@ def main():
     argv = sys.argv[1:]
     if len(argv) == 2 and argv[0] == "--restore-display" and argv[1].isdigit():
         # The watcher: no status file of its own (that is the game launch's).
-        say, warn = (lambda msg: log(msg)), (lambda msg: log(f"warning: {msg}"))
-        window_size.watch_display(int(argv[1]), STATE_DIR, say, warn)
-        frame_cap.restore(STATE_DIR, warn, owner=int(argv[1]), say=say)  # its launcher is gone by now
+        window_size.watch_display(int(argv[1]), STATE_DIR, lambda msg: log(msg), lambda msg: log(f"warning: {msg}"))
         return 0
     try:
         os.unlink(STATUS)
