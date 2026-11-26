@@ -33,7 +33,7 @@ static func rows(id: String, emu: Dictionary, check: Dictionary) -> Dictionary:
 	var tested = emu.get("tested")
 	var follows: bool = emu.get("follows_latest", false) == true
 	var self_update: bool = emu.get("self_update", false) == true
-	var nightly: bool = tested == null and follows  # no tested build at all (Cemu)
+	var nightly: bool = tested == null and follows  # no tested build at all (Cemu's nightly, DuckStation's latest)
 	var latest = check.get("latest") if check.get("error") == null else null
 	var mb := int(emu.get("size", 0)) / 1048576
 	var install := ["install", id]
@@ -44,7 +44,7 @@ static func rows(id: String, emu: Dictionary, check: Dictionary) -> Dictionary:
 		main.button = "Download"
 		main.args = install
 		if nightly:
-			main.description = "Latest nightly build, about %d MB. Not tested by RetroForge." % mb
+			main.description = "Newest upstream build, about %d MB. Not tested by RetroForge." % mb
 		elif not follows:
 			main.description = "Version %s, %d MB." % [_v(tested), mb]
 		elif latest != null and latest != tested:
@@ -69,7 +69,7 @@ static func rows(id: String, emu: Dictionary, check: Dictionary) -> Dictionary:
 			main.args = install
 			main.description = "Update to %s available, %d MB." % [_v(tested), mb]
 		elif nightly:
-			main.description = "Installed. Nightly builds come straight from upstream, untested by RetroForge."
+			main.description = "Installed. Builds come straight from upstream, untested by RetroForge."
 		elif installed != tested:
 			main.description = "Installed straight from upstream. RetroForge tested %s." % _v(tested)
 		else:

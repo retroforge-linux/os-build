@@ -809,6 +809,15 @@ func test_emu_state() -> void:
 	check("state: a nightly-only entry: Update to the newer nightly (no Check beside it), Revert, never Install tested",
 		[r.main.text, r.main.button, r.tested, r.extra.map(func(e): return e.text)],
 		["Nightly abc", "Update", null, ["Revert to Nightly def"]])
+	var duck := {"tested": null, "follows_latest": true, "installed": null, "previous": null, "size": mb}
+	r = EmuState.rows("x", duck, {"latest": "latest-3cd9e8465a69", "error": null})
+	var duck_before: String = r.main.description
+	duck.installed = "latest-3cd9e8465a69"
+	r = EmuState.rows("x", duck, {"latest": "latest-3cd9e8465a69", "error": null})
+	check("state: no tested build (DuckStation's rolling latest): the text says untested, never nightly",
+		[duck_before, r.main.text, r.main.description],
+		["Newest upstream build, about 50 MB. Not tested by RetroForge.", "Latest 3cd9e846",
+			"Installed. Builds come straight from upstream, untested by RetroForge."])
 	var pinned := {"tested": "v2", "follows_latest": false, "installed": "v1", "update": true, "previous": null, "size": mb}
 	r = EmuState.rows("x", pinned, {})
 	check("state: a pinned-only entry keeps the offline Update to its pin, no Install tested",
