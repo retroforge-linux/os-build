@@ -1,0 +1,28 @@
+From: sunshineinabox <aqemail@gmail.com>
+Subject: [PATCH] drm/msm: Let a submit run for seconds before hangcheck kills it
+
+msm declares a GPU hang when a submit's fence has not advanced for two
+hangcheck periods without command-stream progress, and caps any submit
+at four periods even while the CP advances. On a6xx and later the
+period is half of DRM_MSM_HANGCHECK_DEFAULT_PERIOD, 250 ms: no submit
+may run longer than about 1 s, and one long dispatch is killed after
+about 0.5 s.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+retroforge: not posted.
+ drivers/gpu/drm/msm/msm_gpu.h | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/drivers/gpu/drm/msm/msm_gpu.h
++++ b/drivers/gpu/drm/msm/msm_gpu.h
+@@ -241,7 +241,8 @@
+ 	 */
+ #define DRM_MSM_INACTIVE_PERIOD   66 /* in ms (roughly four frames) */
+ 
+-#define DRM_MSM_HANGCHECK_DEFAULT_PERIOD 500 /* in ms */
++/* Long enough for a multi-second submit on a slow GPU (A610) */
++#define DRM_MSM_HANGCHECK_DEFAULT_PERIOD 6000 /* in ms */
+ #define DRM_MSM_HANGCHECK_PROGRESS_RETRIES 3
+ 	struct timer_list hangcheck_timer;
+ 
