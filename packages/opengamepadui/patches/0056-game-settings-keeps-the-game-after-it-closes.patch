@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Wed, 25 Nov 2026 12:00:00 +0000
+Subject: [PATCH] fix(GameLaunchMenu): give game settings its own copy of the
+ launcher's data
+
+The launch menu handed the game settings state the launcher state's own
+data dictionary, and game settings erases "item" from its data when it
+closes. Closing game settings so emptied the launcher's data: the
+launcher, entered again right after, logged "No library item found to
+configure launcher!" and returned before set_process(true), so its
+button stopped following installs; and the next visit to game settings
+had no game. Its title kept the last game's name only because
+game_settings.gd keeps the item it had, but a plugin section that shows
+only for its own games (RetroForge's per-game settings) was hidden until
+the game was opened from the library again (MANGMI Air X, 2026-11-25).
+
+Game settings now gets a copy, which it can erase from freely.
+---
+ core/ui/card_ui/launch/game_launch_menu.gd | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/core/ui/card_ui/launch/game_launch_menu.gd b/core/ui/card_ui/launch/game_launch_menu.gd
+index 6a59c81..e3b7e91 100644
+--- a/core/ui/card_ui/launch/game_launch_menu.gd
++++ b/core/ui/card_ui/launch/game_launch_menu.gd
+@@ -83,8 +83,9 @@ func _on_state_entered(_from: State) -> void:
+ 	logger.info("Configured launcher for game: " + library_item.name)
+ 	set_process(true)
+ 	
+-	# Configure the game settings state with this game
+-	game_settings_state.data = launcher_state.data
++	# Configure the game settings state with this game. A copy: game settings
++	# erases "item" from its data when it closes, which emptied this one too.
++	game_settings_state.data = launcher_state.data.duplicate()
+ 
+ 	# Configure the controller settings state with this game 
+ 	gamepad_settings_state.data = launcher_state.data ## DEPRECATED, use meta
+-- 
+2.47.0
