@@ -13,6 +13,9 @@
 #   store <gog|epic> install <id>      N% lines; exit 0 once installed
 #   store <gog|epic> uninstall <id>
 #   store <gog|epic> launch <id>       saves down, the game, saves up; the game's exit status
+#   store <gog|epic> game <id> [set KEY VALUE]
+#                                      print (JSON) an installed game's own choices (Game settings >
+#                                      RetroForge, GAME CHOICES below) and what each can be, after saving one
 #   store browser status               {"ready": bool, "binary": path|null}: the sign-in's Chromium (no network)
 #   store browser setup                that Chromium, into the player's home; N% lines (BROWSER below)
 #
@@ -48,6 +51,20 @@
 # runs, each sets an INI key in its prefix. A player turns both off per game in store-games.json
 # (GAME_CHOICES): umu-protonfixes' were written for x86 GE-Proton. An Epic game starts offline unless
 # its "online" is "on" there (Epic.launch_info).
+#
+# GAME CHOICES. The player's per-game choices, which Game settings > RetroForge sets through `game`
+# (game_settings_page.gd), in store-games.json keyed "<store>-<id>"; a key not there is the default:
+#   tso          "off": FEX's x86 memory ordering off (fex_tso; on by default)
+#   proton       a Proton's folder name in Steam's compatibilitytools.d or steamapps/common (protons():
+#                arm64 builds with umu-protonfixes, which run a game without the Steam client; Valve's
+#                Proton goes through its steam.exe); else the one steam-compat-tools keeps for this CPU
+#   protonfixes  "off": none of umu-protonfixes' fixes, nor RetroForge's own (OWN_FIXES)
+#   online       "on": an Epic game starts signed in to Epic (Epic.launch_info)
+#   resolution   WxH: the games display's size for the run, from Settings > Display > Game resolution's
+#                sizes (window_size, as a ROM's Screen size; put back after, and by retroforge-launch's
+#                watcher should this process be killed)
+#   api          d3d11 | d3d12 | vulkan | opengl: the graphics API, for a Unity, Unreal or Godot game
+#                built with more than one (python/graphics_api.py: what it offers, and the flags)
 #
 # SIGN-IN. RetroForge never takes a password. `sign-in` opens the store's own sign-in page in Chromium
 # (python/chromium_signin.py; .claude/plans/store-signin-window.plan.md), fullscreen over OGUI, where the
@@ -87,6 +104,7 @@ import json
 import os
 import re
 import shutil
+import shlex
 import signal
 import subprocess
 import sys
@@ -102,6 +120,8 @@ import zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "python"))  # /usr/lib/retroforge/python
 import chromium_setup  # noqa: E402
 import chromium_signin  # noqa: E402
+import graphics_api  # noqa: E402
+import window_size  # noqa: E402
 
 DATA_HOME = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
 CONFIG_HOME = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
@@ -118,6 +138,12 @@ COMPAT_PROGRESS = os.path.join(DATA_HOME, "retroforge", "steam-compat-tools.prog
 AGENT = "retroforge-store"
 RUNTIME_NAME = "SteamLinuxRuntime_4-arm64"
 API = os.environ.get("RETROFORGE_STORE_API", "")
+# The games display's journal is retroforge-launch's (window_size), and so is the watcher that gives the
+# size back should this process be killed.
+STATE_DIR = os.environ.get("RETROFORGE_STATE_DIR", os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "retroforge"))
+LAUNCHER = os.environ.get("RETROFORGE_STORE_LAUNCHER", "/usr/bin/retroforge-launch")
+DETACH = os.environ.get("RETROFORGE_STORE_DETACH", "systemd-run --user --quiet --collect --")
 OOM_SCORE_ADJ = 900  # `steam-launch-wrapper --oom-score-adjust 900`, as Steam starts its games
 
 
@@ -452,11 +478,9 @@ def proton_dir(store=None, gid=None, progress=None, update=False):
     return folder
 
 
-# The player's per-game choices, keyed "<store>-<id>": {"tso": "on" | "off" | "default", "proton": the
-# folder name of a Proton in Steam's compatibilitytools.d or steamapps/common, e.g. "Proton
-# Experimental (ARM64)"; unset or not there: the one steam-compat-tools keeps for this CPU,
-# "protonfixes": "off" for none of umu-protonfixes' fixes or RetroForge's own (OWN_FIXES)}.
+# The player's per-game choices (GAME CHOICES in the header), keyed "<store>-<id>".
 GAME_CHOICES = os.path.join(CONFIG_HOME, "retroforge", "store-games.json")
+CHOICE_KEYS = ("tso", "proton", "protonfixes", "online", "resolution", "api")
 
 
 def game_choice(store, gid, key):
@@ -466,6 +490,60 @@ def game_choice(store, gid, key):
     except (OSError, ValueError, AttributeError):
         mine = {}
     return str(mine.get(key, "")) if isinstance(mine, dict) else ""
+
+
+def save_choice(store, gid, key, value):
+    """One choice of the game's into GAME_CHOICES; "default" removes it (and an emptied game's entry)."""
+    choices = read_json(GAME_CHOICES, {})
+    choices = choices if isinstance(choices, dict) else {}
+    mine = choices.get(f"{store}-{gid}")
+    mine = mine if isinstance(mine, dict) else {}
+    if value == "default":
+        mine.pop(key, None)
+    else:
+        mine[key] = value
+    if mine:
+        choices[f"{store}-{gid}"] = mine
+    else:
+        choices.pop(f"{store}-{gid}", None)
+    write_private(GAME_CHOICES, json.dumps(choices, indent=1, sort_keys=True))
+
+
+def protons():
+    """[(folder name, display name)] of the Protons a store game can run with: arm64 builds with
+    umu-protonfixes (Proton-CachyOS, ours among them), which start a game without the Steam client.
+    Valve's Proton goes through its steam.exe (PROTONFIXES above), and an x86 one does not run in the
+    arm64 runtime."""
+    out = []
+    for base in ("compatibilitytools.d", os.path.join("steamapps", "common")):
+        root = os.path.join(STEAM_ROOT, base)
+        try:
+            names = sorted(n for n in os.listdir(root) if not n.startswith("."))
+        except OSError:
+            continue
+        for name in names:
+            folder = os.path.join(root, name)
+            if (name in [n for n, _ in out] or not os.path.isfile(os.path.join(folder, "proton"))
+                    or not os.path.isdir(os.path.join(folder, "protonfixes"))
+                    or not os.path.isdir(os.path.join(folder, "files", "lib", "wine", "aarch64-unix"))):
+                continue
+            m = re.search(r'"display_name"\s+"([^"]*)"', read_text(os.path.join(folder, "compatibilitytool.vdf")))
+            out.append((name, m.group(1) if m and m.group(1) else name))
+    return out
+
+
+def default_proton():
+    """(folder name, display name) of the Proton steam-compat-tools keeps for this CPU, from its status
+    (no network); ("", "") when it says none."""
+    try:
+        env = dict(os.environ, RETROFORGE_STEAM_ROOT=STEAM_ROOT)
+        res = subprocess.run([COMPAT_TOOLS, "status"], env=env, text=True, capture_output=True, timeout=30)
+        status = json.loads(res.stdout) if res.returncode == 0 else {}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        status = {}
+    path = status.get("path") if isinstance(status, dict) else None
+    name = os.path.basename(path.rstrip("/")) if isinstance(path, str) and path else ""
+    return name, str(status.get("display_name") or name) if name else ""
 
 
 def fex_tso(store, gid):
@@ -1007,6 +1085,15 @@ class Epic:
         args = list(p.get("game_parameters", [])) + list(p.get("user_parameters", [])) + list(p.get("egl_parameters", []))
         return exe, args, p.get("working_directory") or p["game_directory"], p["game_directory"]
 
+    def program(self, gid):
+        """(install folder, the program it starts) of an installed game, from installed.json (no
+        legendary run, no network)."""
+        inst = self.installed().get(gid)
+        if not inst or not inst.get("install_path"):
+            raise Failed("it is not installed")
+        folder = inst["install_path"]
+        return folder, os.path.join(folder, str(inst.get("executable", "")).replace("\\", "/"))
+
     def sync_saves(self, gid, direction):
         """down: before the game (and records the save path, from the prefix); up: after it."""
         env = dict(self.env, STEAM_COMPAT_DATA_PATH=os.path.dirname(prefix_path(self.name, gid)))
@@ -1222,6 +1309,11 @@ class Gog:
         workdir = self._file(path, task["workingDir"]) if task.get("workingDir") else os.path.dirname(exe)
         return exe, args, workdir, path
 
+    def program(self, gid):
+        """(install folder, the program it starts) of an installed game (no network)."""
+        exe, _args, _workdir, path = self.launch_info(gid)
+        return path, exe
+
     @staticmethod
     def _file(root, rel):
         """root/rel with rel's backslashes, matched case-insensitively as Windows would."""
@@ -1359,10 +1451,41 @@ def prefetch_art(name):
             f"{results.count('failed')} failed, of {len(todo)} not cached")
 
 
+def game_size(store, gid):
+    """(width, height) the player chose for the game's games display, else None."""
+    m = window_size.SCREEN_VALUE.fullmatch(game_choice(store, gid, "resolution"))
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def size_display(store, gid):
+    """The games display at the game's chosen size (GAME CHOICES); a callable that gives the old size
+    back, or None. retroforge-launch's watcher gives it back should this process be killed (OGUI's
+    double Exit), and the next launch of anything does too."""
+    size = game_size(store, gid)
+    if not size:
+        return None
+    warn = lambda msg: log(f"warning: {msg}")  # noqa: E731
+    window_size.restore_display(STATE_DIR, warn)  # what a killed run left
+    back = window_size.size_display(os.environ.get("DISPLAY", ""), None, STATE_DIR,
+                                    lambda msg: log(f"{store} {gid}: {msg}"), warn, size=size)
+    if back:
+        cmd = shlex.split(DETACH) + [sys.executable, LAUNCHER, "--restore-display", str(os.getpid())]
+        try:
+            subprocess.run(cmd, check=True, timeout=15, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as err:
+            log(f"no watcher for the games display ({err}): a killed run gets its size back at the next launch")
+    return back
+
+
 def launch(store, gid):
     """Saves down, the game, saves up. No upload after a failed download: this device's saves could
     then be older than the cloud's and still win."""
     exe, args, workdir, game_dir = store.launch_info(gid)
+    api = game_choice(store.name, gid, "api")
+    extra = graphics_api.args(game_dir, exe, api) if api else []
+    if extra:
+        log(f"{store.name} {gid}: graphics API {api} ({' '.join(extra)})")
+        args = graphics_api.with_args(args, extra)
     try:
         prepare_prefix(store.name, gid)
         store.sync_saves(gid, "down")
@@ -1370,13 +1493,44 @@ def launch(store, gid):
     except Failed as err:
         notice(store.name, f"Cloud saves were not synced this time, so the cloud copy stays as it was: {err}")
         synced = False
-    code = run_windows_game(store.name, gid, exe, args, workdir, game_dir)
+    display_back = size_display(store.name, gid)
+    try:
+        code = run_windows_game(store.name, gid, exe, args, workdir, game_dir)
+    finally:
+        if display_back:
+            display_back()
     if synced:
         try:
             store.sync_saves(gid, "up")
         except Failed as err:
             notice(store.name, f"Cloud saves were not uploaded: {err}")
     return code
+
+
+def game_settings(store, gid, change=None):
+    """`game <id> [set KEY VALUE]`: the game's choices (GAME CHOICES), after saving change, and what
+    each can be: {"settings": {key: value or "default"}, "protons": [{"key", "name"}],
+    "default_proton": name, "apis": [...], "engine": name or "", "online": whether the store has it}."""
+    game_dir, exe = store.program(gid)
+    engine, apis = graphics_api.offered(game_dir, exe)
+    found = protons()
+    if change:
+        key, value = change
+        ok = value == "default" or {
+            "tso": value in ("on", "off"), "protonfixes": value == "off",
+            "online": store.name == "epic" and value == "on",
+            "proton": value in [n for n, _ in found],
+            "resolution": bool(window_size.SCREEN_VALUE.fullmatch(value)),
+            "api": value in apis}.get(key, False)
+        if key not in CHOICE_KEYS or not ok:
+            raise Usage(f"not a choice for {store.name} {gid}: {key} {value}")
+        save_choice(store.name, gid, key, value)
+        log(f"{store.name} {gid}: {key} {value}")
+    default_key, default_name = default_proton()
+    settings = {k: game_choice(store.name, gid, k) or "default" for k in CHOICE_KEYS}
+    return {"settings": settings, "protons": [{"key": n, "name": d} for n, d in found],
+            "default_proton": default_name, "default_proton_key": default_key, "apis": apis,
+            "engine": engine or "", "online": store.name == "epic"}
 
 
 def set_up_browser(progress):
@@ -1409,14 +1563,17 @@ def main(argv):
             log(str(err))
             return err.code
     if len(argv) < 3 or argv[1] not in STORES:
-        print("usage: store <gog|epic> status|setup|sign-in|sign-out|games|install <id>|uninstall <id>|launch <id>",
-              file=sys.stderr)
+        print("usage: store <gog|epic> status|setup|sign-in|sign-out|games|install <id>|uninstall <id>|launch <id>"
+              "|game <id> [set KEY VALUE]", file=sys.stderr)
         return 2
     store, verb, rest = STORES[argv[1]](), argv[2], argv[3:]
     if verb in ("setup", "games", "art", "install", "uninstall"):
         os.nice(10)  # behind OGUI and a running game: a download decompresses on every core
     if verb in ("install", "uninstall", "launch") and len(rest) != 1:
         print(f"usage: store {store.name} {verb} <id>", file=sys.stderr)
+        return 2
+    if verb == "game" and not (len(rest) == 1 or (len(rest) == 4 and rest[1] == "set")):
+        print(f"usage: store {store.name} game <id> [set KEY VALUE]", file=sys.stderr)
         return 2
     try:
         if verb == "status":
@@ -1451,6 +1608,8 @@ def main(argv):
             store.uninstall(rest[0])
         elif verb == "launch":
             return launch(store, rest[0])
+        elif verb == "game":
+            print(json.dumps(game_settings(store, rest[0], (rest[2], rest[3]) if len(rest) == 4 else None)))
         else:
             print(f"store: unknown command {verb}", file=sys.stderr)
             return 2

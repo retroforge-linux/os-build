@@ -884,6 +884,66 @@ print(json.dumps({{"installed": "x"}}) if sys.argv[1:] == ["status"] else {PROTO
 """)})
 ok(game_run(calls())[4] == os.path.join(PROTON, "proton"), "a status without the folder: install finds it")
 
+CASE = "game settings"
+def game(*args, env=None):
+    r = store("gog", "game", "1", *args, env=env)
+    try:
+        return r, json.loads(r.stdout)
+    except ValueError:
+        return r, None
+if os.path.exists(choices):
+    os.remove(choices)
+r, g = game()
+ok(r.returncode == 0 and g and set(g["settings"].values()) == {"default"} and g["apis"] == [] and g["online"] is False,
+   "every choice at its default, no graphics API for a game whose engine it does not know, no Online for GOG", r.stdout + r.stderr)
+ok(g and g["default_proton_key"] == os.path.basename(PROTON) and g["protons"] == [],
+   "the default Proton named; Valve's (no umu-protonfixes) is not one a store game can choose", str(g))
+cachy = os.path.join(HOME, "no-steam", "compatibilitytools.d", "cachy-test")
+os.makedirs(os.path.join(cachy, "protonfixes"))
+os.makedirs(os.path.join(cachy, "files", "lib", "wine", "aarch64-unix"))
+open(os.path.join(cachy, "proton"), "w").close()
+open(os.path.join(cachy, "compatibilitytool.vdf"), "w").write('"compatibilitytools"\n{\n "compat_tools"\n {\n  "cachy-test"\n  {\n   "display_name" "Cachy Test"\n  }\n }\n}\n')
+r, g = game()
+ok(g and g["protons"] == [{"key": "cachy-test", "name": "Cachy Test"}], "an arm64 Proton with umu-protonfixes, by its display name", str(g))
+r, g = game("set", "proton", "cachy-test")
+ok(r.returncode == 0 and json.load(open(choices)) == {"gog-1": {"proton": "cachy-test"}}, "a choice is saved", r.stderr)
+r, _ = game("set", "proton", "Proton Experimental (ARM64)")
+ok(r.returncode == 2 and json.load(open(choices)) == {"gog-1": {"proton": "cachy-test"}}, "one it does not offer is refused", r.stderr)
+for key, value in (("tso", "off"), ("protonfixes", "off"), ("resolution", "1280x720")):
+    game("set", key, value)
+r, _ = game("set", "online", "on")
+ok(r.returncode == 2, "Online is Epic's only", r.stderr)
+r, _ = game("set", "resolution", "big")
+ok(r.returncode == 2, "a resolution is WxH", r.stderr)
+r, _ = game("set", "api", "vulkan")
+ok(r.returncode == 2, "no graphics API the game does not offer", r.stderr)
+open(os.path.join(gamedir, "UnityPlayer.dll"), "w").close()
+r, g = game()
+ok(g and g["engine"] == "unity" and g["apis"] == ["d3d11", "vulkan"], "a Unity game: DirectX 11 and Vulkan", str(g))
+os.makedirs(os.path.join(gamedir, "D3D12"))
+r, g = game("set", "api", "vulkan")
+ok(r.returncode == 0 and g["apis"] == ["d3d11", "d3d12", "vulkan"] and g["settings"]["api"] == "vulkan",
+   "DirectX 12 with its D3D12 folder; the choice saved", str(g))
+ok(g and g["settings"] == {"tso": "off", "proton": "cachy-test", "protonfixes": "off", "online": "default",
+                           "resolution": "1280x720", "api": "vulkan"}, "every choice as saved", str(g))
+reset_calls()
+r = store("gog", "launch", "1", unset=["DISPLAY"])
+run = game_run(calls())
+ok(run and run[run.index("waitforexitandrun") + 2:run.index("waitforexitandrun") + 5] == ["-a", "two words", "-force-vulkan"],
+   "the launch adds the API's flag after the game's own arguments", str(run))
+ok(run and run[4] == os.path.join(cachy, "proton") and "no DISPLAY" in r.stderr,
+   "with the chosen Proton; without a games display to size, the game still starts", r.stderr)
+for key in ("tso", "proton", "protonfixes", "resolution", "api"):
+    game("set", key, "default")
+ok(not os.path.exists(choices) or json.load(open(choices)) == {}, "Default removes each, and the emptied game's entry")
+shutil.rmtree(cachy)
+shutil.rmtree(os.path.join(gamedir, "D3D12"))
+os.remove(os.path.join(gamedir, "UnityPlayer.dll"))
+r = store("epic", "game", "Fortnite2")
+ok(r.returncode == 0 and json.loads(r.stdout)["online"] is True, "an Epic game offers Online", r.stderr)
+r = store("gog", "game", "999")
+ok(r.returncode == 1, "a game that is not installed has no settings", r.stderr)
+
 CASE = "gog conflict"
 store("gog", "launch", "1", env={"FAKE_CONFLICT": "1"})
 ok(json.load(open(os.path.join(DATA, "gog-saves.json"))) == {"1.saves": "1700000000.5"}, "a conflict keeps the last sync time")

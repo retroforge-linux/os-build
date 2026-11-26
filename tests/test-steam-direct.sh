@@ -355,7 +355,7 @@ rm -rf "$S/compatibilitytools.d" "$S/config/config.vdf"
 CASE="run: per-game choices"
 GAMES="$H/.config/retroforge/steam-games.json"
 direct -- game 1145360
-[ "$RC" = 0 ] && python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["settings"] == {"tso": "default", "launch": "default", "resolution": "default", "driver": "default"}, d; assert d["x86"] is False, d; assert d["tso_hint"] == "0", d; assert [e["key"] for e in d["launch"]] == ["0", "1", "2", "3", "4", "15"], d; assert d["launch"][-1]["description"] == "Hades (Steam Deck)", d; assert d["direct"] in ("on", "off"), d' "$OUT" \
+[ "$RC" = 0 ] && python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["settings"] == {"tso": "default", "launch": "default", "resolution": "default", "driver": "default", "api": "default"}, d; assert d["apis"] == [], d; assert d["x86"] is False, d; assert d["tso_hint"] == "0", d; assert [e["key"] for e in d["launch"]] == ["0", "1", "2", "3", "4", "15"], d; assert d["launch"][-1]["description"] == "Hades (Steam Deck)", d; assert d["direct"] in ("on", "off"), d' "$OUT" \
   && ok "game: every choice at its default, and the launch entries Steam's dialog offers here, in its order" || bad "rc=$RC out=$OUT err=$ERR"
 direct -- game 1145360 set launch 0
 [ "$RC" = 0 ] && python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {"1145360": {"launch": "0"}}' "$GAMES" \
@@ -492,6 +492,33 @@ direct -- game 4000 set tso default; direct -- fex 4000
 [ ! -e "$O4" ] && grep -q "app 4000: FEX TSO as Proton has it when Steam starts it" <<<"$ERR" \
   && ok "back to default with no hint: our file goes" || bad "$(ls "$S/steamapps/compatdata/4000") err=$ERR"
 rm -rf "$S/steamapps/compatdata/1145360" "$S/steamapps/compatdata/4000" "$S/steamapps/appmanifest_4000.acf" "$GAMES"
+
+CASE="graphics API"
+LF="$H/.config/protonfixes/localfixes/1145360.py"
+apis() { python3 -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])["apis"]))' "$OUT"; }
+touch "$GAME/x64Vk/UnityPlayer.dll"
+direct -- game 1145360
+[ "$RC" = 0 ] && [ "$(apis)" = "d3d11 vulkan" ] && ok "game: a Unity game offers DirectX 11 and Vulkan" || bad "rc=$RC out=$OUT err=$ERR"
+direct -- game 1145360 set api d3d12
+[ "$RC" = 2 ] && [ ! -e "$LF" ] && ok "set: DirectX 12 refused without the game's D3D12 folder" || bad "rc=$RC"
+direct -- game 1145360 set api vulkan
+[ "$RC" = 0 ] && head -n1 "$LF" | grep -q "^# Written by retroforge-steam-direct: this game's graphics API" && grep -qF "ARGS = ['-force-vulkan']" "$LF" \
+  && ok "set: saved, and the game's protonfixes local fix carries the flag for launches through the client" || bad "rc=$RC $(cat "$LF" 2>&1)"
+fresh_log; reset_run
+direct -- run 1145360
+[ "$(tail -n1 "$T/ran.args")" = -force-vulkan ] && grep -q "renders with vulkan (-force-vulkan)" <<<"$ERR" \
+  && ok "run: without the client, the flag after Steam's own arguments" || bad "args=$(tail -3 "$T/ran.args" | tr '\n' '|') err=$ERR"
+PF="$T/pf/protonfixes"; mkdir -p "$PF/gamefixes-steam"; : >"$PF/__init__.py"; : >"$PF/gamefixes-steam/__init__.py"
+printf 'import sys\ndef main():\n    sys.argv.append("-own")\n' >"$PF/gamefixes-steam/1145360.py"
+fixed="$(python3 -c 'import runpy, sys; lf, pf = sys.argv[1], sys.argv[2]; sys.path.insert(0, pf); sys.argv = ["proton", "waitforexitandrun", "Hades.exe"]; g = runpy.run_path(lf); g["main_with_id"]("1145360"); g["main_with_id"]("1145360"); print(" ".join(sys.argv[2:]))' "$LF" "$T/pf" 2>&1)"
+[ "$fixed" = "Hades.exe -own -force-vulkan -own" ] && ok "the local fix runs umu-protonfixes' own fix for the game first, and adds the flag once" || bad "argv: $fixed"
+rm -f "$LF"; printf '# mine\n' >"$LF"
+direct -- game 1145360 set api default
+[ "$(cat "$LF")" = "# mine" ] && ok "a local fix of the player's own is left as it is" || bad "$(cat "$LF")"
+rm -f "$LF"; direct -- game 1145360 set api vulkan; direct -- game 1145360 set api default
+[ ! -e "$LF" ] && python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {}' "$GAMES" \
+  && ok "back to default: our local fix goes, nothing kept" || bad "$(ls "$(dirname "$LF")") $(cat "$GAMES")"
+rm -f "$GAME/x64Vk/UnityPlayer.dll"; rm -rf "$T/pf" "$H/.config/protonfixes" "$GAMES"
 
 CASE="run: Steam's game resolution"
 mkdir -p "$S/config" "$S/userdata/12345/config"
@@ -633,6 +660,7 @@ printf '#!/usr/bin/env bash\necho "$*" >>"%s/proton.calls"\n' "$W" >"$W/proton"
 chmod +x "$W/client" "$W/bootstrap" "$W/keep" "$W/bin/systemd-run" "$W/stub-direct" "$W/guest" "$W/proton"
 # The real helper, as the image installs it: executable (/usr/bin/steam runs it only then).
 cp "$DIRECT" "$W/direct"; chmod +x "$W/direct"
+mkdir -p "$W/../lib/retroforge"; ln -sfn "$(cd "$(dirname "$DIRECT")/../lib/retroforge/python" && pwd)" "$W/../lib/retroforge/python"  # its modules, beside it as in the image
 # The x86 guest is on, its helper a stub that records its calls (test-steam-x86-guest.sh has the rest).
 WENV=(env -u RETROFORGE_STEAM_KEPT -u PROTON_DXVK_SAREK -u RETROFORGE_STEAM_X86_GUEST "${DENV[@]:1}" PATH="$W/bin:$PATH"
       RETROFORGE_STEAM_BOOTSTRAP="$W/bootstrap" RETROFORGE_STEAM_X86_GUEST_HELPER="$W/guest"

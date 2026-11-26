@@ -3,7 +3,10 @@ extends ScrollContainer
 ## Game settings > RetroForge: per-ROM options, in the screen the gear on OGUI's launch menu opens.
 ## For Steam games: their FEX TSO, launch option and resolution, which retroforge-steam-direct keeps
 ## and uses when it starts the game without the client; and an x86 game's graphics driver, which
-## /usr/bin/steam sets before every launch of it.
+## /usr/bin/steam sets before every launch of it. For an installed GOG or Epic game: its FEX TSO,
+## Proton, game fixes, (Epic) online and resolution, which `store <s> launch` reads (its GAME CHOICES).
+## For both, the graphics API of a Unity, Unreal or Godot game built with more than one
+## (python/graphics_api.py).
 ## "Run on fast cores": the emulator's default (Main menu > Apps), On or Off for this game
 ## (CPUS=big / all in the game's conf, which retroforge-launch reads; launch_args.gd). "Screen size"
 ## (SCREEN=WxH: gamescope's games display for this game, the sizes of Settings > Display > Game
@@ -62,14 +65,29 @@ const TSO_CHOICES := ["default", "on", "off"]
 const TSO_ABOUT := "How closely FEX keeps x86 memory ordering between a game's threads. Off is faster on this CPU; some games then crash or glitch. Default: Valve's tested setting for the game, else On."
 const DRIVER_CHOICES := ["default", "native", "x86"]
 const DRIVER_ABOUT := "An x86 game's OpenGL and Vulkan driver. x86 Mesa: our x86 driver, emulated with the game. Native: the device's own, which FEX hands the game's calls to (less CPU, faster loading; a 32-bit game's Vulkan stays on x86), but some games crash on it. Default: x86 Mesa."
+const STORE_TSO_ABOUT := "How closely FEX keeps x86 memory ordering between a game's threads. Off is faster on this CPU; some games then crash or glitch. Default: On."
+const PROTON_ABOUT := "The Proton this game runs with. Default: the one RetroForge keeps up to date for this device (Main menu > Apps > Proton)."
+const FIXES_ABOUT := "Per-game fixes from umu-protonfixes and RetroForge's own, applied before the game starts. Off runs the game as it is. Default: On."
+const ONLINE_ABOUT := "Online, the game starts signed in to Epic: online play, and games whose DRM needs it. A game that first asks for Epic's consent can then wait forever. Default: Offline."
+const STORE_RESOLUTION_ABOUT := "The size the game draws at; the display scales it to the panel. Default: Settings > Display."
+const API_ABOUT := "The graphics API the game renders with, of those its engine has. DirectX runs through DXVK or vkd3d-proton; Vulkan and OpenGL go to the device's own driver. A game built without the one picked may not start or may draw wrong: set it back to Default."
+const API_STEAM := " When Steam itself starts the game, only with Proton-CachyOS."
+const API_LABELS := {"d3d11": "DirectX 11", "d3d12": "DirectX 12", "vulkan": "Vulkan", "opengl": "OpenGL"}
+const STORE_TOOL := "/usr/lib/retroforge/store"
+const STORE_LIBRARY_IDS := ["retroforge-gog", "retroforge-epic"]
 const DisplaySettings := preload("display_settings.gd")
 var _steam_app := 0  # the Steam app id of the game being configured, 0 for none
-var _tso: Control  # OGUI Dropdowns: the Steam game's own choices
+var _store := ""  # "gog" or "epic" for an installed store game being configured, else ""
+var _store_game := ""  # its id in that store
+var _tso: Control  # OGUI Dropdowns: the Steam or store game's own choices
+var _proton: Control
+var _fixes: Control
+var _online: Control
 var _launch: Control
-var _launch_keys: Array = []
 var _resolution: Control
-var _resolution_keys: Array = []  # "default", then WxH: the sizes of Settings > Display > Game resolution
 var _driver: Control
+var _api: Control
+var _values := {}  # a row's key -> what each of its items saves
 var _display := DisplaySettings.new()
 const DIRECT_OFF := " Used only while Apps > Steam Client > \"Steam: start games without Steam\" is on."
 
@@ -151,10 +169,16 @@ func _build_page() -> void:
 	_scrape.progressed.connect(func(pct: int) -> void: _art.description = "Scraping... %d%%" % pct)
 	_scrape.finished.connect(_on_art_scraped)
 
-	_tso = _steam_dropdown("FEX TSO", TSO_ABOUT, "tso")
-	_launch = _steam_dropdown("Launch option", "Which of the game's programs starts, as in Steam's launch dialog. Default: the one Steam last started.", "launch")
-	_resolution = _steam_dropdown("Resolution", "The size the game draws at; the display scales it to the panel. Default: its Game resolution in Steam, else Settings > Display.", "resolution")
-	_driver = _steam_dropdown("Graphics driver", DRIVER_ABOUT, "driver")
+	# In this order, so a Steam game shows FEX TSO, Launch option, Resolution, Graphics driver,
+	# Graphics API, and a store game FEX TSO, Proton, Game fixes, Online, Resolution, Graphics API.
+	_tso = _game_dropdown("FEX TSO", TSO_ABOUT, "tso")
+	_proton = _game_dropdown("Proton", PROTON_ABOUT, "proton")
+	_fixes = _game_dropdown("Game fixes", FIXES_ABOUT, "protonfixes")
+	_online = _game_dropdown("Online", ONLINE_ABOUT, "online")
+	_launch = _game_dropdown("Launch option", "Which of the game's programs starts, as in Steam's launch dialog. Default: the one Steam last started.", "launch")
+	_resolution = _game_dropdown("Resolution", "The size the game draws at; the display scales it to the panel. Default: its Game resolution in Steam, else Settings > Display.", "resolution")
+	_driver = _game_dropdown("Graphics driver", DRIVER_ABOUT, "driver")
+	_api = _game_dropdown("Graphics API", API_ABOUT, "api")
 
 
 func _rom_dropdown(rows: Node, title: String, description: String, selected: Callable) -> Control:
@@ -166,13 +190,13 @@ func _rom_dropdown(rows: Node, title: String, description: String, selected: Cal
 	return dropdown
 
 
-func _steam_dropdown(title: String, description: String, key: String) -> Control:
+func _game_dropdown(title: String, description: String, key: String) -> Control:
 	var dropdown = dropdown_scene.instantiate()
 	dropdown.title = title
 	dropdown.description = description
 	dropdown.set_meta("about", description)
 	dropdown.visible = false
-	dropdown.item_selected.connect(func(index: int) -> void: _on_steam_choice(key, index))
+	dropdown.item_selected.connect(func(index: int) -> void: _on_game_choice(key, index))
 	_rows.add_child(dropdown)
 	return dropdown
 
@@ -207,10 +231,19 @@ func _on_game_settings_entered(_from: State) -> void:
 	_item = item.get_launch_item(LIBRARY_ID) if item is LibraryItem else null
 	var steam_item = item.get_launch_item(STEAM_LIBRARY_ID) if item is LibraryItem else null
 	_steam_app = int(steam_item.metadata.get("steam_app", 0)) if steam_item and steam_item.metadata else 0
-	var show := _item != null or _steam_app > 0
+	_store = ""
+	_store_game = ""
+	if item is LibraryItem and _steam_app <= 0:
+		for library_id in STORE_LIBRARY_IDS:
+			var store_item = item.get_launch_item(library_id)
+			if store_item and store_item.installed:
+				_store = library_id.trim_prefix("retroforge-")
+				_store_game = store_item.provider_app_id
+				break
+	var show := _item != null or _steam_app > 0 or _store != ""
 	for row in [_fast_cores, _screen, _art]:
 		row.visible = _item != null
-	_fill_steam_rows()
+	_fill_game_rows()
 	if button.visible != show:
 		button.visible = show
 		_recalculate(button.get_parent())
@@ -231,66 +264,130 @@ func _on_game_settings_entered(_from: State) -> void:
 		_build_options(roms.emulator_of(_item))
 
 
-## The Steam game's own choices, from retroforge-steam-direct (about half a second, so off the UI
-## thread); the rows stay hidden for anything else. The launch option only when Steam offers more
-## than one.
-func _fill_steam_rows() -> void:
-	var app := _steam_app
-	for row in [_tso, _launch, _resolution, _driver]:
+## The Steam or store game's own choices, from retroforge-steam-direct or `store <s> game` (about
+## half a second, so off the UI thread); the rows stay hidden for anything else. A row shows only
+## when it has a choice to make (a launch option when Steam offers more than one, a Proton when
+## another one is installed, a graphics API when the game's engine has more than one).
+func _fill_game_rows() -> void:
+	var cmd := _rows_command()
+	for row in [_tso, _proton, _fixes, _online, _launch, _resolution, _driver, _api]:
 		row.visible = false
 	if _item != null:
 		_focus_group.current_focus = _fast_cores
-	if app <= 0 or not FileAccess.file_exists(STEAM_DIRECT):
+	if cmd.is_empty() or not FileAccess.file_exists(cmd[0]):
 		return
-	var output: String = await _output_of(STEAM_DIRECT, ["game", str(app)])
+	var output: String = await _output_of(cmd[0], cmd.slice(1))
 	var data = JSON.parse_string(output) if output != "" else null
-	if app != _steam_app or not data is Dictionary:
+	if cmd != _rows_command() or not data is Dictionary:
 		return  # another game's page by now, or nothing to offer
-	var settings: Dictionary = data.get("settings", {})
-	var entries: Array = data.get("launch", [])
 	# select() does not emit item_selected, so loading never saves.
-	_tso.clear()
-	for text in ["Default (On)", "On", "Off"]:
-		_tso.add_item(text)
-	_tso.select(maxi(TSO_CHOICES.find(settings.get("tso", "default")), 0))
-	var hint := str(data.get("tso_hint", ""))
-	_tso.set_meta("about", TSO_ABOUT + ("" if hint == "" else " Valve runs this game with it %s on the Steam Frame." % ("On" if hint == "1" else "Off")))
-	_launch.clear()
-	_launch_keys = ["default"]
-	_launch.add_item("Default (as Steam last started it)")
-	for entry in entries:
-		_launch_keys.append(str(entry.get("key", "")))
-		_launch.add_item(str(entry.get("description", "")))
-	_launch.select(maxi(_launch_keys.find(settings.get("launch", "default")), 0))
-	_resolution.clear()
-	_resolution_keys = ["default"]
-	var steam_size := str(data.get("steam_resolution", ""))
-	var shown := _display.size_for(_display.stored_resolution())
-	_resolution.add_item("Default (Steam's, %s)" % steam_size.replace("x", " x ") if steam_size != ""
-		else "Default (Settings > Display, %d x %d)" % [shown.x, shown.y])
+	if _steam_app > 0:
+		_fill_steam(data)
+	else:
+		_fill_store(data)
+	_fill_api(data)
+	_focus_group.current_focus = _tso
+	_focus_group.recalculate_focus()
+
+
+## The command that prints the game's choices: [program, args...], or [] for no Steam or store game.
+func _rows_command() -> Array[String]:
+	if _steam_app > 0:
+		return [STEAM_DIRECT, "game", str(_steam_app)]
+	if _store != "":
+		return [STORE_TOOL, _store, "game", _store_game]
+	return []
+
+
+## row's items ([value, label] each), the one saved selected: a saved value the list no longer has
+## (the display changed, a Proton was removed) stays offered, as `other`.
+func _fill_row(row: Control, key: String, items: Array, mine: String, other: String = "") -> void:
+	row.clear()
+	var values := []
+	for entry in items:
+		values.append(str(entry[0]))
+		row.add_item(str(entry[1]))
+	if not mine in values:
+		values.append(mine)
+		row.add_item(other if other != "" else mine)
+	_values[key] = values
+	row.select(values.find(mine))
+
+
+## Default, then Settings > Display's sizes (WxH, one item per size).
+func _resolution_items(default_label: String) -> Array:
+	var items := [["default", default_label]]
+	var keys := ["default"]
 	for r in DisplaySettings.RESOLUTIONS.slice(1):
 		var dims: Vector2i = _display.size_for(r[0])
 		var key := "%dx%d" % [dims.x, dims.y]
-		if not key in _resolution_keys:
-			_resolution_keys.append(key)
-			_resolution.add_item("%s, %d x %d" % [r[1], dims.x, dims.y])
+		if dims.x > 0 and dims.y > 0 and not key in keys:  # no size while the screen's is unknown
+			keys.append(key)
+			items.append([key, "%s, %d x %d" % [r[1], dims.x, dims.y]])
+	return items
+
+
+func _fill_steam(data: Dictionary) -> void:
+	var settings: Dictionary = data.get("settings", {})
+	var entries: Array = data.get("launch", [])
+	var hint := str(data.get("tso_hint", ""))
+	_tso.set_meta("about", TSO_ABOUT + ("" if hint == "" else " Valve runs this game with it %s on the Steam Frame." % ("On" if hint == "1" else "Off")))
+	_fill_row(_tso, "tso", [["default", "Default (On)"], ["on", "On"], ["off", "Off"]], str(settings.get("tso", "default")))
+	var launches := [["default", "Default (as Steam last started it)"]]
+	for entry in entries:
+		launches.append([str(entry.get("key", "")), str(entry.get("description", ""))])
+	_fill_row(_launch, "launch", launches, str(settings.get("launch", "default")))
+	var steam_size := str(data.get("steam_resolution", ""))
+	var shown := _display.size_for(_display.stored_resolution())
 	var mine := str(settings.get("resolution", "default"))
-	if not mine in _resolution_keys:  # a size from before the display changed
-		_resolution_keys.append(mine)
-		_resolution.add_item(mine.replace("x", " x "))
-	_resolution.select(_resolution_keys.find(mine))
+	_fill_row(_resolution, "resolution", _resolution_items("Default (Steam's, %s)" % steam_size.replace("x", " x ") if steam_size != ""
+		else "Default (Settings > Display, %d x %d)" % [shown.x, shown.y]), mine, mine.replace("x", " x "))
+	_resolution.set_meta("about", "The size the game draws at; the display scales it to the panel. Default: its Game resolution in Steam, else Settings > Display.")
 	for row in [_tso, _launch, _resolution]:
 		row.description = str(row.get_meta("about")) + ("" if data.get("direct", "on") == "on" else DIRECT_OFF)
-	_driver.clear()
-	for text in ["Default (x86 Mesa)", "Native", "x86 Mesa"]:
-		_driver.add_item(text)
-	_driver.select(maxi(DRIVER_CHOICES.find(settings.get("driver", "default")), 0))
+	_fill_row(_driver, "driver", [["default", "Default (x86 Mesa)"], ["native", "Native"], ["x86", "x86 Mesa"]], str(settings.get("driver", "default")))
 	_tso.visible = true
 	_driver.visible = data.get("x86", false) == true
 	_launch.visible = entries.size() > 1
-	_resolution.visible = _resolution_keys.size() > 1
-	_focus_group.current_focus = _tso
-	_focus_group.recalculate_focus()
+	_resolution.visible = (_values["resolution"] as Array).size() > 1
+
+
+func _fill_store(data: Dictionary) -> void:
+	var settings: Dictionary = data.get("settings", {})
+	_fill_row(_tso, "tso", [["default", "Default (On)"], ["on", "On"], ["off", "Off"]], str(settings.get("tso", "default")))
+	_tso.description = STORE_TSO_ABOUT
+	# Display names as Main menu > Apps > Proton shows them (proton_tool.gd): without " (RetroForge)".
+	var default_name := str(data.get("default_proton", "")).trim_suffix(" (RetroForge)")
+	var default_key := str(data.get("default_proton_key", ""))
+	var mine := str(settings.get("proton", "default"))
+	var protons := [["default", "Default (%s)" % default_name if default_name != "" else "Default"]]
+	for p in data.get("protons", []):
+		if p is Dictionary and (str(p.get("key", "")) != default_key or str(p.get("key", "")) == mine):
+			protons.append([str(p.get("key", "")), str(p.get("name", "")).trim_suffix(" (RetroForge)")])
+	_fill_row(_proton, "proton", protons, mine)
+	_fill_row(_fixes, "protonfixes", [["default", "Default (On)"], ["off", "Off"]], str(settings.get("protonfixes", "default")))
+	_fill_row(_online, "online", [["default", "Default (Offline)"], ["on", "Online"]], str(settings.get("online", "default")))
+	var shown := _display.size_for(_display.stored_resolution())
+	var size := str(settings.get("resolution", "default"))
+	_fill_row(_resolution, "resolution", _resolution_items("Default (Settings > Display, %d x %d)" % [shown.x, shown.y]),
+		size, size.replace("x", " x "))
+	_resolution.description = STORE_RESOLUTION_ABOUT
+	_tso.visible = true
+	_fixes.visible = true
+	_proton.visible = (_values["proton"] as Array).size() > 1
+	_online.visible = data.get("online", false) == true
+	_resolution.visible = (_values["resolution"] as Array).size() > 1
+
+
+func _fill_api(data: Dictionary) -> void:
+	var apis: Array = data.get("apis", [])
+	var mine := str((data.get("settings", {}) as Dictionary).get("api", "default"))
+	var items := [["default", "Default (the game's own)"]]
+	for api in apis:
+		items.append([str(api), API_LABELS.get(str(api), str(api))])
+	_fill_row(_api, "api", items, mine, API_LABELS.get(mine, mine))
+	_api.description = API_ABOUT + (API_STEAM if _steam_app > 0 else "")
+	_api.visible = apis.size() > 1 or mine != "default"
 
 
 ## cmd's output when it exits 0, else "".
@@ -304,22 +401,24 @@ func _output_of(cmd_path: String, args: Array[String]) -> String:
 	return cmd.stdout if code == 0 else ""
 
 
-func _on_steam_choice(key: String, index: int) -> void:
-	var values: Array = {"tso": TSO_CHOICES, "driver": DRIVER_CHOICES,
-		"launch": _launch_keys}.get(key, _resolution_keys)
-	if _steam_app <= 0 or index < 0 or index >= values.size():
+func _on_game_choice(key: String, index: int) -> void:
+	var values: Array = _values.get(key, [])
+	var base := _rows_command()
+	if base.is_empty() or index < 0 or index >= values.size():
 		return
-	var app := _steam_app
-	var cmd := Command.create(STEAM_DIRECT, ["game", str(app), "set", key, str(values[index])])
+	var args: Array[String] = base.slice(1)
+	args.append_array(["set", key, str(values[index])])
+	var cmd := Command.create(base[0], args)
 	var code := -1
 	if cmd.execute() == OK:
 		code = await cmd.finished as int
 	if code == 0:
-		logger.info("Steam app %d: %s = %s" % [app, key, values[index]])
+		logger.info("%s: %s = %s" % [" ".join(PackedStringArray(base.slice(1))), key, values[index]])
 		return
-	logger.warn("retroforge-steam-direct game %d set %s %s exited %d: %s" % [app, key, values[index], code, cmd.stderr])
+	logger.warn("%s set %s %s exited %d: %s" % [" ".join(PackedStringArray(base)), key, values[index], code, cmd.stderr])
 	notification_manager.show(Notification.new("Could not save this game's " + key))
-	_fill_steam_rows()
+	if base == _rows_command():
+		_fill_game_rows()
 
 
 ## The game's emulator options, after the fast-cores row. Removed from the tree before they are

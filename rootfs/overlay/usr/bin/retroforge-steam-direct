@@ -13,10 +13,12 @@
 #   retroforge-steam-direct remember     keep every game's newest launch in Steam's log (/usr/bin/steam
 #                                        runs it before the client starts)
 #   retroforge-steam-direct game APPID [set KEY VALUE]
-#                                        print (JSON) APPID's own FEX TSO, launch option, resolution and
-#                                        graphics driver (Game settings > RetroForge), after saving one
+#                                        print (JSON) APPID's own FEX TSO, launch option, resolution,
+#                                        graphics driver and graphics API (Game settings > RetroForge),
+#                                        after saving one
 #   retroforge-steam-direct fex APPID    give an x86 game the graphics driver chosen for it, in its FEX
-#                                        folder (/usr/bin/steam runs it before every launch of a game)
+#                                        folder, and a Proton game its FEX TSO and graphics API
+#                                        (/usr/bin/steam runs it before every launch through the client)
 #   retroforge-steam-direct restore-resolution PID DISPLAY WxH WxH
 #                                        once PID ends, give DISPLAY's X server the first size back if it
 #                                        still has the second (run, through systemd-run, starts it)
@@ -113,6 +115,9 @@ import subprocess
 import sys
 import tempfile
 import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
+import graphics_api  # noqa: E402
 
 HOME = os.path.expanduser("~")
 DATA = os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")
@@ -384,6 +389,7 @@ def swap_tool(appid, tools, command, want=None):
 # The player's per-game choices (Game settings, steam_game_settings.gd), keyed by app id.
 GAMES = os.path.join(os.path.dirname(CONF), "steam-games.json")
 CHOICES = {"tso": ("default", "on", "off"), "driver": ("default", "native", "x86")}
+SETTING_KEYS = ("tso", "launch", "resolution", "driver", "api")
 
 
 def read_games():
@@ -396,10 +402,10 @@ def read_games():
 
 
 def game_settings(appid):
-    """tso, launch, resolution and driver for appid: "default" for each one not chosen."""
+    """tso, launch, resolution, driver and api for appid: "default" for each one not chosen."""
     mine = read_games().get(str(appid))
     mine = mine if isinstance(mine, dict) else {}
-    return {k: str(mine.get(k, "default")) for k in ("tso", "launch", "resolution", "driver")}
+    return {k: str(mine.get(k, "default")) for k in SETTING_KEYS}
 
 
 def tso_hint(app):
@@ -629,6 +635,103 @@ def proton_tso(appid):
         + " when Steam starts it")
 
 
+# ------------------------------------------------------------------------------------------------
+# Windows games: their graphics API (Game settings > RetroForge > Graphics API; python/graphics_api.py
+# says which engines take one and what each offers). A launch without the client adds the flag to
+# Steam's command (plan). One the client starts takes its arguments only from Steam's launch options,
+# except through a Proton that runs umu-protonfixes (Proton-CachyOS): before its game starts,
+# umu-protonfixes runs ~/.config/protonfixes/localfixes/<appid>.py, which can add to the game's command
+# line. So that file carries the choice, written whenever it is saved and before every launch through
+# the client (/usr/bin/steam's `fex`). A local fix runs INSTEAD of umu-protonfixes' own one for the game
+# (fix.py run_fix), so ours runs that one first. Valve's Proton runs none: there the choice reaches a
+# game only when it starts without the client. An x86 Linux game is not offered one. A localfixes file
+# without our first line is the player's and is left alone.
+LOCAL_FIXES = os.environ.get("RETROFORGE_PROTONFIXES_LOCAL", os.path.join(HOME, ".config", "protonfixes", "localfixes"))
+LOCAL_FIX_MARK = "# Written by retroforge-steam-direct: this game's graphics API"
+LOCAL_FIX = LOCAL_FIX_MARK + """ (Game settings > RetroForge > Graphics
+# API) when Steam starts it with a Proton that runs umu-protonfixes. umu-protonfixes runs a local fix
+# instead of its own one for the game, so this runs that one first. Edit it and it is yours.
+import sys
+from importlib import import_module
+
+ARGS = {args!r}
+
+
+def _own():
+    try:
+        return import_module("protonfixes.gamefixes-steam.{appid}")
+    except ImportError:
+        return None
+
+
+def early_with_id(game_id):
+    own = _own()
+    if own is not None and hasattr(own, "early_with_id"):
+        own.early_with_id(game_id)
+    elif own is not None and hasattr(own, "early"):
+        own.early()
+
+
+def main_with_id(game_id):
+    own = _own()
+    if own is not None and hasattr(own, "main_with_id"):
+        own.main_with_id(game_id)
+    elif own is not None and hasattr(own, "main"):
+        own.main()
+    if ARGS and ARGS[0] not in sys.argv:
+        sys.argv.extend(ARGS)
+"""
+
+
+def game_program(appid, app=None):
+    """(install folder, the program its first launch entry starts, else None) of an installed game;
+    (None, None) when it is not installed."""
+    sl = steam_library()
+    found = manifest(sl, appid)
+    if not found or not found[1].strip("/."):
+        return None, None
+    game = os.path.join(found[0], "steamapps", "common", found[1])
+    if app is None:
+        try:
+            app = sl.read_app_nodes(os.path.join(STEAM_ROOT, "appcache", "appinfo.vdf"), {appid}).get(appid, {})
+        except (OSError, sl.Unreadable):
+            app = {}
+    entries = launch_entries(app, beta_key(sl, appid))
+    return game, (os.path.join(game, entries[0]["executable"]) if entries else None)
+
+
+def api_args(appid, app=None):
+    """The words that give appid the graphics API chosen for it; [] for none (python/graphics_api.py)."""
+    api = game_settings(appid)["api"]
+    if api == "default":
+        return []
+    game, exe = game_program(appid, app)
+    return graphics_api.args(game, exe, api) if game and not x86_game(appid) else []
+
+
+def proton_api(appid, app=None):
+    """The game's localfixes file (above): ours with its flag, or none of ours."""
+    path = os.path.join(LOCAL_FIXES, f"{appid}.py")
+    words = api_args(appid, app)
+    want = LOCAL_FIX.format(args=words, appid=appid) if words else None
+    try:
+        with open(path, encoding="utf-8") as f:
+            have = f.read()
+    except OSError:
+        have = None
+    if have == want or (have is not None and not have.startswith(LOCAL_FIX_MARK)):
+        return
+    if want:
+        os.makedirs(LOCAL_FIXES, exist_ok=True)
+        with open(path + ".part", "w", encoding="utf-8") as f:
+            f.write(want)
+        os.replace(path + ".part", path)
+    else:
+        os.remove(path)
+    log(f"app {appid}: " + (f"{' '.join(words)} when Steam starts it with Proton-CachyOS" if words
+                            else "its own graphics API when Steam starts it"))
+
+
 def fex_driver(appid):
     """Give an x86 game the driver chosen for it (native: GL and Vulkan through FEX's thunks)."""
     game = x86_game(appid)
@@ -821,6 +924,11 @@ def plan(appid):
                 + ("" if args else ", with the arguments Steam last gave it (no entry of its program has them)"))
         else:
             log(f"app {appid}: its launch option {choice['launch']} is not there; Steam's last launch stays")
+    api = choice["api"]
+    extra = graphics_api.args(game, exe, api) if api != "default" else []
+    if extra and extra[0] not in words:
+        command += "".join(" " + shlex.quote(w) for w in extra)  # after the game's own, as Steam's options go
+        log(f"app {appid} renders with {api} ({' '.join(extra)})")
     workdir = workingdir(appinfo.get(appid, {}), game, exe)
     if entry_dir and os.path.isdir(os.path.join(game, entry_dir)):
         workdir = os.path.join(game, entry_dir)
@@ -1073,6 +1181,7 @@ def main(argv):
         try:
             fex_driver(int(argv[1]))
             proton_tso(int(argv[1]))
+            proton_api(int(argv[1]))
         except OSError as err:
             log(f"app {argv[1]}: could not set its graphics driver: {err}")
             return 1
@@ -1092,15 +1201,21 @@ def main(argv):
             log(f"appinfo.vdf: {err}")
             app = {}
         entries = launch_entries(app, beta_key(sl, appid))
+        x86 = bool(x86_game(appid))
+        game, exe = game_program(appid, app)
+        _engine, apis = graphics_api.offered(game, exe) if game and not x86 else (None, [])
         if len(argv) == 5:
             key, value = argv[3], argv[4]
             ok = value in CHOICES.get(key, ()) or (key == "launch" and (value == "default" or value in [e["key"] for e in entries])) \
-                or (key == "resolution" and (value == "default" or sane_size(value)))
+                or (key == "resolution" and (value == "default" or sane_size(value))) \
+                or (key == "api" and (value == "default" or value in apis))
             if not ok:
                 log(f"not a choice: {key} {value}")
                 return 2
             try:
                 save_game_setting(appid, key, value)
+                if key == "api":
+                    proton_api(appid, app)
             except OSError as err:
                 log(f"could not save {GAMES}: {err}")
                 return 1
@@ -1108,7 +1223,7 @@ def main(argv):
         print(json.dumps({"settings": game_settings(appid), "direct": state()[0],
                           "launch": [{"key": e["key"], "description": e["description"]} for e in entries],
                           "steam_resolution": "%dx%d" % steam if steam else "", "tso_hint": tso_hint(app),
-                          "x86": bool(x86_game(appid))}))
+                          "x86": x86, "apis": apis}))
         return 0
     log("usage: retroforge-steam-direct status|on|off|remember|check APPID|run APPID|fex APPID|game APPID [set KEY VALUE]")
     return 2

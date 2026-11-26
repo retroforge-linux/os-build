@@ -25,6 +25,9 @@
 # THE WINDOW. App mode (one window, no address bar), fullscreen, at screen height / 720 (plan F3: 1.5 on
 # 1080p, a 1280x720 page). Its profile is a private temporary folder, deleted after: no cookie outlives
 # the sign-in. Chromium has its own session (process group), so nothing of it outlives us either.
+# The image's /etc/chromium/policies/managed/retroforge-signin.json keeps the window bare: no bar warning
+# about --disable-blink-features (below; CommandLineFlagSecurityWarningsEnabled), and no offer to save
+# the password, an address or a card once the form is sent (PasswordManagerEnabled, Autofill*).
 import ctypes
 import json
 import os

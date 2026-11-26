@@ -125,6 +125,12 @@ which its self-updates would overwrite. The overlay-ownership stage resets it to
   behind the Wi-Fi receive softirq. Today: SM8550 3-6, SM8650 2-6, SM8750 2-5; SM8250, SM6115 and
   SM4450 carry no `irqaffinity`, so the thread is left alone. Retries a late GPU bind for a minute,
   always exits 0. `tests/test-gpu-worker-cpus.sh` drives it against fabricated topologies.
+- `etc/chromium/policies/managed/retroforge-signin.json` — policies for the store sign-in's
+  Chromium (`usr/lib/retroforge/python/chromium_signin.py`), the only Chromium on the device; the
+  Arch build it unpacks reads `/etc/chromium/policies` wherever it runs from. No warning bar for
+  the flags it needs (`--disable-blink-features=AutomationControlled`, without which Epic's
+  Cloudflare check loops: "You are using an unsupported command-line flag"), and no offer to save
+  the password, an address or a card: the profile is deleted after the sign-in anyway.
 - `etc/systemd/system/{shadow,archlinux-keyring-wkd-sync,man-db}.timer -> /dev/null` — Arch
   maintenance timers with nothing to do on an image OS (users and groups are pinned at build time,
   release images carry no pacman keyring, man-db is not installed), which can otherwise fire in
