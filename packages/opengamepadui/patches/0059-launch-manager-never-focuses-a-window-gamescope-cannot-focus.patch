@@ -1,0 +1,114 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: retroforge <retroforge@invalid>
+Date: Thu, 26 Nov 2026 22:00:00 +0100
+Subject: [PATCH] fix(LaunchManager): never focus a window gamescope cannot focus
+
+When a launched app's window list changed, a new window gamescope lists
+as focusable got the focus, and otherwise the first new window did. An
+override-redirect popup is never focusable (a Qt menu or drop-down:
+gamescope leaves those out of GAMESCOPE_FOCUSABLE_WINDOWS), so every one
+an app opened went through that fallback and became the baselayer window.
+gamescope then focused it over its own rules (an explicit baselayer
+window wins), showed it over the whole screen, and the pointer, with the
+button that opened the menu still held, landed on one of its items: in
+RPCS3's main window a press on the menu bar opened "Select Game Folder"
+14 ms later, the menu gone (HW, KONKR Pocket FIT, 2026-11-26: the popup
+mapped override-redirect, GAMESCOPE_FOCUSED_WINDOW = the popup, the
+popup unmapped, the dialog created, all before the button came up).
+
+Now only a window gamescope lists is focused there. The fallback covered
+a window gamescope publishes a little after the app's windows are read
+(a dialog); the focusable-windows handler takes that case: a window of a
+running app that has just become focusable gets the focus, now also when
+another window has it (it did only with nothing focused, which is still
+how Steam's startup windows, never focusable, hand over to Big Picture).
+---
+diff --git a/core/global/launch_manager.gd b/core/global/launch_manager.gd
+--- a/core/global/launch_manager.gd
++++ b/core/global/launch_manager.gd
+@@ -134,32 +134,36 @@
+ 				_xwayland_primary.remove_baselayer_window()
+ 				baselayer_window = 0
+ 				dropped = true
+-			# With no window focused, a window of a running app that has just become focusable gets
+-			# the focus. An app whose first windows never become focusable (Steam's startup and
+-			# helper windows) otherwise leaves gamescope on our own layer: a black screen over a
+-			# running Steam.
+-			if baselayer_window > 0:
+-				return
+-			# And when the focused window has just gone (a launcher's splash or updater window that
+-			# had the focus), the newest window of a running app gamescope can focus gets it, even
+-			# one that was focusable before: Steam's Big Picture is, and gamescope was left with
+-			# nothing focused, OpenGamepadUI's loading screen over a running Steam (issue #29).
++			# A window of a running app that has just become focusable gets the focus, even with
++			# another one focused: a new window is only focused once gamescope lists it
++			# (switch_to_new_window), and it may list it after the app's windows were read (a
++			# dialog). With nothing focused this is also what keeps an app whose first windows never
++			# become focusable (Steam's startup and helper windows) from leaving gamescope on our
++			# own layer: a black screen over a running Steam.
+ 			var running := _running.duplicate()
+ 			running.reverse()
+ 			for app in running:
+-				var newest := -1
+ 				for window in to:
+-					if not window in app.window_ids:
++					if window in from or not window in app.window_ids:
+ 						continue
+-					if window in from:
+-						newest = maxi(newest, window)
+-						continue
+-					# Deferred: this signal is emitted while GamescopeInstance is bound, and
+-					# switch_window calls back into it (gamescope.get_xwayland), which godot-rust
+-					# refuses there ("Gd<T>::bind() failed, already bound") and the switch is lost.
+-					app.switch_window.call_deferred(window)
++					if window != baselayer_window:
++						# Deferred: this signal is emitted while GamescopeInstance is bound, and
++						# switch_window calls back into it (gamescope.get_xwayland), which godot-rust
++						# refuses there ("Gd<T>::bind() failed, already bound") and the switch is lost.
++						app.switch_window.call_deferred(window)
+ 					return
+-				if dropped and newest > 0:
++			# When the focused window has just gone (a launcher's splash or updater window that had
++			# the focus), the newest window of a running app gamescope can focus gets it, even one
++			# that was focusable before: Steam's Big Picture is, and gamescope was left with nothing
++			# focused, OpenGamepadUI's loading screen over a running Steam (issue #29).
++			if not dropped:
++				return
++			for app in running:
++				var newest := -1
++				for window in to:
++					if window in app.window_ids:
++						newest = maxi(newest, window)
++				if newest > 0:
+ 					app.switch_window.call_deferred(newest)
+ 					return
+ 		_xwayland_primary.focusable_windows_updated.connect(on_focusable_windows_changed)
+@@ -297,22 +301,20 @@
+ 			_execute_hooks(app, AppLifecycleHook.TYPE.EXIT)
+ 	running_app.state_changed.connect(on_app_state_changed)
+ 
+-	# Focus any new windows that get created. One gamescope can focus first: window ids come sorted,
+-	# so a helper window with a lower id than the app's real one would otherwise win (Steam's Big
+-	# Picture window arrives together with such helpers).
++	# Focus a new window gamescope can focus. Only one it lists: window ids come sorted, so a helper
++	# window with a lower id than the app's real one would otherwise win (Steam's Big Picture window
++	# arrives together with such helpers), and an override-redirect popup (a Qt menu or drop-down)
++	# never becomes focusable. Made the baselayer window, a popup was shown over the whole screen
++	# under the pointer, and the click that opened it landed on one of its items. A window that only
++	# becomes focusable later gets the focus from on_focusable_windows_changed.
+ 	var switch_to_new_window := func(old_windows: PackedInt64Array, new_windows: PackedInt64Array):
+ 		var focusable := _xwayland_primary.get_focusable_windows() if _xwayland_primary else PackedInt64Array()
+-		var first := -1
+ 		for window in new_windows:
+ 			if window in old_windows:
+ 				continue
+ 			if window in focusable:
+ 				running_app.switch_window(window)
+ 				return
+-			if first < 0:
+-				first = window
+-		if first >= 0:
+-			running_app.switch_window(first)
+ 	running_app.window_ids_changed.connect(switch_to_new_window)
+ 
+ 	# When the focused window goes (a launcher's splash or updater window), the app's newest window
