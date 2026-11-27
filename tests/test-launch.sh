@@ -1661,54 +1661,79 @@ kill -0 "$lpid" 2>/dev/null && ok "the launcher keeps waiting for the emulator a
 touch "$T/stop-emu"; reap_launcher "$lpid"
 
 # =================================================================================================
-CASE="CPU pinning (CPUS=big)"
-# The game's own conf (Game settings > RetroForge) holds the per-game choice.
+CASE="fast cores (CPUS=big)"
+# The game's own conf (Game settings > RetroForge) holds the per-game choice; how, prefer (uclamp) or pin
+# (taskset), is Settings > General > Pin to fast cores (fast-cores.conf, python/fastcores.py).
 GCONF="$HOME/.config/retroforge/games/psx/$(basename "$ROM").conf"
+FCONF="$HOME/.config/retroforge/fast-cores.conf"
 # A fake /sys/devices/system/cpu: online list + per-CPU cpu_capacity (offline CPUs have none).
 mkcpus() {  # mkcpus <online> <cpu:capacity>...
   rm -rf "$T/cpu"; mkdir -p "$T/cpu"; echo "$1" > "$T/cpu/online"; shift
   local e; for e in "$@"; do mkdir -p "$T/cpu/cpu${e%%:*}"; echo "${e#*:}" > "$T/cpu/cpu${e%%:*}/cpu_capacity"; done
 }
-# taskset: record the CPU list, then run the rest like the real one (exec keeps the PID).
+# taskset and uclampset: record what they set, then run the rest like the real ones (exec keeps the PID).
 cat > "$T/bin/taskset" <<EOF
 #!/bin/bash
 [ "\$1" = -c ] || { echo "taskset: unexpected \$*" >> "$T/taskset.log"; exit 1; }
-echo "cpus=\$2" >> "$T/taskset.log"; shift 2; exec "\$@"
+echo "pin:\$2" >> "$T/taskset.log"; shift 2; exec "\$@"
 EOF
-chmod +x "$T/bin/taskset"
-pinned_run() {  # one launch with the game's CPUS=big and the fake topology; prints the taskset list or "none"
+cat > "$T/bin/uclampset" <<EOF
+#!/bin/bash
+[ "\$1" = -m ] || { echo "uclampset: unexpected \$*" >> "$T/taskset.log"; exit 1; }
+echo "prefer:\$2" >> "$T/taskset.log"; shift 2; exec "\$@"
+EOF
+chmod +x "$T/bin/taskset" "$T/bin/uclampset"
+echo disabled > "$T/scx-state"
+export RETROFORGE_SCX_STATE="$T/scx-state"
+pinned_run() {  # one launch with the game's CPUS=big and the fake topology; prints pin:<cpus>, prefer:<clamp> or none
   rm -f "$T/taskset.log"; reset_logs
   mkdir -p "$(dirname "$GCONF")"; echo "CPUS=big" > "$GCONF"
   RETROFORGE_CPU_ROOT="$T/cpu" "$LAUNCH" psx "$ROM" 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
   wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
   touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
-  sed -n 's/^cpus=//p' "$T/taskset.log" 2>/dev/null | grep . || echo none
+  grep -E '^(pin|prefer):' "$T/taskset.log" 2>/dev/null || echo none
 }
 # SM8250 (MANGMI Pocket Max, measured): 4 little 284, 3 big 871, 1 prime 1024.
 mkcpus 0-7 0:284 1:284 2:284 3:284 4:871 5:871 6:871 7:1024
-[ "$(pinned_run)" = "4,5,6,7" ] && ok "SM8250: pinned to cpu4-7 (big + prime, not the prime core alone)" || bad "SM8250 pinned to '$(sed -n 's/^cpus=//p' "$T/taskset.log")'"
+rm -f "$FCONF"
+[ "$(pinned_run)" = "prefer:285" ] && grep -q "prefers fast cores 4,5,6,7 (uclamp.min 285)" "$T/launch.err" \
+  && ok "SM8250, the default: every thread's uclamp.min just above the little cores' 284 (fits big and prime only)" \
+  || bad "SM8250 default: '$(cat "$T/taskset.log" 2>&1)'"
+[ "$(field pid)" = "$(field sid)" ] && ok "preferred, the emulator still leads its own session (uclampset execs)" || bad "uclampset broke the emulator's session"
+mkdir -p "$(dirname "$FCONF")"; echo "FAST_CORES=pin" > "$FCONF"
+[ "$(pinned_run)" = "pin:4,5,6,7" ] && ok "SM8250, Pin to fast cores: pinned to cpu4-7 (big + prime, not the prime core alone)" || bad "SM8250 pinned to '$(cat "$T/taskset.log" 2>&1)'"
 [ "$(field pid)" = "$(field sid)" ] && ok "pinned, the emulator still leads its own session (taskset execs)" || bad "taskset broke the emulator's session"
+echo "FAST_CORES=pin" > "$FCONF"; echo "FAST_CORES=sideways" >> "$FCONF"
+[ "$(pinned_run)" = "prefer:285" ] && ok "an unknown FAST_CORES value (the last line wins) is the default, prefer" || bad "FAST_CORES=sideways: '$(cat "$T/taskset.log" 2>&1)'"
+rm -f "$FCONF"; echo enabled > "$T/scx-state"
+[ "$(pinned_run)" = "pin:4,5,6,7" ] && grep -q "sched_ext scheduler" "$T/launch.err" \
+  && ok "a sched_ext scheduler running (lavd reads no uclamp): pinned instead, and says why" || bad "prefer under sched_ext: '$(cat "$T/taskset.log" 2>&1)'"
+echo disabled > "$T/scx-state"; echo "FAST_CORES=pin" > "$FCONF"
 # Fast cores numbered first (not every SoC numbers slowest-first): capacity decides, not the index.
 mkcpus 0-5 0:1024 1:1024 2:512 3:512 4:512 5:512
-[ "$(pinned_run)" = "0,1" ] && ok "fast cores numbered first are still found (by capacity, not CPU number)" || bad "pinned to the wrong cores when fast ones come first"
+[ "$(pinned_run)" = "pin:0,1" ] && ok "fast cores numbered first are still found (by capacity, not CPU number)" || bad "pinned to the wrong cores when fast ones come first"
+rm -f "$FCONF"
+[ "$(pinned_run)" = "prefer:513" ] && ok "and preferred above their 512" || bad "fast-first prefer: '$(cat "$T/taskset.log" 2>&1)'"
 # PowerStation's core count of 4 offlines the fast cores first: nothing fast is online.
 mkcpus 0-3 0:284 1:284 2:284 3:284
-[ "$(pinned_run)" = none ] && grep -q "not pinning" "$T/launch.err" \
-  && ok "core-count limit left only little cores: not pinned, and says why" || bad "pinned with no fast core online"
+[ "$(pinned_run)" = none ] && grep -q "no fast core online" "$T/launch.err" \
+  && ok "core-count limit left only little cores: left on every core, and says why" || bad "fast cores set with none online"
 # Partly limited: online list with gaps.
 mkcpus 0-3,7 0:284 1:284 2:284 3:284 7:1024
-[ "$(pinned_run)" = "7" ] && ok "online list with gaps (0-3,7) is parsed" || bad "gap in the online list mis-parsed"
+echo "FAST_CORES=pin" > "$FCONF"
+[ "$(pinned_run)" = "pin:7" ] && ok "online list with gaps (0-3,7) is parsed" || bad "gap in the online list mis-parsed"
+rm -f "$FCONF"
 # Homogeneous SoC: nothing to prefer.
 mkcpus 0-3 0:1024 1:1024 2:1024 3:1024
-[ "$(pinned_run)" = none ] && ok "all cores alike: not pinned" || bad "pinned on a homogeneous SoC"
-# Without a CPUS line (and nothing in the image can write one) nothing is pinned.
+[ "$(pinned_run)" = none ] && ok "all cores alike: left as it is" || bad "fast cores set on a homogeneous SoC"
+# Without a CPUS line (and nothing in the image can write one) nothing is done.
 mkcpus 0-7 0:284 1:284 2:284 3:284 4:871 5:871 6:871 7:1024
 rm -f "$T/taskset.log" "$GCONF"; reset_logs
 RETROFORGE_CPU_ROOT="$T/cpu" start_launcher; wait_for emu_up; touch "$T/stop-emu"; reap_launcher "$lpid"
-[ ! -e "$T/taskset.log" ] && ok "no CPUS line: no taskset (pinning is never the default)" || bad "pinned without a CPUS line"
+[ ! -e "$T/taskset.log" ] && ok "no CPUS line: neither uclampset nor taskset (fast cores are never the default)" || bad "fast cores without a CPUS line"
 [ "$(code --cpus big psx "$ROM")" = 2 ] && ok "--cpus is no longer an option (the confs hold the choice): exit 2" || bad "accepted --cpus"
-grep -qs 'CPUS\|taskset' "$SEED_DIR"/*/emulator.json && bad "an emulator definition in the image pins CPUs: pinning must stay the player's choice" \
-  || ok "no emulator definition in the image pins anything"
+grep -qs 'CPUS\|taskset\|uclamp' "$SEED_DIR"/*/emulator.json && bad "an emulator definition in the image sets CPUs: fast cores must stay the player's choice" \
+  || ok "no emulator definition in the image sets fast cores"
 
 # =================================================================================================
 CASE="player's emulator default (CPUS=)"
@@ -1720,11 +1745,12 @@ cpus_run() {  # one launch with the given arguments and the fake topology; print
   RETROFORGE_CPU_ROOT="$T/cpu" "$LAUNCH" "$@" 2>"$T/launch.err" & lpid=$!; echo "$lpid" >> "$T/pids"
   wait_for emu_up || bad "the emulator never started: $(cat "$T/launch.err")"
   touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
-  sed -n 's/^cpus=//p' "$T/taskset.log" 2>/dev/null | grep . || echo none
+  sed -n 's/^pin://p' "$T/taskset.log" 2>/dev/null | grep . || echo none
 }
 mkcpus 0-7 0:284 1:284 2:284 3:284 4:871 5:871 6:871 7:1024
 mkdir -p "$(dirname "$PCONF")"
 rm -f "$PCONF"
+echo "FAST_CORES=pin" > "$FCONF"   # the lists below are taskset's
 [ "$(cpus_run psx "$ROM")" = none ] && ok "no player conf: not pinned" || bad "pinned with no player conf"
 echo "CPUS=all" > "$PCONF"
 [ "$(cpus_run psx "$ROM")" = none ] && ok "CPUS=all: not pinned" || bad "pinned with CPUS=all"
@@ -1747,7 +1773,7 @@ rm -f "$GCONF"
 printf 'CPUS=big\n$(touch %s/pwned)\n' "$T" > "$PCONF"
 cpus_run psx "$ROM" >/dev/null
 [ ! -e "$T/pwned" ] && ok "the player conf is read, never run as shell" || bad "the player conf was executed"
-rm -f "$PCONF"
+rm -f "$PCONF" "$FCONF"
 
 # =================================================================================================
 CASE="per-emulator options (options.json)"

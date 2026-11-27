@@ -333,7 +333,7 @@ rm -rf "$S/compatibilitytools.d" "$S/config/config.vdf"
 CASE="run: per-game choices"
 GAMES="$H/.config/retroforge/steam-games.json"
 direct -- game 1145360
-[ "$RC" = 0 ] && python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["settings"] == {"tso": "default", "launch": "default", "resolution": "default", "driver": "default", "api": "default"}, d; assert d["apis"] == [], d; assert d["x86"] is False, d; assert d["tso_hint"] == "0", d; assert [e["key"] for e in d["launch"]] == ["0", "1", "2", "3", "4", "15"], d; assert d["launch"][-1]["description"] == "Hades (Steam Deck)", d; assert d["direct"] in ("on", "off"), d' "$OUT" \
+[ "$RC" = 0 ] && python3 -c 'import json, sys; d = json.loads(sys.argv[1]); assert d["settings"] == {"tso": "default", "launch": "default", "resolution": "default", "driver": "default", "api": "default", "cpus": "default"}, d; assert d["apis"] == [], d; assert d["x86"] is False, d; assert d["tso_hint"] == "0", d; assert [e["key"] for e in d["launch"]] == ["0", "1", "2", "3", "4", "15"], d; assert d["launch"][-1]["description"] == "Hades (Steam Deck)", d; assert d["direct"] in ("on", "off"), d' "$OUT" \
   && ok "game: every choice at its default, and the launch entries Steam's dialog offers here, in its order" || bad "rc=$RC out=$OUT err=$ERR"
 [ -z "$ERR" ] && ok "game: the current client's app cache shards read without a word" || bad "err=$ERR"
 mkappinfo 29; ENTRIES="$OUT"
@@ -373,6 +373,44 @@ rmdir "$GAME/Odd"
 for k in launch tso; do direct -- game 1145360 set $k default; done
 python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {}' "$GAMES" && ok "all back to default: nothing kept" || bad "$(cat "$GAMES")"
 rm -rf "$S/compatibilitytools.d" "$GAMES"
+
+CASE="run: on fast cores"
+# python/fastcores.py: a fake topology (4 little at 284, 4 big at 1024), and a uclampset that says what it
+# was asked and runs the rest as the real one does.
+mkdir -p "$T/fbin" "$T/cpu"; echo 0-7 >"$T/cpu/online"; echo disabled >"$T/scx"
+for c in 0 1 2 3 4 5 6 7; do mkdir -p "$T/cpu/cpu$c"; echo $([ $c -lt 4 ] && echo 284 || echo 1024) >"$T/cpu/cpu$c/cpu_capacity"; done
+cat >"$T/fbin/uclampset" <<EOF
+#!/bin/sh
+echo "uclampset \$*" >>"$T/fast.log"
+[ "\$3" = -a ] && exit 0
+shift 2; exec "\$@"
+EOF
+chmod +x "$T/fbin/uclampset"
+FAST=(RETROFORGE_CPU_ROOT="$T/cpu" RETROFORGE_SCX_STATE="$T/scx" PATH="$T/fbin:$PATH")
+fresh_log; reset_run; rm -f "$T/fast.log"
+direct "${FAST[@]}" -- run 1145360
+[ "$RC" = 0 ] && [ -f "$T/ran.args" ] && [ ! -e "$T/fast.log" ] && ok "Off, the default: the launch runs as Steam ran it, no uclamp" || bad "rc=$RC fast=$(cat "$T/fast.log" 2>&1)"
+direct -- game 1145360 set cpus on
+[ "$RC" = 0 ] && python3 -c 'import json, sys; assert json.loads(sys.argv[1])["settings"]["cpus"] == "on"' "$OUT" \
+  && ok "game set cpus on: saved" || bad "rc=$RC out=$OUT err=$ERR"
+direct -- game 1145360 set cpus off
+[ "$RC" = 2 ] && ok "cpus is on or default, nothing else" || bad "rc=$RC err=$ERR"
+fresh_log; reset_run; rm -f "$T/fast.log"
+direct "${FAST[@]}" -- run 1145360
+[ "$RC" = 0 ] && grep -q '^uclampset -m 285 /bin/sh -c ' "$T/fast.log" && grep -qx "AppId=1145360" "$T/ran.args" \
+  && ok "On: the launch starts under uclampset -m 285 (just above the little cores), the rest as Steam ran it" \
+  || bad "rc=$RC fast=$(cat "$T/fast.log" 2>&1) args=$(cat "$T/ran.args" 2>&1)"
+grep -q "app 1145360: prefers fast cores 4,5,6,7 (uclamp.min 285)" <<<"$ERR" && ok "and says so" || bad "err=$ERR"
+rm -f "$T/fast.log"
+direct "${FAST[@]}" -- fastcores 1145360 4242 4343
+[ "$RC" = 0 ] && grep -qx "uclampset -m 285 -a -p 4242" "$T/fast.log" && grep -qx "uclampset -m 285 -a -p 4343" "$T/fast.log" \
+  && ok "fastcores: the kept client's game, every thread of each process given" || bad "rc=$RC fast=$(cat "$T/fast.log" 2>&1) err=$ERR"
+direct -- game 1145360 set cpus default
+rm -f "$T/fast.log"
+direct "${FAST[@]}" -- fastcores 1145360 4242
+[ "$RC" = 0 ] && [ ! -e "$T/fast.log" ] && ok "fastcores for a game without the choice: nothing" || bad "rc=$RC fast=$(cat "$T/fast.log" 2>&1)"
+direct -- fastcores 1145360
+[ "$RC" = 2 ] && ok "fastcores without a process: usage" || bad "rc=$RC"
 
 CASE="fex: an x86 game's graphics driver"
 # Megabonk's folder: two x86 programs (64- and 32-bit, an interpreter each), an x86 library and an

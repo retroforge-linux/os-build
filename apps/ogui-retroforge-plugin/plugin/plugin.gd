@@ -51,6 +51,7 @@ var _osk_nav: RefCounted  # osk_navigation.gd
 var _touch_keyboard: RefCounted  # touch_keyboard.gd
 var _buttons: RefCounted  # button_layout.gd
 var _pause: RefCounted  # pause_on_menu.gd
+var _fast_cores: RefCounted  # fast_cores_setting.gd: Settings > General > Pin to fast cores
 var _time_zone: RefCounted  # time_zone_settings.gd
 var _scraper: RefCounted  # scraper_settings.gd
 var _psn: RefCounted  # psn_settings.gd
@@ -115,6 +116,9 @@ func _ready() -> void:
 	_pause = load(plugin_base.path_join("pause_on_menu.gd")).new().setup(get_tree())
 	if not _pause.attach():
 		logger.warn("OGUI general settings layout not found; no pause-in-menus toggle")
+	_fast_cores = load(plugin_base.path_join("fast_cores_setting.gd")).new().setup(get_tree())
+	if not _fast_cores.attach():
+		logger.warn("OGUI general settings layout not found; no Pin to fast cores toggle")
 	_time_zone = load(plugin_base.path_join("time_zone_settings.gd")).new().setup(get_tree())
 	if not _time_zone.attach():
 		logger.warn("no tzdata, or OGUI general settings layout not found; no Time zone row")
@@ -180,6 +184,8 @@ func unload() -> void:
 		_buttons.detach()
 	if _pause:
 		_pause.detach()
+	if _fast_cores:
+		_fast_cores.detach()
 	if _time_zone:
 		_time_zone.detach()
 	if _scraper:

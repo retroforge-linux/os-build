@@ -65,6 +65,8 @@
 #                watcher should this process be killed)
 #   api          d3d11 | d3d12 | vulkan | opengl: the graphics API, for a Unity, Unreal or Godot game
 #                built with more than one (python/graphics_api.py: what it offers, and the flags)
+#   cpus         "on": Run on fast cores, preferred or pinned as Settings > General says
+#                (python/fastcores.py); off by default
 #
 # SIGN-IN. RetroForge never takes a password. `sign-in` opens the store's own sign-in page in Chromium
 # (python/chromium_signin.py; .claude/plans/store-signin-window.plan.md), fullscreen over OGUI, where the
@@ -120,6 +122,7 @@ import zipfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "python"))  # /usr/lib/retroforge/python
 import chromium_setup  # noqa: E402
 import chromium_signin  # noqa: E402
+import fastcores  # noqa: E402
 import graphics_api  # noqa: E402
 import window_size  # noqa: E402
 
@@ -480,7 +483,7 @@ def proton_dir(store=None, gid=None, progress=None, update=False):
 
 # The player's per-game choices (GAME CHOICES in the header), keyed "<store>-<id>".
 GAME_CHOICES = os.path.join(CONFIG_HOME, "retroforge", "store-games.json")
-CHOICE_KEYS = ("tso", "proton", "protonfixes", "online", "resolution", "api")
+CHOICE_KEYS = ("tso", "proton", "protonfixes", "online", "resolution", "api", "cpus")
 
 
 def game_choice(store, gid, key):
@@ -715,6 +718,8 @@ def run_windows_game(store, gid, exe, args, workdir, game_dir, extra_env=None):
     env.update(extra_env or {})
     cmd = [os.path.join(runtime, "_v2-entry-point"), "--verb=waitforexitandrun", "--",
            os.path.join(proton, "proton"), "waitforexitandrun", exe] + list(args)
+    if game_choice(store, gid, "cpus") == "on":  # inherited by pressure-vessel, Proton and the game
+        cmd = fastcores.prefix(log, f"{store} {gid}") + cmd
     seam = os.environ.get("RETROFORGE_STORE_RUN")
     if seam:
         cmd = [seam] + cmd
@@ -1521,7 +1526,7 @@ def game_settings(store, gid, change=None):
             "online": store.name == "epic" and value == "on",
             "proton": value in [n for n, _ in found],
             "resolution": bool(window_size.SCREEN_VALUE.fullmatch(value)),
-            "api": value in apis}.get(key, False)
+            "api": value in apis, "cpus": value == "on"}.get(key, False)
         if key not in CHOICE_KEYS or not ok:
             raise Usage(f"not a choice for {store.name} {gid}: {key} {value}")
         save_choice(store.name, gid, key, value)

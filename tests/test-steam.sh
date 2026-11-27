@@ -927,6 +927,36 @@ finish
 [ "$WRC" = 0 ] && [ "$(tail -1 "$W/keep.calls")" = "minimal pid handed" ] && [ -e "$W/unit-active" ] \
   && ok "and stays minimal when the game ends" || bad "rc=$WRC keep: $(cat "$W/keep.calls" 2>&1)"
 
+CASE="keep: a game on fast cores"
+# steam-direct as a stub: no game starts without the client (check), fastcores recorded.
+cat >"$W/bin/directfast" <<EOF
+#!/usr/bin/env bash
+case "\$1" in check) exit 1 ;; fastcores) echo "\$*" >>"$W/fast.calls" ;; esac
+exit 0
+EOF
+chmod +x "$W/bin/directfast"
+GJ="$W/home/.config/retroforge/steam-games.json"; mkdir -p "${GJ%/*}"
+echo "[2026-10-25 03:16:43] OnFocusWindowChanged to game window type: AppID 7, 7" >"$CTL"
+for choice in none on; do
+  reset_keep; rm -f "$W/keep.calls" "$W/fast.calls"; touch "$W/unit-active"
+  if [ "$choice" = on ]; then echo '{"42": {"cpus": "on"}}' >"$GJ"; else rm -f "$GJ"; fi
+  bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETROFORGE_STEAM_DIRECT_CLI="$W/bin/directfast" \
+    RETROFORGE_STEAM_UNSTICK_WAIT=0 RETROFORGE_STEAM_FAST_AGAIN=1 -- steam://rungameid/42
+  until_true '[ -e "$W/call1" ]'
+  step 42 Completed; fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- game
+  sleep 3.5
+  gone 4242
+  finish
+  if [ "$choice" = on ]; then
+    [ "$(grep -c . "$W/fast.calls" 2>/dev/null)" = 2 ] && [ "$(sort -u "$W/fast.calls")" = "fastcores 42 4242" ] \
+      && ok "a choice saved: the game's processes once Steam starts them, and once more after (steam-direct fastcores)" \
+      || bad "rc=$WRC fast: $(cat "$W/fast.calls" 2>&1)"
+  else
+    [ ! -e "$W/fast.calls" ] && ok "no game with the choice: steam-direct is not even started for it" || bad "fast: $(cat "$W/fast.calls")"
+  fi
+done
+rm -f "$GJ"
+
 CASE="keep: another game than the one Steam last saw focused"
 reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"
 echo "[2026-10-25 03:16:43] OnFocusWindowChanged to game window type: AppID 7, 7" >"$CTL"

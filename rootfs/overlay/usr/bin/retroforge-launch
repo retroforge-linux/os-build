@@ -16,17 +16,17 @@
 # inbox: psn_inbox. Per-emulator options: emuopts. The RetroAchievements sign-in a standalone
 # emulator gets at every launch: achievements. All five live in /usr/lib/retroforge/python.
 #
-# CPU pinning (CPUS=big): the emulator is started on the device's fast cores, so its threads stay
-# off the little cluster and do not migrate across clusters; background work (audio, input, Wi-Fi)
-# keeps the little cores. "Fast" is every ONLINE CPU whose cpu_capacity is above the smallest online
-# one — never a CPU number (Qualcomm numbers slowest-first, other SoCs do not), and never only the top
-# tier (one prime core is no home for a multi-threaded emulator). PowerStation's core-count slider is
-# the POWER control and offlines the fast cores first, so with none of them online, or on a
-# homogeneous SoC, nothing is pinned. sched_ext schedulers (scx_lavd) honour the affinity mask (HW
-# 2026-10-03). It is the PLAYER's choice, never the image's: a default per emulator (Settings >
+# Run on fast cores (CPUS=big): the emulator is started on the device's fast cores (fastcores in
+# /usr/lib/retroforge/python, shared with Steam and store games): preferred by default (a uclamp.min on
+# every thread, so they run on the fast cores and spill onto the slow ones only when all fast ones are
+# busy), or pinned with taskset when the player turns on Settings > General > Pin to fast cores (and
+# under a sched_ext scheduler, which reads no uclamp; scx_lavd honours the affinity mask, HW
+# 2026-10-03). "Fast" is every ONLINE CPU whose cpu_capacity is above the smallest online one; with
+# none of them online (PowerStation's core-count slider offlines them first) or on a homogeneous SoC,
+# nothing is done. It is the PLAYER's choice, never the image's: a default per emulator (Settings >
 # Emulators -> ~/.config/retroforge/emulators/<emulator>.conf, CPUS=big|all, also used by --gui) and an
 # override per game (Game settings > RetroForge -> ~/.config/retroforge/games/<system>/<rom file>.conf,
-# the same CPUS line). Nothing ships pinned: with neither, all cores.
+# the same CPUS line). Nothing ships on: with neither, all cores.
 #
 # Per-emulator options (renderer, resolution, aspect...): /usr/share/retroforge/emulators/<emulator>/
 # options.json says what each value does (command-line arguments, environment, settings in the
@@ -138,6 +138,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
 import achievements  # noqa: E402
 import emuopts  # noqa: E402
+import fastcores  # noqa: E402
 import gui_mouse  # noqa: E402
 from launch_common import (CONFIG_HOME, EMU_DATA_DIR, EMU_DIR, ENV, HOME, VRAM_REPORT_LIMIT_VARS,  # noqa: E402
                            Exit, device_field, emulator_child, log)
@@ -152,7 +153,6 @@ import x11_root  # noqa: E402
 
 SECONDARY_TITLE_PROP = "GAMESCOPE_SECONDARY_WINDOW_TITLE"  # gamescope patch 0041 reads it
 
-CPU_ROOT = ENV.get("RETROFORGE_CPU_ROOT", "/sys/devices/system/cpu")
 PLAYER_CONF_DIR = ENV.get("RETROFORGE_PLAYER_CONF_DIR", os.path.join(CONFIG_HOME, "retroforge", "emulators"))
 GAME_CONF_DIR = ENV.get("RETROFORGE_GAME_CONF_DIR", os.path.join(CONFIG_HOME, "retroforge", "games"))
 # What starts the games display's watcher outside the game's process tree (test seam).
@@ -234,37 +234,6 @@ def vram_limit_env():
         return {}
     return {"ENABLE_MESA_VRAM_REPORT_LIMIT": "1", "VK_VRAM_REPORT_LIMIT_HEAP_SIZE": str(VRAM_REPORT_LIMIT_MIB),
             "VK_VRAM_REPORT_LIMIT_DEVICE_ID": device_id}
-
-
-# -------------------------------------------------------------------------------------- CPUs --
-
-def read_text(path):
-    try:
-        with open(path) as f:
-            return f.read().strip()
-    except OSError:
-        return None
-
-
-def fast_cpus():
-    """Online CPUs above the smallest online capacity, as a taskset list; "" when there are none."""
-    online = read_text(os.path.join(CPU_ROOT, "online"))
-    if not online:
-        return ""
-    cpus = []
-    for part in online.split(","):
-        lo, _, hi = part.partition("-")
-        if lo.isdigit() and (hi == "" or hi.isdigit()):
-            cpus.extend(range(int(lo), int(hi or lo) + 1))
-    caps = {}
-    for c in cpus:
-        cap = read_text(os.path.join(CPU_ROOT, f"cpu{c}", "cpu_capacity"))
-        if cap and cap.isdigit():
-            caps[c] = int(cap)
-    if not caps:
-        return ""
-    low = min(caps.values())
-    return ",".join(str(c) for c in sorted(caps) if caps[c] > low)
 
 
 # ---------------------------------------------------------------------------------------- run --
@@ -419,15 +388,8 @@ def cpus_for(emulator_conf, game_conf):
 
 
 def pinning(emulator, cpus):
-    """`taskset -c <fast cpus>` when this run goes on the fast cores (cpus "big"), else []."""
-    if cpus != "big":
-        return []
-    fast = fast_cpus()
-    if not fast:
-        log("no fast core online (core-count limit, or one core type): not pinning")
-        return []
-    log(f"pinning {emulator} to fast cores {fast}")
-    return ["taskset", "-c", fast]
+    """The words that start this run on the fast cores when it goes there (cpus "big"), else []."""
+    return fastcores.prefix(log, emulator) if cpus == "big" else []
 
 
 def player_confs(emulator, system, rom):

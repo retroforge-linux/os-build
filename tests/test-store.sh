@@ -925,7 +925,7 @@ r, g = game("set", "api", "vulkan")
 ok(r.returncode == 0 and g["apis"] == ["d3d11", "d3d12", "vulkan"] and g["settings"]["api"] == "vulkan",
    "DirectX 12 with its D3D12 folder; the choice saved", str(g))
 ok(g and g["settings"] == {"tso": "off", "proton": "cachy-test", "protonfixes": "off", "online": "default",
-                           "resolution": "1280x720", "api": "vulkan"}, "every choice as saved", str(g))
+                           "resolution": "1280x720", "api": "vulkan", "cpus": "default"}, "every choice as saved", str(g))
 reset_calls()
 r = store("gog", "launch", "1", unset=["DISPLAY"])
 run = game_run(calls())
@@ -936,6 +936,32 @@ ok(run and run[4] == os.path.join(cachy, "proton") and "no DISPLAY" in r.stderr,
 for key in ("tso", "proton", "protonfixes", "resolution", "api"):
     game("set", key, "default")
 ok(not os.path.exists(choices) or json.load(open(choices)) == {}, "Default removes each, and the emptied game's entry")
+# Run on fast cores (python/fastcores.py), on a fake topology: 4 little cores at 284, 4 big at 1024.
+cpu = os.path.join(T, "cpu")
+for c in range(8):
+    os.makedirs(os.path.join(cpu, f"cpu{c}"), exist_ok=True)
+    with open(os.path.join(cpu, f"cpu{c}", "cpu_capacity"), "w") as f:
+        f.write("284" if c < 4 else "1024")
+with open(os.path.join(cpu, "online"), "w") as f:
+    f.write("0-7")
+with open(os.path.join(T, "scx"), "w") as f:
+    f.write("disabled")
+fast_env = {"RETROFORGE_CPU_ROOT": cpu, "RETROFORGE_SCX_STATE": os.path.join(T, "scx")}
+r, g = game("set", "cpus", "on")
+ok(r.returncode == 0 and g and g["settings"]["cpus"] == "on", "Run on fast cores: On saved", r.stderr)
+r, g = game("set", "cpus", "off")
+ok(r.returncode != 0, "cpus is on or default, nothing else", r.stderr)
+reset_calls()
+r = store("gog", "launch", "1", env=fast_env, unset=["DISPLAY"])
+run = game_run(calls())
+ok(run and run[1:4] == ["uclampset", "-m", "285"] and run[4].endswith("_v2-entry-point"),
+   "On: the game starts under uclampset -m 285 (just above the little cores)", str(run))
+ok("gog 1: prefers fast cores 4,5,6,7 (uclamp.min 285)" in r.stderr, "and says so", r.stderr)
+game("set", "cpus", "default")
+reset_calls()
+r = store("gog", "launch", "1", env=fast_env, unset=["DISPLAY"])
+run = game_run(calls())
+ok(run and run[1].endswith("_v2-entry-point"), "Default: started as before, no uclamp", str(run))
 shutil.rmtree(cachy)
 shutil.rmtree(os.path.join(gamedir, "D3D12"))
 os.remove(os.path.join(gamedir, "UnityPlayer.dll"))

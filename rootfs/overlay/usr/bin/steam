@@ -296,7 +296,8 @@ kept_unstick_focus() {  # APPID
 }
 kept_launch() {
   local arg pid pids="" alive deadline stage=wait step="" ran=0 since proc="${RETROFORGE_PROC:-/proc}"
-  local light="" focused="" ctl="$RETROFORGE_STEAM_ROOT/logs/controller_ui.txt" seen=0
+  local light="" focused="" ctl="$RETROFORGE_STEAM_ROOT/logs/controller_ui.txt" seen=0 fast=0 fast_at=0
+  local games="${XDG_CONFIG_HOME:-$HOME/.config}/retroforge/steam-games.json"
   appid=""
   since="$(date '+%F %T')"
   [ -r "$ctl" ] && seen=$(wc -l <"$ctl")
@@ -396,6 +397,15 @@ kept_launch() {
       [ -n "$alive" ] || alive="$("$keep_cli" games "$appid" | tr '\n' ' ')"
       if [ -n "${alive// /}" ]; then
         pids=$alive
+        # Run on fast cores (Game settings, steam-direct fastcores, a no-op unless the game has it on):
+        # the game's processes once Steam has started them, and RETROFORGE_STEAM_FAST_AGAIN s (10) on
+        # again for any started in between (what they start later inherits it). Only when some game
+        # has the choice at all.
+        if [ "$fast" -lt 2 ] && { [ "$fast" = 0 ] || [ $((SECONDS - fast_at)) -ge "${RETROFORGE_STEAM_FAST_AGAIN:-10}" ]; } \
+            && [ -x "$direct_cli" ] && grep -qs '"cpus"' "$games"; then
+          fast=$((fast + 1)); fast_at=$SECONDS
+          "$direct_cli" fastcores "$appid" $pids >/dev/null 2>&1 &
+        fi
         if [ -z "$light" ]; then
           [ -r "$ctl" ] && [ "$(wc -l <"$ctl")" -lt "$seen" ] && seen=0   # rotated
           [ -z "$focused" ] && tail -n +$((seen + 1)) "$ctl" 2>/dev/null \
