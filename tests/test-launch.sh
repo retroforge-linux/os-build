@@ -123,6 +123,14 @@ echo \$\$ >> "$T/pids"
 [ -f "$T/print-early" ] && { echo "$T/mnt.\$\$"; sleep 0.4; }
 mnt="$T/mnt.\$\$"; mkdir -p "\$mnt/usr/bin"; cp "$T/fake-emu" "\$mnt/usr/bin/duckstation-qt"
 ln -s usr/bin/duckstation-qt "\$mnt/AppRun"
+# A mount whose daemon fails its reads, as the pkgforge runtime's DwarFS did (HW 2026-11-27): the
+# file opens and every read of it is EIO, which is what /proc/self/mem gives. $T/bad-mounts counts
+# the mounts still to come up that way; with $T/bad-shared it is sharun's shared/bin/<name>.
+if [ "\$(cat "$T/bad-mounts" 2>/dev/null || echo 0)" -gt 0 ]; then
+  echo \$((\$(cat "$T/bad-mounts") - 1)) > "$T/bad-mounts"; echo bad-mount >> "$T/appimage.log"
+  if [ -f "$T/bad-shared" ]; then mkdir -p "\$mnt/shared/bin"; ln -s /proc/self/mem "\$mnt/shared/bin/duckstation-qt"
+  else ln -sf /proc/self/mem "\$mnt/usr/bin/duckstation-qt"; fi
+fi
 if [ -f "$T/sharun-hook" ]; then mkdir -p "\$mnt/bin" "\$mnt/share"; cp "$T/sharun-hook" "\$mnt/bin/\$(cat "$T/sharun-hook-name" 2>/dev/null || echo 01-path-mapping-hardcoded.hook)"; fi
 echo "0.1-test.AppImage \$mnt fuse.0.1-test.AppImage ro,nosuid,nodev 0 0" >> "$T/mounts"
 echo "runtime=\$\$" >> "$T/appimage.log"
@@ -766,6 +774,47 @@ touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
 rm -f "$T/print-early"
 
 # =================================================================================================
+CASE="a mount that cannot be read"
+# The pkgforge runtime's DwarFS daemon at times failed its block checks on the first read of the
+# emulator's binary and answered EIO from then on, so the launch ended in 2 s (Azahar, MANGMI Air X,
+# 2026-11-27: the first game of a session, the image itself intact). The start of the program is
+# read before it is run, and a mount that fails that is released and mounted again.
+echo 1 > "$T/bad-mounts"; reset_logs
+start_launcher
+wait_for emu_up && ok "the game starts from a second mount when the first cannot be read" \
+  || bad "an unreadable first mount failed the launch: $(cat "$T/launch.err")"
+# (The fake fusermount3 succeeds at once, so the fake runtime's HUP trap may run a moment later.)
+[ "$(grep -c '^runtime=' "$T/appimage.log")" = 2 ] && [ "$(grep -c '^-u ' "$T/fusermount.log")" = 1 ] \
+  && wait_for '[ "$(grep -c "^hup$" "$T/appimage.log")" = 1 ]' \
+  && ok "the mount that could not be read is released before the next one (SIGHUP, fusermount3 -u)" \
+  || bad "mounts: $(grep -c '^runtime=' "$T/appimage.log"), fusermount3 -u: $(grep -c '^-u ' "$T/fusermount.log"), log: $(tr '\n' ' ' < "$T/appimage.log")"
+grep -q "duckstation: its mount cannot be read (.*Input/output error); mounting it again (1 of 3)" "$T/launch.err" \
+  && ok "and the journal says which file and why" || bad "no line about the second mount: $(cat "$T/launch.err")"
+touch "$T/stop-emu"; reap_launcher "$lpid"; rc=$?
+[ "$rc" = 7 ] && [ ! -s "$T/mounts" ] && ok "the game's exit status and the release of its mount are as usual" \
+  || bad "after a second mount: rc=$rc, mounts left: $(cat "$T/mounts")"
+# Every mount unreadable: the launch gives up, with the status the plugin's popup reads.
+echo 9 > "$T/bad-mounts"; reset_logs; ST="$T/launch.status"; echo stale > "$ST"
+RETROFORGE_LAUNCH_STATUS="$ST" "$LAUNCH" psx "$ROM" 2>"$T/launch.err"; rc=$?
+[ "$rc" = 3 ] && [ "$(grep -c '^runtime=' "$T/appimage.log")" = 3 ] && ! grep -qx up "$T/emu.log" 2>/dev/null \
+  && ok "three mounts that cannot be read end the launch (exit 3) with no emulator started" \
+  || bad "rc=$rc, mounts tried: $(grep -c '^runtime=' "$T/appimage.log"), emulator: $(cat "$T/emu.log" 2>/dev/null | head -1)"
+[ "$(cat "$ST" 2>/dev/null)" = "mount-failed duckstation" ] && ok "status 'mount-failed duckstation' for the popup" \
+  || bad "status was '$(cat "$ST" 2>/dev/null)'"
+[ "$(grep -c '^-u ' "$T/fusermount.log")" = 3 ] && [ ! -s "$T/mounts" ] \
+  && wait_for '[ "$(grep -c "^hup$" "$T/appimage.log")" = 3 ]' && ok "all three mounts are released" \
+  || bad "fusermount3 -u: $(grep -c '^-u ' "$T/fusermount.log") of 3, mounts left: $(cat "$T/mounts"), log: $(tr '\n' ' ' < "$T/appimage.log")"
+# A file that is merely missing is not a mount that cannot be read: one mount, and the start says so.
+rm -f "$T/bad-mounts"; reset_logs
+MISSING="$T/data-missing"; mkdir -p "$MISSING/duckstation"; cp "$DS_SEED" "$MISSING/duckstation/"
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["binary"] = "usr/bin/not-there"; json.dump(d, open(sys.argv[2], "w"))' \
+  "$DS_DEF" "$MISSING/duckstation/emulator.json"
+RETROFORGE_EMU_DATA_DIR="$MISSING" "$LAUNCH" psx "$ROM" 2>"$T/launch.err"; rc=$?
+[ "$rc" = 3 ] && [ "$(grep -c '^runtime=' "$T/appimage.log")" = 1 ] && grep -q "could not start" "$T/launch.err" \
+  && ok "a binary missing from the mount is not retried (one mount, 'could not start')" \
+  || bad "missing binary: rc=$rc, mounts: $(grep -c '^runtime=' "$T/appimage.log"), err: $(tail -1 "$T/launch.err")"
+
+# =================================================================================================
 CASE="pkgforge AppImage: hardcoded /tmp paths"
 # Dolphin's pkgforge AppImage only finds its Sys folder through /tmp/<name> -> <mount>/share, a link
 # its AppRun hook makes; retroforge-launch skips AppRun, so it makes the links itself (HW 2026-10-05).
@@ -808,6 +857,21 @@ start_launcher; wait_for emu_up
   && ok "a plain appimage gets neither: links and Vulkan env belong to the sharun format" \
   || bad "the plain appimage format made sharun links or set VK_DRIVER_FILES"
 touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
+# sharun's bin/<name> is its own small entry; the program it loads is shared/bin/<name>, the file
+# whose first read failed on the Air X. The sharun format reads that one too; a plain AppImage has
+# no such file to care about.
+touch "$T/bad-shared"; echo 1 > "$T/bad-mounts"; reset_logs
+RETROFORGE_EMU_DATA_DIR="$SHARUN" start_launcher; wait_for emu_up
+[ "$(grep -c '^runtime=' "$T/appimage.log")" = 2 ] && grep -q "shared/bin/duckstation-qt: Input/output error" "$T/launch.err" \
+  && ok "appimage-sharun: an unreadable shared/bin/<name> is a mount to make again" \
+  || bad "sharun probe: mounts $(grep -c '^runtime=' "$T/appimage.log"), err: $(grep 'cannot be read' "$T/launch.err")"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
+echo 1 > "$T/bad-mounts"; reset_logs
+start_launcher; wait_for emu_up
+[ "$(grep -c '^runtime=' "$T/appimage.log")" = 1 ] && ok "a plain appimage does not look for shared/bin/<name>" \
+  || bad "the plain format mounted $(grep -c '^runtime=' "$T/appimage.log") times over a shared/bin file it never runs"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null
+rm -f "$T/bad-shared" "$T/bad-mounts"
 rm -f "$T/sharun-hook"; unset RETROFORGE_TMP_LINK_DIR
 
 # =================================================================================================

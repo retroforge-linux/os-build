@@ -80,6 +80,12 @@
 #     files out from under an emulator that is still shutting down. After the emulator exits it is
 #     released with SIGHUP (the runtime holds the mount busy until it exits) and fusermount3 -u.
 #   - Exit pressed twice is SIGKILL for everything, which leaves a dead mount: sweep ours first.
+#   - A mount can come up unable to serve its files. The pkgforge runtime's DwarFS daemon at times
+#     fails its block checks on the first read of the program ("block data integrity check failed")
+#     and answers EIO from then on, with the image intact: the launch ended in 2 s (Azahar, MANGMI
+#     Air X, 2026-11-27: about 1 start in 10 as the first game of a session, never otherwise). The
+#     start of the program is read before it is run; a mount that fails that is released and made
+#     again, three times at most (launch_formats.prepare_readable).
 #
 # GPU priority: on the A7xx boards (SM8550, SM8650) every emulator (game or --gui) starts with
 # RETROFORGE_GAME_LOWPRIO=1, which turns on the implicit Vulkan layer VK_LAYER_RETROFORGE_game_priority
@@ -146,7 +152,7 @@ from launch_def import (FILE, ROM, SYSTEM, SYSTEM_ID, TEXT, apply_system_setting
                         dual_screen, emulator_for, load_definition, missing_requirement,
                         missing_requirements, seed_first_run,
                         sync_files, systems_of)
-from launch_formats import FORMATS  # noqa: E402
+from launch_formats import FORMATS, prepare_readable  # noqa: E402
 from psn_inbox import PSN_SYSTEM, psn_install, try_psn_lock  # noqa: E402
 import window_size  # noqa: E402
 import x11_root  # noqa: E402
@@ -515,7 +521,7 @@ def run(argv):
         if display_back:
             watch_display(warn)
         try:
-            root = package.prepare()
+            root = prepare_readable(package, emulator, definition["binary"])
         except Exit as err:
             fail("mount-failed", emulator, str(err))
         binary = os.path.join(root, definition["binary"])

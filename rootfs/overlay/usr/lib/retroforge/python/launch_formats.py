@@ -20,6 +20,7 @@
 # points `current` at it. It runs in place, nothing to mount: the definition's binary is `current`
 # itself, relative to the emulator's folder.
 
+import errno
 import os
 import re
 import secrets
@@ -37,6 +38,10 @@ PM_MOUNTS = ENV.get("RETROFORGE_PM_MOUNTS",
 SYSTEM_VULKAN_ICD = "/usr/share/vulkan/icd.d/freedreno_icd.aarch64.json"
 UNMOUNT_TRIES = 50   # x 0.1 s for the runtime to let go of the mount after SIGHUP
 MOUNT_TIMEOUT = 30   # s for the AppImage runtime to print its mount point
+MOUNT_TRIES = 3      # mounts of an image whose files cannot be read (prepare_readable)
+PROBE_BYTES = 1 << 20
+# What a read gets from a mount whose daemon has failed or gone, not from a missing file.
+UNREADABLE = (errno.EIO, errno.ENOTCONN, errno.ESTALE)
 
 
 def fusermount(*args):
@@ -62,6 +67,27 @@ def read_line(fd, timeout):
             break
         data += chunk
     return data.split(b"\n", 1)[0].decode(errors="replace").strip()
+
+
+def prepare_readable(package, emulator, binary):
+    """package.prepare(), again when the program in the mount cannot be read: -> the root.
+    The pkgforge runtime's DwarFS daemon at times fails its block checks on the first read of a
+    big file ("block data integrity check failed"), and then answers every read of it with EIO for
+    as long as it runs: the emulator's loader could not read its binary and the launch ended in 2 s
+    (Azahar, MANGMI Air X, 2026-11-27: twice in ~35 starts, both the first game of a session, with
+    the Steam client starting beside it; the image itself read back intact each time, and the
+    next start, a new daemon, worked). So the start of the program is read here first, and a mount
+    that fails it is released and mounted again. Exit(3) when MOUNT_TRIES mounts all fail."""
+    why = ""
+    for attempt in range(1, MOUNT_TRIES + 1):
+        root = package.prepare()
+        why = package.unreadable(root, binary)
+        if not why:
+            return root
+        log(f"{emulator}: its mount cannot be read ({why}); mounting it again "
+            f"({attempt} of {MOUNT_TRIES})")
+        package.release()
+    raise Exit(3, f"{emulator}'s files cannot be read: {why}")
 
 
 def mount_table():
@@ -121,6 +147,22 @@ class AppImage:
     def env(self):
         return {}
 
+    def probe_files(self, root, binary):
+        """The files whose start prepare_readable() reads: what the start reads first."""
+        return [os.path.join(root, binary)]
+
+    def unreadable(self, root, binary):
+        """Why the mount cannot be read ("" when it can, or when a file is merely missing: the
+        start reports that itself)."""
+        for path in self.probe_files(root, binary):
+            try:
+                with open(path, "rb") as f:
+                    f.read(PROBE_BYTES)
+            except OSError as err:
+                if err.errno in UNREADABLE:
+                    return f"{path}: {err.strerror}"
+        return ""
+
     def mounted(self):
         return any(len(fields) > 1 and fields[1] == self.mnt for fields in mount_table())
 
@@ -141,6 +183,7 @@ class AppImage:
             time.sleep(0.1)
         if self.mounted():
             log(f"{self.mnt} still busy; the next launch sweeps it")
+        self.runtime = None  # released: a second release(), or one after another prepare(), is its own
 
 
 class SharunAppImage(AppImage):
@@ -175,6 +218,12 @@ class SharunAppImage(AppImage):
         root = super().prepare()
         self.link_hardcoded_paths(root)
         return root
+
+    def probe_files(self, root, binary):
+        # bin/<name> is sharun's own small entry; the program it loads is shared/bin/<name>, the
+        # file whose first read failed.
+        real = os.path.join(root, "shared", "bin", os.path.basename(binary))
+        return super().probe_files(root, binary) + ([real] if os.path.lexists(real) else [])
 
     def link_hardcoded_paths(self, root):
         lines = []
@@ -241,6 +290,9 @@ class Scripts:
     def prepare(self):
         return self.root
 
+    def unreadable(self, root, binary):
+        return ""
+
     def env(self):
         return {}
 
@@ -278,6 +330,9 @@ class Binary:
 
     def prepare(self):
         return os.path.dirname(self.image)
+
+    def unreadable(self, root, binary):
+        return ""
 
     def env(self):
         return {}
