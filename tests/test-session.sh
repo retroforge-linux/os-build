@@ -78,6 +78,13 @@ else
 fi
 
 # =================================================================================================
+CASE="DX games on the A610: Turnip's own autotune"
+[ "$(RETROFORGE_SOC_CLASS=SM6115 conf TU_AUTOTUNE_ALGO)" = bandwidth ] \
+  && ok "SM6115 sessions pick GMEM or sysmem per pass for DXVK/vkd3d too (TU_AUTOTUNE_ALGO=bandwidth over drirc)" \
+  || bad "SM6115: TU_AUTOTUNE_ALGO is '$(RETROFORGE_SOC_CLASS=SM6115 conf TU_AUTOTUNE_ALGO)', not bandwidth"
+[ -z "$(RETROFORGE_SOC_CLASS=SM8250 conf TU_AUTOTUNE_ALGO)" ] && [ -z "$(RETROFORGE_SOC_CLASS=SM4450 conf TU_AUTOTUNE_ALGO)" ] \
+  && ok "other SoCs keep Turnip's drirc choice (not measured there)" || bad "TU_AUTOTUNE_ALGO set beyond the SM6115"
+
 CASE="dual-screen boards"
 # The second panel (device-env RETROFORGE_SECONDARY_CONNECTOR) becomes gamescope's second output
 # (patches/0040). Without the guard a single-panel board would pass a bare --secondary-output and
