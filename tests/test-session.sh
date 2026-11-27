@@ -78,12 +78,31 @@ else
 fi
 
 # =================================================================================================
-CASE="DX games on the A610: Turnip's own autotune"
-[ "$(RETROFORGE_SOC_CLASS=SM6115 conf TU_AUTOTUNE_ALGO)" = bandwidth ] \
-  && ok "SM6115 sessions pick GMEM or sysmem per pass for DXVK/vkd3d too (TU_AUTOTUNE_ALGO=bandwidth over drirc)" \
-  || bad "SM6115: TU_AUTOTUNE_ALGO is '$(RETROFORGE_SOC_CLASS=SM6115 conf TU_AUTOTUNE_ALGO)', not bandwidth"
-[ -z "$(RETROFORGE_SOC_CLASS=SM8250 conf TU_AUTOTUNE_ALGO)" ] && [ -z "$(RETROFORGE_SOC_CLASS=SM4450 conf TU_AUTOTUNE_ALGO)" ] \
-  && ok "other SoCs keep Turnip's drirc choice (not measured there)" || bad "TU_AUTOTUNE_ALGO set beyond the SM6115"
+CASE="our Turnip autotune, every board"
+# drirc.d/02-retroforge-turnip-autotune.conf, not the session environment, gives DXVK/vkd3d-proton our
+# autotune over upstream's forced sysmem; the environment stays free for one game's override.
+set_by=""
+for soc in SM6115 SM4450 SM8250 SM8550 SM8650 SM8750; do
+  [ -z "$(RETROFORGE_SOC_CLASS=$soc conf TU_AUTOTUNE_ALGO)" ] || set_by="$set_by $soc"
+done
+[ -z "$set_by" ] && ok "no board's session sets TU_AUTOTUNE_ALGO (drirc does, per engine)" \
+  || bad "the session sets TU_AUTOTUNE_ALGO on:$set_by"
+DRIRC="$ROOT/rootfs/overlay/usr/share/drirc.d"
+out="$(python3 -I - "$DRIRC/02-retroforge-turnip-autotune.conf" "$DRIRC/01-retroforge-turnip.conf" <<'PY'
+import re, sys, xml.etree.ElementTree as ET
+dev = ET.parse(sys.argv[1]).getroot().find("device[@driver='turnip']")
+app = {o.get("name"): o.get("value") for o in dev.findall("application[@name='all-default']/option")}
+eng = [(e.get("engine_name_match"), {o.get("name"): o.get("value") for o in e.findall("option")}) for e in dev.findall("engine")]
+dx = [opts.get("tu_autotune_algorithm") for m, opts in eng if all(re.search(m, n) for n in ("DXVK", "vkd3d"))]
+other = ET.parse(sys.argv[2]).getroot().iter("option")
+print(app.get("tu_autotune_flags"), dx, sorted(o.get("name") for o in other if o.get("name").startswith("tu_autotune")))
+PY
+)"
+[ "$out" = "adapt ['bandwidth'] []" ] \
+  && ok "02-retroforge-turnip-autotune.conf: adapt for every program, bandwidth for DXVK and vkd3d; 01- has no autotune option" \
+  || bad "drirc: $out"
+[ "$(printf '%s\n' 02-retroforge-turnip-autotune.conf 00-turnip-defaults.conf | LC_ALL=C sort | tail -1)" = 02-retroforge-turnip-autotune.conf ] \
+  && ok "it sorts after Mesa's 00-turnip-defaults.conf, so its values win" || bad "drirc order"
 
 CASE="dual-screen boards"
 # The second panel (device-env RETROFORGE_SECONDARY_CONNECTOR) becomes gamescope's second output

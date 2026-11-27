@@ -59,6 +59,7 @@ EOF
 python3 -I /repo/packages/mesa-x86/guest-overlay.py "$ROOTFS" /payload \
   --epoch "$EPOCH" \
   --add usr/share/retroforge/fex-guest.release=/work/fex-guest.release \
+  --add usr/share/drirc.d/02-retroforge-turnip-autotune.conf=/repo/rootfs/overlay/usr/share/drirc.d/02-retroforge-turnip-autotune.conf \
   --report /work/overlay.txt
 
 # --- the guest's library cache ----------------------------------------------------------------

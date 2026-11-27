@@ -47,6 +47,11 @@ else
     esac
     : >"$x86_root/$d/.wh..wh..opq"
   done
+  # Our Turnip autotune settings (adapt, and our autotune for DXVK/vkd3d over upstream's forced sysmem)
+  # for x86 games too. The guest reads only its own drirc.d, which Mesa's install filled with upstream's
+  # files. This is the host's file, unchanged; the host's 01- heap setting stays on the host.
+  install -D -m 0644 "$ROOT/rootfs/overlay/usr/share/drirc.d/02-retroforge-turnip-autotune.conf" \
+    "$x86_root/usr/share/drirc.d/02-retroforge-turnip-autotune.conf"
   unset x86_root d
   install -m 0644 "$x86_mesa/payload.conf" "$stage/usr/lib/retroforge/x86-mesa/payload.conf"
   chown -R 0:0 "$stage/usr/lib/retroforge/x86-mesa"

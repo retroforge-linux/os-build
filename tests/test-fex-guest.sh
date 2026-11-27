@@ -91,6 +91,8 @@ done
 mkdir -p "$P/usr/share/vulkan/icd.d"
 : >"$P/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json"; : >"$P/usr/share/vulkan/icd.d/freedreno_icd.i686.json"
 echo "mesa: 26.3.1" >"$A/repo/work/mesa-x86/out/payload.conf"
+mkdir -p "$A/repo/rootfs/overlay/usr/share/drirc.d"
+cp "$ROOT/rootfs/overlay/usr/share/drirc.d/"0*-retroforge-turnip*.conf "$A/repo/rootfs/overlay/usr/share/drirc.d/"
 REPO="$ROOT"
 ( ROOT="$A/repo"; stage="$A/stage"; OUT="$A/out"; . "$REPO/rootfs/lib-assemble-x86-mesa.sh" ) >/dev/null 2>&1   # chown to root fails unprivileged
 X="$A/stage/usr/lib/retroforge/x86-mesa/root"
@@ -102,6 +104,12 @@ for lib in lib lib32; do
 done
 [ -e "$X/usr/share/vulkan/icd.d/.wh..wh..opq" ] && [ -e "$X/usr/share/vulkan/icd.d/freedreno_icd.x86_64.json" ] \
   && ok "the Vulkan ICD folder: ours, opaque over the guest's other drivers" || bad "icd.d: $(ls -A "$X/usr/share/vulkan/icd.d" 2>&1 | tr '\n' ' ')"
+cmp -s "$X/usr/share/drirc.d/02-retroforge-turnip-autotune.conf" "$ROOT/rootfs/overlay/usr/share/drirc.d/02-retroforge-turnip-autotune.conf" \
+  && [ ! -e "$X/usr/share/drirc.d/01-retroforge-turnip.conf" ] && [ ! -e "$X/usr/share/drirc.d/.wh..wh..opq" ] \
+  && ok "the guest's drirc.d gets our autotune file (not the host's heap setting), merged with the guest's own" \
+  || bad "drirc.d: $(ls -A "$X/usr/share/drirc.d" 2>&1 | tr '\n' ' ')"
+grep -q 'usr/share/drirc.d/02-retroforge-turnip-autotune.conf=/repo/rootfs/overlay/usr/share/drirc.d/02-retroforge-turnip-autotune.conf' "$D/container-compose.sh" \
+  && ok "a composed guest gets it too" || bad "container-compose.sh does not add the autotune drirc"
 [ -L "$P/usr/lib/dri/apple_dri.so" ] && [ ! -e "$P/usr/lib/dri/.wh..wh..opq" ] \
   && ok "the payload itself is unchanged (compose.sh flattens it into a guest that has no overlay)" || bad "the payload was changed"
 

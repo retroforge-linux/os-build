@@ -118,9 +118,11 @@ the iova into the `payload_dwords` field 0017 adds first. It is designated now.
   `TU_AUTOTUNE_CALIB=off` keeps the byte-count model.
 - **0018** — `TU_AUTOTUNE_FLAGS=adapt` (or drirc `tu_autotune_flags`) times every render pass and
   corrects its prediction from what was measured for that pass, kept apart by draw count since one
-  pass can be 5 draws one frame and 500 the next. Close calls now and then run in the other mode. `drirc.d/01-retroforge-turnip.conf` turns it on. On SM8550/SM8650,
-  `retroforge-launch` sets `TU_AUTOTUNE_FLAGS=preempt_optimize`, which replaces the drirc flags,
-  so adapt is off there unless the launcher adds it.
+  pass can be 5 draws one frame and 500 the next. Close calls now and then run in the other mode. `drirc.d/02-retroforge-turnip-autotune.conf` turns it on
+  for every program, and the image lays that file into the FEX x86 guest too. That file also gives
+  DXVK and vkd3d-proton the bandwidth algorithm instead of upstream's forced `prefer_sysmem`. On
+  SM8550/SM8650, `retroforge-launch` sets `TU_AUTOTUNE_FLAGS=preempt_optimize,adapt` for games
+  (the variable replaces the drirc flags).
 - **0019** — developer tool: `TU_AUTOTUNE_CALIB=force` probes the costs on the running GPU
   (0.6 s on A610/A613) and `export=<path>` writes them out, which is how table rows are made.
   Also `dump`, `log`, `payload`, `replay` and `noshade`.
