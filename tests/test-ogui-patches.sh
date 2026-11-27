@@ -16,6 +16,9 @@
 #   - 0054 InputPlumberRunning: InputManager knows whether InputPlumber runs without a DBus round
 #     trip per input event. Asking too often is ~200 round trips a second during a game (Air X);
 #     too seldom, or missing started / stopped, and OGUI handles a pad's input twice or not at all.
+#   - 0060 SteamGameFocus: which window of a game a running Steam client started may have the focus.
+#     Steam's hidden desktop window given the focus hid the game, which ran behind it (Air X); keeping
+#     Steam's windows from it before the game has a window would hide Steam's launch dialogs instead.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,12 +26,13 @@ PATCHES="$ROOT/packages/opengamepadui/patches"
 P0032="$PATCHES/0032-card-art-only-near-the-screen.patch"
 P0053="$PATCHES/0053-launch-manager-reads-a-process-environment-only-while-it-is-new.patch"
 P0054="$PATCHES/0054-input-manager-does-not-ask-dbus-whether-inputplumber-runs-on-every-event.patch"
+P0060="$PATCHES/0060-launch-manager-a-steam-window-never-takes-the-focus-from-the-game.patch"
 
 PASS=0; FAIL=0; CASE=""
 ok()  { PASS=$((PASS+1)); printf '  ok   %s -- %s\n' "$CASE" "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s -- %s\n' "$CASE" "$1"; }
 
-for f in "$P0032" "$P0053" "$P0054"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
+for f in "$P0032" "$P0053" "$P0054" "$P0060"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
 T="$(mktemp -d)" && [ -d "$T" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
@@ -335,6 +339,63 @@ func _initialize() -> void:
 	quit(1 if failed else 0)
 GD
   out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P54" --script res://ip_running_test.gd 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+  n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+  PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+  if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+    bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+  fi
+fi
+
+CASE="Steam game focus (0060)"
+if [ -z "$GODOT" ]; then
+  printf '  skip %s -- no Godot (set RETROFORGE_GODOT to a Godot 4 binary)\n' "$CASE"
+else
+  P60="$T/p60"; mkdir -p "$P60"
+  added_file "$P0060" core/systems/launcher/steam_game_focus.gd > "$P60/steam_game_focus.gd"
+  grep -q '^static func may_focus(' "$P60/steam_game_focus.gd" \
+    && ok "the patch adds core/systems/launcher/steam_game_focus.gd" || bad "steam_game_focus.gd not found in the patch"
+  # Every place OGUI picks a window of a running app asks it: a new window, a newly focusable one,
+  # the window focused when focusable windows change, the dropped-focus fallback, and grab_focus().
+  [ "$(grep -c '^+.*may_focus(' "$P0060" | tr -d ' ')" -ge 5 ] && grep -q '^+.*newest: int = app.steam_game_window(to)' "$P0060" \
+    && ok "new, newly focusable and already focused windows, the fallback and grab_focus() all ask it" \
+    || bad "a window choice in launch_manager.gd or running_app.gd does not go through it"
+  printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P60/project.godot"
+  cat > "$P60/steam_focus_test.gd" <<GD
+extends SceneTree
+# Window 10: Steam's desktop window. 20 and 30: the game's (a process with its SteamGameId). 40: another
+# window of the app's, neither Steam's nor the game's.
+
+const SteamGameFocus := preload("res://steam_game_focus.gd")
+var failed := 0
+
+
+func check(what: String, got, want) -> void:
+	if got == want:
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+
+func _init() -> void:
+	var steam := PackedInt64Array([10])
+	var game := PackedInt64Array([20])
+	var all := PackedInt64Array([10, 20, 40])
+	check("no game window: none", SteamGameFocus.game_window(all, all, PackedInt64Array(), steam), -1)
+	check("the game's window once gamescope can focus it", SteamGameFocus.game_window(all, all, game, steam), 20)
+	check("not before", SteamGameFocus.game_window(all, PackedInt64Array([10, 40]), game, steam), -1)
+	check("the newest of the game's windows",
+		SteamGameFocus.game_window(PackedInt64Array([10, 20, 30]), PackedInt64Array([10, 20, 30]), PackedInt64Array([20, 30]), steam), 30)
+	check("a Steam window is never the game's",
+		SteamGameFocus.game_window(PackedInt64Array([10, 20]), PackedInt64Array([10, 20]), PackedInt64Array([10, 20]), steam), 20)
+	check("while the game has a window, Steam's never gets the focus", SteamGameFocus.may_focus(10, 20, steam), false)
+	check("the game's window does", SteamGameFocus.may_focus(20, 20, PackedInt64Array()), true)
+	check("and another window of the app that is not Steam's", SteamGameFocus.may_focus(40, 20, PackedInt64Array()), true)
+	check("before the game has a window, Steam's does (its launch dialogs, a prompt)", SteamGameFocus.may_focus(10, -1, steam), true)
+	quit(1 if failed else 0)
+GD
+  out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P60" --script res://steam_focus_test.gd 2>&1)"; rc=$?
   printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
   n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
   PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))

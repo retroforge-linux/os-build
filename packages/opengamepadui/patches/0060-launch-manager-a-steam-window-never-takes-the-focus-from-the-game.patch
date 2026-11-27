@@ -1,0 +1,249 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 27 Nov 2026 06:00:00 +0000
+Subject: [PATCH] fix(LaunchManager): a Steam window never takes the focus
+ from the game Steam started
+
+A game launched through a running Steam client sometimes ran behind
+Steam's black Store page with none of it on the screen (MANGMI Air X,
+2026-11-27, Parking Garage Rally Circuit, 1 launch in 3: the game at
+full GPU and CPU, gamescope 0 fps). A launch that wakes Steam's web
+helper makes Steam create its hidden desktop window (`SP Desktop_uid0`
+in webhelper.txt, WasHidden 1). It is one of the app's windows and
+carries the app's id, which for a Steam launch is the game's Steam app
+id, so gamescope reports the game focused while it has the focus. Steam
+then showed it ("WasHidden 0"), it took the focus, and it kept it. The
+game's own window was never one of the app's: Steam's reaper starts the
+game, so its processes have no OGUI_ID of the app's, and its window
+carries no app id (gamescope takes it from the process's SteamGameId),
+so OpenGamepadUI never switched to it. On the HW, `steam://store` during
+a game sometimes shows the same window: with 0059 it took the focus and
+held it (24 of 25 one-second samples); with this patch the game kept it
+(25 of 25).
+
+Now a window whose process (not steam or steamwebhelper) has the
+launched game's id as its SteamGameId is one of the app's, read once
+per window. While the game has such a window gamescope can focus, no
+window of a steam or steamwebhelper process gets the focus from
+OpenGamepadUI (steam_game_focus.gd): not as a new window, not when it
+becomes focusable, not when the focused window goes, not when the app is
+focused again (the running game card's window list included). A Steam window
+that has the focus when the game's window can take it hands the focus
+to the game. Before the game has a window, Steam's windows are focused
+as before (its launch dialogs, a prompt it needs answered, Big Picture).
+
+With the game's window counted, the Steam state reaches RUNNING for a
+game a running client started, so 4 s after the game's window has gone
+and Steam's reaper with it, the launch's own `steam` process is sent
+TERM, as for a launch that starts Steam.
+---
+diff --git a/core/global/launch_manager.gd b/core/global/launch_manager.gd
+index d47d65d..608c1db 100644
+--- a/core/global/launch_manager.gd
++++ b/core/global/launch_manager.gd
+@@ -142,10 +142,20 @@ func _init() -> void:
+ 			# own layer: a black screen over a running Steam.
+ 			var running := _running.duplicate()
+ 			running.reverse()
++			# Steam's window focused while the game Steam started has one gamescope can focus: the
++			# game's window gets it (steam_game_focus.gd).
++			for app in running:
++				if baselayer_window > 0 and baselayer_window in app.window_ids and not app.may_focus(baselayer_window, to):
++					app.switch_window.call_deferred(app.steam_game_window(to))
++					return
+ 			for app in running:
+ 				for window in to:
+ 					if window in from or not window in app.window_ids:
+ 						continue
++					# Not one of Steam's while the game has a window: Steam shows its hidden
++					# desktop window at times during a game.
++					if not app.may_focus(window, to):
++						continue
+ 					if window != baselayer_window:
+ 						# Deferred: this signal is emitted while GamescopeInstance is bound, and
+ 						# switch_window calls back into it (gamescope.get_xwayland), which godot-rust
+@@ -159,10 +169,11 @@ func _init() -> void:
+ 			if not dropped:
+ 				return
+ 			for app in running:
+-				var newest := -1
+-				for window in to:
+-					if window in app.window_ids:
+-						newest = maxi(newest, window)
++				var newest: int = app.steam_game_window(to)
++				if newest < 0:
++					for window in to:
++						if window in app.window_ids:
++							newest = maxi(newest, window)
+ 				if newest > 0:
+ 					app.switch_window.call_deferred(newest)
+ 					return
+@@ -312,7 +323,7 @@ func launch(app: LibraryLaunchItem) -> RunningApp:
+ 		for window in new_windows:
+ 			if window in old_windows:
+ 				continue
+-			if window in focusable:
++			if window in focusable and running_app.may_focus(window, focusable):
+ 				running_app.switch_window(window)
+ 				return
+ 	running_app.window_ids_changed.connect(switch_to_new_window)
+@@ -330,7 +341,7 @@ func launch(app: LibraryLaunchItem) -> RunningApp:
+ 			return
+ 		var focusable := _xwayland_primary.get_focusable_windows()
+ 		for i in range(new_windows.size() - 1, -1, -1):
+-			if new_windows[i] in focusable:
++			if new_windows[i] in focusable and running_app.may_focus(new_windows[i], focusable):
+ 				running_app.switch_window(new_windows[i])
+ 				return
+ 		_xwayland_primary.remove_baselayer_window()
+diff --git a/core/systems/launcher/running_app.gd b/core/systems/launcher/running_app.gd
+index 744d464..134ca14 100644
+--- a/core/systems/launcher/running_app.gd
++++ b/core/systems/launcher/running_app.gd
+@@ -123,7 +123,10 @@ var not_running_count := 0
+ var is_ogui_managed: bool = true
+ ## The app id each of the app's windows carries, as _ensure_app_id last set it (window id -> app id)
+ var window_app_ids: Dictionary[int, int] = {}
++## Whether each window seen so far belongs to the game Steam started from this app (window id -> bool)
++var _steam_game_windows: Dictionary[int, bool] = {}
+ var logger := Log.get_logger("RunningApp", Log.LEVEL.INFO)
++const SteamGameFocus := preload("res://core/systems/launcher/steam_game_focus.gd")
+ 
+ 
+ func _init(item: LibraryLaunchItem, dsp: String) -> void:
+@@ -417,10 +420,16 @@ func get_all_window_ids(all_windows: PackedInt64Array, app_pids: PackedInt64Arra
+ 
+ 	# Loop through all windows and check if the window belongs to one of our
+ 	# processes
++	var steam_game := steam_app_id()
+ 	for window_id in all_windows:
+ 		if xwayland.has_app_id(window_id) and xwayland.get_app_id(window_id) == self.app_id:
+ 			window_ids.append(window_id)
+ 			continue
++		# The game Steam started from this app: Steam's reaper starts it, so its processes are not the
++		# app's, and its window may carry no app id (gamescope takes it from its SteamGameId).
++		if steam_game > 0 and is_steam_game_window(window_id):
++			window_ids.append(window_id)
++			continue
+ 		var window_pids := xwayland.get_pids_for_window(window_id)
+ 		for window_pid in window_pids:
+ 			if window_pid in app_pids:
+@@ -428,6 +437,9 @@ func get_all_window_ids(all_windows: PackedInt64Array, app_pids: PackedInt64Arra
+ 				window_ids.append(window_id)
+ 
+ 	window_ids.sort()
++	for window_id in _steam_game_windows.keys():
++		if not window_id in all_windows:
++			_steam_game_windows.erase(window_id)
+ 	logger.trace(app_name + " found related window IDs: " + str(window_ids))
+ 
+ 	return window_ids
+@@ -490,9 +502,11 @@ func grab_focus() -> void:
+ 		logger.warn("No windows to grab focus on")
+ 		return
+ 
++	var focusable := xwayland_primary.get_focusable_windows()
+ 	var focus_window := self.last_focused_window_id
+-	if not focus_window in self.window_ids:
+-		focus_window = self.window_ids[0]
++	if not focus_window in self.window_ids or not may_focus(focus_window, focusable):
++		var game := steam_game_window(focusable)
++		focus_window = game if game > 0 else self.window_ids[0]
+ 
+ 	# Set the baselayer app id. A game Steam started from this app carries its own, listed first.
+ 	var app_ids := PackedInt64Array([self.app_id])
+@@ -606,6 +620,62 @@ func is_steam_app() -> bool:
+ 	return false
+ 
+ 
++## The Steam app id this app launched (steam://rungameid/<id>), 0 when it is no Steam launch.
++func steam_app_id() -> int:
++	if not is_steam_app():
++		return 0
++	return int(get_meta("steam_app_id", 0))
++
++
++## Whether the window belongs to the game Steam started from this app: a process of it, not Steam's,
++## has the game's id as its SteamGameId. Read once per window, as gamescope does.
++func is_steam_game_window(window_id: int) -> bool:
++	if window_id in _steam_game_windows:
++		return _steam_game_windows[window_id]
++	var steam_game := steam_app_id()
++	var xwayland := gamescope.get_xwayland_by_name(display)
++	if steam_game <= 0 or not xwayland:
++		return false
++	var pids := xwayland.get_pids_for_window(window_id)
++	if pids.is_empty():
++		return false  # asked again once the window has a pid
++	var mine := false
++	for window_pid in pids:
++		if Reaper.get_pid_status(window_pid).get("Name", "") in ["steam", "steamwebhelper"]:
++			continue
++		if steam_game_id_from_env(Reaper.get_pid_environment(window_pid)) == steam_game:
++			mine = true
++			break
++	_steam_game_windows[window_id] = mine
++	return mine
++
++
++## The window of the game Steam started from this app that gamescope can focus, or -1
++## (steam_game_focus.gd).
++func steam_game_window(focusable: PackedInt64Array) -> int:
++	if steam_app_id() <= 0:
++		return -1
++	var game_windows := PackedInt64Array()
++	var steam_windows := PackedInt64Array()
++	for window in self.window_ids:
++		if not window in focusable:
++			continue
++		if is_steam_game_window(window):
++			game_windows.append(window)
++		elif is_steam_window(window):
++			steam_windows.append(window)
++	return SteamGameFocus.game_window(self.window_ids, focusable, game_windows, steam_windows)
++
++
++## Whether OpenGamepadUI may give the app's window the focus: not one of Steam's while the game Steam
++## started has a window gamescope can focus (steam_game_focus.gd).
++func may_focus(window: int, focusable: PackedInt64Array) -> bool:
++	if steam_app_id() <= 0:
++		return true
++	var steam := PackedInt64Array([window]) if is_steam_window(window) else PackedInt64Array()
++	return SteamGameFocus.may_focus(window, steam_game_window(focusable), steam)
++
++
+ ## Returns true if the given window id is detected as a Steam window
+ func is_steam_window(window_id: int) -> bool:
+ 	var xwayland := gamescope.get_xwayland_by_name(display)
+diff --git a/core/systems/launcher/steam_game_focus.gd b/core/systems/launcher/steam_game_focus.gd
+new file mode 100644
+index 0000000..1aedb68
+--- /dev/null
++++ b/core/systems/launcher/steam_game_focus.gd
+@@ -0,0 +1,26 @@
++extends RefCounted
++
++## Which window of a game Steam starts from OpenGamepadUI may have the focus. The running app's id is
++## the game's Steam app id, which OpenGamepadUI also puts on Steam's own windows, so gamescope reports
++## the game focused whichever of them has the focus. Steam at times shows its hidden desktop window
++## ("SP Desktop", a black Store page) during a game, and as the focus it hid the game, which ran on
++## behind it with nothing of it on the screen (MANGMI Air X, 2026-11-27, Parking Garage Rally Circuit,
++## 1 launch in 3).
++
++
++## The game's own window: the newest of `windows` that gamescope can focus, belongs to the game's
++## processes (`game_windows`) and is not Steam's. -1 when there is none (the game has no window
++## yet, or the app is no Steam launch).
++static func game_window(windows: PackedInt64Array, focusable: PackedInt64Array, game_windows: PackedInt64Array,
++		steam_windows: PackedInt64Array) -> int:
++	var newest := -1
++	for window in windows:
++		if window in focusable and window in game_windows and not window in steam_windows:
++			newest = maxi(newest, window)
++	return newest
++
++
++## Whether OpenGamepadUI may give `window` the focus: any window, except one of Steam's while the
++## game has a window gamescope can focus (`game`, from game_window()).
++static func may_focus(window: int, game: int, steam_windows: PackedInt64Array) -> bool:
++	return game < 0 or window == game or not window in steam_windows
