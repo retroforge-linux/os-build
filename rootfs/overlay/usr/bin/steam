@@ -187,6 +187,11 @@ kept_start() {
   systemd-run --user --quiet --collect --unit="$KEPT_UNIT" -p TasksMax=infinity --working-directory="$HOME" \
     "${env[@]}" --setenv=OGUI_ID=Steam --setenv=RETROFORGE_STEAM_KEPT=1 "$self" "$@" >/dev/null
 }
+kept_url() {  # URL: hand a steam:// URL to the running client over its pipe
+  ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
+    LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      exec "$client" "$1" ) >/dev/null 2>&1
+}
 # Steam's own UI, closed from OGUI: the client leaves Big Picture first. Its web helper killed
 # (minimal), a client keeps Big Picture open, and the next helper (a game launch's `full`) showed it
 # again, with the launching game's id on it: OGUI took it for the game's window and kept it in front,
@@ -197,9 +202,7 @@ kept_start() {
 kept_close_ui() {
   local wlog="$RETROFORGE_STEAM_ROOT/logs/webhelper.txt" lines=0 i
   [ -r "$wlog" ] && lines=$(wc -l <"$wlog")
-  ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
-    LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-      exec "$client" steam://close/bigpicture ) >/dev/null 2>&1
+  kept_url steam://close/bigpicture
   for ((i = 0; i < ${RETROFORGE_STEAM_UI_CLOSE_WAIT:-5} * 4; i++)); do
     tail -n +$((lines + 1)) "$wlog" 2>/dev/null | grep -aqE '\] SP Desktop_uid[0-9]+: ' && return 0
     sleep 0.25
@@ -274,6 +277,23 @@ kept_stop() {  # TERM, INT or HUP: end the game this launch started, not Steam
   [ "$("$keep_cli" status 2>/dev/null)" = on ] || "$keep_cli" stop-idle
   exit 143
 }
+# Steam switches the controller to a game when the game's window takes focus (`OnFocusWindowChanged to
+# game window type: AppID <appid>` in controller_ui.txt, then `Queueing activation` in controller.txt),
+# but only on a change of focus. OGUI's screens are not Steam's, so after a game ends Steam still counts
+# it focused, and the same game launched again never got its controller: Steam's pad stayed silent and
+# the controller drove Steam's desktop mouse instead (Megabonk, Hollow Knight, MANGMI Air X, 2026-11-26).
+# So a launch of the game Steam last saw focused first points Steam's input at its own UI and back
+# (steam://forceinputappid/769, then /0); the game's window then counts as a change.
+kept_unstick_focus() {  # APPID
+  local last
+  last="$(grep -aoE 'OnFocusWindowChanged (to game window type: AppID|URL Forcing to window type: k_EWindowTypeGame,) [0-9]+' \
+    "$RETROFORGE_STEAM_ROOT/logs/controller_ui.txt" 2>/dev/null | tail -n 1 | grep -oE '[0-9]+$')"
+  [ -n "$1" ] && [ "$last" = "$1" ] || return 0
+  log "Steam still counts app $1 focused from its last run: pointing its input at Steam's UI and back first"
+  kept_url steam://forceinputappid/769
+  sleep "${RETROFORGE_STEAM_UNSTICK_WAIT:-1}"
+  kept_url steam://forceinputappid/0
+}
 kept_launch() {
   local arg pid pids="" alive deadline stage=wait step="" ran=0 since proc="${RETROFORGE_PROC:-/proc}"
   local light="" focused="" ctl="$RETROFORGE_STEAM_ROOT/logs/controller_ui.txt" seen=0
@@ -325,6 +345,7 @@ kept_launch() {
       "$keep_cli" minimal $$
       exit 0
     elif [ "$installed" != screen ]; then
+      kept_unstick_focus "$appid"
       log "handing this launch to the kept Steam ($KEPT_UNIT.service)"
       ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
         LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
@@ -610,6 +631,7 @@ fi
 # client starts, and it may rotate its log, which holds how it last started each game: the helper
 # keeps those first.
 [ -n "$direct" ] && kept_beside "$@"
+[ -n "$direct" ] && kept_active && kept_unstick_focus "$direct"
 [ -n "$direct" ] && exec "$direct_cli" run "$direct"
 [ -x "$direct_cli" ] && "$direct_cli" remember
 

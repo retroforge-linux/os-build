@@ -906,10 +906,14 @@ CASE="keep: a game through the kept client"
 CTL="$WROOT/logs/controller_ui.txt"
 reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"; mkdir -p "${CTL%/*}"
 echo "[2026-10-25 03:16:43] OnFocusWindowChanged to game window type: AppID 42, 42" >"$CTL"   # an earlier run's
-bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETROFORGE_STEAM_MINIMAL_DELAY=1 -- steam://rungameid/42
-until_true '[ -e "$W/call1" ]'
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETROFORGE_STEAM_MINIMAL_DELAY=1 RETROFORGE_STEAM_UNSTICK_WAIT=0 -- steam://rungameid/42
+until_true '[ -e "$W/call3" ]'
 [ "$(head -1 "$W/keep.calls" 2>/dev/null)" = "full pid first" ] \
   && ok "Steam's UI comes back before the launch is handed over (its dialogs, install scripts, shader prompt)" || bad "keep: $(cat "$W/keep.calls" 2>&1)"
+grep -qx "args: steam://forceinputappid/769" "$W/call1" 2>/dev/null && grep -qx "args: steam://forceinputappid/0" "$W/call2" 2>/dev/null \
+  && grep -qx "args: steam://rungameid/42" "$W/call3" 2>/dev/null \
+  && ok "the game Steam last saw focused: its input goes to Steam's UI and back before the launch (else no controller)" \
+  || bad "calls: $(cat "$W"/call1 "$W"/call2 "$W"/call3 2>&1)"
 step 42 Completed; fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- game
 sleep 2.5
 ! grep -q "^minimal" "$W/keep.calls" && ok "not minimal while Steam has not switched the controller to the game (an earlier run's line does not count)" \
@@ -922,6 +926,42 @@ gone 4242
 finish
 [ "$WRC" = 0 ] && [ "$(tail -1 "$W/keep.calls")" = "minimal pid handed" ] && [ -e "$W/unit-active" ] \
   && ok "and stays minimal when the game ends" || bad "rc=$WRC keep: $(cat "$W/keep.calls" 2>&1)"
+
+CASE="keep: another game than the one Steam last saw focused"
+reset_keep; rm -f "$W/keep.calls"; touch "$W/unit-active"
+echo "[2026-10-25 03:16:43] OnFocusWindowChanged to game window type: AppID 7, 7" >"$CTL"
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" RETROFORGE_STEAM_UNSTICK_WAIT=0 -- steam://rungameid/42
+until_true '[ -e "$W/call1" ]'
+sleep 0.5
+grep -qx "args: steam://rungameid/42" "$W/call1" 2>/dev/null && [ ! -e "$W/call2" ] \
+  && ok "handed over as it is: the game's window is a change of focus for Steam" || bad "calls: $(cat "$W"/call* 2>&1)"
+kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
+
+CASE="keep: a game started without the client, beside the kept one"
+# direct CLI stub: every game can start without the client; `run` records what it was asked.
+cat >"$W/bin/directstub" <<EOF
+#!/usr/bin/env bash
+case "\$1" in check|remember|fex) exit 0 ;; run) echo "run \$2" >"$W/direct.run"; exit 0 ;; esac
+EOF
+chmod +x "$W/bin/directstub"
+dwrap() {  # the wrapper with the stub as its direct CLI, the kept client on and running
+  echo 0 >"$W/codes"; rm -f "$W/count" "$W"/call*
+  "${WENV[@]}" RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_DIRECT_CLI="$W/bin/directstub" RETROFORGE_STEAM_KEEP_CLI="$W/bin/keeplog" \
+    RETROFORGE_STEAM_UNSTICK_WAIT=0 bash "$WRAP" "$@" >/dev/null 2>"$W/err"; WRC=$?
+  WERR="$(cat "$W/err")"
+}
+reset_keep; rm -f "$W/keep.calls" "$W/direct.run"; touch "$W/unit-active"
+echo "[2026-11-26 22:12:33] OnFocusWindowChanged to game window type: AppID 42, 42" >"$CTL"
+dwrap steam://rungameid/42
+grep -qx "run 42" "$W/direct.run" 2>/dev/null && grep -qx "args: steam://forceinputappid/769" "$W/call1" 2>/dev/null \
+  && grep -qx "args: steam://forceinputappid/0" "$W/call2" 2>/dev/null \
+  && ok "the game Steam last saw focused: Steam's input goes to its UI and back before the game starts" \
+  || bad "rc=$WRC run=$(cat "$W/direct.run" 2>&1) calls: $(cat "$W"/call* 2>&1) err=$WERR"
+reset_keep; rm -f "$W/direct.run"; touch "$W/unit-active"
+echo "[2026-11-26 22:12:33] OnFocusWindowChanged to game window type: AppID 7, 7" >"$CTL"
+dwrap steam://rungameid/42
+grep -qx "run 42" "$W/direct.run" 2>/dev/null && [ ! -e "$W/call1" ] \
+  && ok "another game: started at once, Steam left alone" || bad "rc=$WRC run=$(cat "$W/direct.run" 2>&1) calls: $(cat "$W"/call* 2>&1)"
 
 CASE="keep: Steam's UI, woken first"
 # keep CLI stub: the client was minimal, so `full` wakes its UI.
