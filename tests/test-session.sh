@@ -253,23 +253,10 @@ if [ -f "$P17" ]; then
     && ! grep -qE '^\+.*get_string_from_utf8\(\).split\(char\(0\)\)' "$P17" \
     && ok "0017: the reaper's arguments are split on NULs turned into newlines, not decoded up to the first NUL" \
     || bad "0017: the cmdline is still decoded up to its first NUL"
-  grep -q "0016-thread-pool-start-on-first-use.patch 0017-running-app-steam-launch-alive-while-steam-reaper-runs.patch" "$PKG/source.pin" \
-    && ok "0017: listed in source.pin, after 0016" || bad "0017: not in source.pin's patches"
+  grep -q "0015-running-game-card-name-without-library-item.patch 0017-running-app-steam-launch-alive-while-steam-reaper-runs.patch" "$PKG/source.pin" \
+    && ok "0017: listed in source.pin, after 0015" || bad "0017: not in source.pin's patches"
 else
   bad "0017: $P17 is missing"
-fi
-# 0021: a Steam desktop shortcut started Steam's desktop mode over the game (HW, Pocket FIT, 2026-10-21).
-P21="$PKG/patches/0021-library-desktop-steam-shortcuts-start-steams-gamepad-ui.patch"
-if [ -f "$P21" ]; then
-  [ "$(grep -E '^\+\+\+ b/' "$P21" | sed 's#^+++ b/##' | sort -u)" = "core/systems/library/library_desktop.gd" ] \
-    && ok "0021: changes library_desktop.gd only" || bad "0021 touches more than library_desktop.gd"
-  grep -qE '^-\s+var args := PackedStringArray\(\["-silent"\]\)' "$P21" \
-    && grep -qE '^\+\s+var args := PackedStringArray\(\["-gamepadui", "-steamos3", "-steampal", "-steamdeck", "-silent"\]\)' "$P21" \
-    && ok "0021: a Steam shortcut gets the Steam plugin's flags, not -silent alone" || bad "0021: the quirk still adds -silent alone"
-  grep -q "0019-launch-focus-a-focusable-window-of-the-app.patch 0021-library-desktop-steam-shortcuts-start-steams-gamepad-ui.patch" "$PKG/source.pin" \
-    && ok "0021: listed in source.pin, after 0019" || bad "0021: not in source.pin's patches"
-else
-  bad "0021: $P21 is missing"
 fi
 # 0022: every orphan window warned about once a second (Steam kept running: HW, Pocket FIT, 2026-10-22).
 P22="$PKG/patches/0022-launch-manager-orphan-windows-warned-once.patch"
@@ -279,8 +266,8 @@ if [ -f "$P22" ]; then
   grep -qE '^-\s+if not orphan_windows.is_empty\(\):' "$P22" && grep -qE '^\+\s+if orphan_windows != _orphan_windows:' "$P22" \
     && grep -qE '^\+var _orphan_windows := PackedInt64Array\(\)' "$P22" \
     && ok "0022: orphan windows are warned about when their set changes, not on every check" || bad "0022: still warns on every check"
-  grep -q "0021-library-desktop-steam-shortcuts-start-steams-gamepad-ui.patch 0022-launch-manager-orphan-windows-warned-once.patch" "$PKG/source.pin" \
-    && ok "0022: listed in source.pin, after 0021" || bad "0022: not in source.pin's patches"
+  grep -q "0019-launch-focus-a-focusable-window-of-the-app.patch 0022-launch-manager-orphan-windows-warned-once.patch" "$PKG/source.pin" \
+    && ok "0022: listed in source.pin, after 0019" || bad "0022: not in source.pin's patches"
 else
   bad "0022: $P22 is missing"
 fi

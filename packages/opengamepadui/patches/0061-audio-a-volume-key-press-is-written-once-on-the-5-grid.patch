@@ -1,0 +1,235 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 27 Nov 2026 19:00:00 +0000
+Subject: [PATCH] fix(AudioManager): a volume key press is written once,
+ on the 5 grid
+
+One press of a volume key ran nine `wpctl set-volume` and nine `wpctl
+set-mute` (MANGMI Air X, 2026-11-27). The key's relative change was
+announced (volume_changed) to the volume sliders of the quick settings
+and of Settings > Audio, and each wrote it back as an absolute level,
+twice: a slider given a value announces the one its step snaps it to,
+then the one it was given. A write that changed the level was announced
+to both again. The nine writes raced, so a press moved the speaker by 0
+to 10 (0.52, 0.60, 0.62, 0.72, 0.72, 0.77, 0.87, 0.90, 0.97) while the
+sliders showed 55, 60 and so on, and the level OpenGamepadUI kept
+drifted from the speaker's (0.92 against 0.97). A level set elsewhere
+went unnoticed: with the speaker set to 0.30, one press put it at 0.97.
+Upstream has the same echo (its Audio slider already steps by 5),
+without 0031's unmutes.
+
+A press now reads the level the system has, moves to the next multiple
+of 5 in its direction (52 to 55 up, to 50 down: volume_step.gd) and
+writes that once: three processes (the read, the write, 0031's unmute).
+Presses that come while one is written follow it in order. A slider
+shown a level set elsewhere no longer writes it back; moving a slider
+writes once, as before. On the same device after: 0.52, 0.55, 0.60, 0.65
+up and 0.60, 0.55 down; 0.30 set elsewhere, then 0.35; five quick
+presses took 0.35 to 0.60 with one read and five writes.
+---
+diff --git a/core/global/audio_manager.gd b/core/global/audio_manager.gd
+index 6d4d4b3..11d6eb8 100644
+--- a/core/global/audio_manager.gd
++++ b/core/global/audio_manager.gd
+@@ -8,6 +8,7 @@ class_name AudioManager
+ 
+ ## The system's silent fallback sink (RetroForge), kept while WirePlumber restarts; not a device to pick.
+ const FALLBACK_SINK := "retroforge-fallback"
++const VolumeStep := preload("res://core/global/volume_step.gd")
+ 
+ signal volume_changed(value: float)
+ ## Emitted when the system volume has been read, e.g. once WirePlumber has a default sink at startup.
+@@ -33,6 +34,10 @@ var current_volume := 0.0
+ ## True once the system volume has been read (or set from here)
+ var volume_known := false
+ var _muted := false
++## Presses of the volume keys step_volume() has not written yet (up minus down), and whether it is
++## working through them
++var _steps_due := 0
++var _stepping := false
+ var _output_devices := PackedStringArray()
+ var _current_output := ""
+ 
+@@ -126,6 +131,29 @@ func set_volume(value: float, type: VOLUME = VOLUME.ABSOLUTE) -> int:
+ 	return code
+ 
+ 
++## One press of a volume key: up (direction > 0) or down to the next multiple of VolumeStep.STEP
++## percent, from the level the system has now, written once. The level is read first because it can
++## have changed elsewhere (another client, a WirePlumber restart): a press then started from the last
++## level set here (the speaker went from 0.30 to 0.97 on one press, MANGMI Air X, 2026-11-27).
++## Presses that come while one is being written are written after it, each from the one before.
++func step_volume(direction: int) -> void:
++	_steps_due += signi(direction)
++	if _stepping:
++		return
++	_stepping = true
++	var level := await _get_current_volume()
++	if level >= 0:
++		current_volume = level
++	var percent := roundi(current_volume * 100)
++	var limit := roundi(volume_limit.to_float() * 100)
++	while _steps_due != 0:
++		var step := signi(_steps_due)
++		_steps_due -= step
++		percent = VolumeStep.next(percent, step, limit)
++		await set_volume(percent / 100.0)
++	_stepping = false
++
++
+ ## Toggles mute on the current audio device
+ func toggle_mute() -> int:
+ 	_muted = !_muted
+diff --git a/core/global/volume_step.gd b/core/global/volume_step.gd
+new file mode 100644
+index 0000000..492955f
+--- /dev/null
++++ b/core/global/volume_step.gd
+@@ -0,0 +1,17 @@
++extends RefCounted
++
++## What one press of a volume key does to the volume.
++
++## The keys' step, in percent of full volume
++const STEP := 5
++
++
++## The level a key press moves `percent` to: the next multiple of STEP above it (direction > 0) or
++## below it (direction < 0), within 0..limit. A level off that grid (one set elsewhere) lands on it
++## at the first press.
++static func next(percent: int, direction: int, limit: int = 100) -> int:
++	if direction > 0:
++		return mini((floori(float(percent) / STEP) + 1) * STEP, limit)
++	if direction < 0:
++		return maxi((ceili(float(percent) / STEP) - 1) * STEP, 0)
++	return clampi(percent, 0, limit)
+diff --git a/core/systems/input/input_manager.gd b/core/systems/input/input_manager.gd
+index 1362684..6a28f01 100644
+--- a/core/systems/input/input_manager.gd
++++ b/core/systems/input/input_manager.gd
+@@ -375,11 +375,11 @@ func _audio_input(event: InputEvent) -> void:
+ 		return
+ 	if event.is_action("ogui_volume_down"):
+ 		logger.debug("Volume Down!")
+-		audio_manager.call_deferred("set_volume", -0.05, audio_manager.VOLUME.RELATIVE)
++		audio_manager.call_deferred("step_volume", -1)
+ 		return
+ 	if event.is_action("ogui_volume_up"):
+ 		logger.debug("Volume Up!")
+-		audio_manager.call_deferred("set_volume", 0.05, audio_manager.VOLUME.RELATIVE)
++		audio_manager.call_deferred("step_volume", 1)
+ 		return
+ 
+ 
+diff --git a/core/systems/input/overlay_mode_input_manager.gd b/core/systems/input/overlay_mode_input_manager.gd
+index b7393b4..45b13e3 100644
+--- a/core/systems/input/overlay_mode_input_manager.gd
++++ b/core/systems/input/overlay_mode_input_manager.gd
+@@ -347,12 +347,12 @@ func _audio_input(event: InputEvent) -> void:
+ 		return
+ 	if event.is_action("ogui_volume_down"):
+ 		logger.debug("Volume Down!")
+-		audio_manager.call_deferred("set_volume", -0.05, audio_manager.VOLUME.RELATIVE)
++		audio_manager.call_deferred("step_volume", -1)
+ 		get_viewport().set_input_as_handled()
+ 		return
+ 	if event.is_action("ogui_volume_up"):
+ 		logger.debug("Volume Up!")
+-		audio_manager.call_deferred("set_volume", 0.05, audio_manager.VOLUME.RELATIVE)
++		audio_manager.call_deferred("step_volume", 1)
+ 		get_viewport().set_input_as_handled()
+ 		return
+ 
+diff --git a/core/ui/common/quick_bar/quick_settings_menu.gd b/core/ui/common/quick_bar/quick_settings_menu.gd
+index 96deb2e..78c9089 100644
+--- a/core/ui/common/quick_bar/quick_settings_menu.gd
++++ b/core/ui/common/quick_bar/quick_settings_menu.gd
+@@ -7,6 +7,8 @@ var gamescope := load("res://core/systems/gamescope/gamescope.tres") as Gamescop
+ var backlights := DisplayManager.get_backlight_paths()
+ 
+ var logger := Log.get_logger("QuickSettings", Log.LEVEL.INFO)
++## The volume slider is being given a level to show, not moved
++var _showing_volume := false
+ 
+ @onready var output_volume := $%VolumeSlider
+ @onready var brightness_slider := $%BrightnessSlider
+@@ -35,18 +37,28 @@ func _ready() -> void:
+ 	brightness_slider.value_changed.connect(_on_brightness_slider_changed)
+ 
+ 
++# A level set elsewhere (the volume keys, the other menu's slider) is shown, not written again. Each
++# menu wrote it back, twice (a slider given a value announces the one snapped to its step, then the
++# one it was given), and a write that changed the level was announced to both again: one key press
++# ran nine `wpctl set-volume` that raced, and the speaker moved by 0 to 10.
+ func _on_output_volume_changed(value: float) -> void:
+-	output_volume.value = value * 100
++	_show_output_volume(value)
+ 
+ 
+ # The level read from the system: shown without setting it back (that would also clear a mute).
+ func _on_output_volume_read(value: float) -> void:
+-	output_volume.value_changed.disconnect(_on_output_volume_slider_changed)
++	_show_output_volume(value)
++
++
++func _show_output_volume(value: float) -> void:
++	_showing_volume = true
+ 	output_volume.value = value * 100
+-	output_volume.value_changed.connect(_on_output_volume_slider_changed)
++	_showing_volume = false
+ 
+ 
+ func _on_output_volume_slider_changed(value: float) -> void:
++	if _showing_volume:
++		return
+ 	var percent: float = value * 0.01
+ 	AudioManager.set_volume(percent)
+ 
+diff --git a/core/ui/common/settings/audio_settings_menu.gd b/core/ui/common/settings/audio_settings_menu.gd
+index ba692cd..6ef41e3 100644
+--- a/core/ui/common/settings/audio_settings_menu.gd
++++ b/core/ui/common/settings/audio_settings_menu.gd
+@@ -1,6 +1,8 @@
+ extends Control
+ 
+ var AudioManager := load("res://core/global/audio_manager.tres") as AudioManager
++## The volume slider is being given a level to show, not moved
++var _showing_volume := false
+ 
+ @onready var output_volume := $%VolumeSlider
+ @onready var output_device := $%OutputDevice
+@@ -27,15 +29,23 @@ func _ready() -> void:
+ 	_update_output_devices()
+ 
+ 
++# A level set elsewhere (the volume keys, the other menu's slider) is shown, not written again. Each
++# menu wrote it back, twice (a slider given a value announces the one snapped to its step, then the
++# one it was given), and a write that changed the level was announced to both again: one key press
++# ran nine `wpctl set-volume` that raced, and the speaker moved by 0 to 10.
+ func _on_output_volume_changed(value: float) -> void:
+-	output_volume.value = value * 100
++	_show_output_volume(value)
+ 
+ 
+ # The level read from the system: shown without setting it back (that would also clear a mute).
+ func _on_output_volume_read(value: float) -> void:
+-	output_volume.value_changed.disconnect(_on_output_volume_slider_changed)
++	_show_output_volume(value)
++
++
++func _show_output_volume(value: float) -> void:
++	_showing_volume = true
+ 	output_volume.value = value * 100
+-	output_volume.value_changed.connect(_on_output_volume_slider_changed)
++	_showing_volume = false
+ 
+ 
+ # Updates the list of output devices
+@@ -62,5 +72,7 @@ func _on_output_device_changed(idx: int) -> void:
+ 
+ 
+ func _on_output_volume_slider_changed(value: float) -> void:
++	if _showing_volume:
++		return
+ 	var percent := value * 0.01
+ 	AudioManager.set_volume(percent)

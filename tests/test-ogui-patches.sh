@@ -19,6 +19,16 @@
 #   - 0060 SteamGameFocus: which window of a game a running Steam client started may have the focus.
 #     Steam's hidden desktop window given the focus hid the game, which ran behind it (Air X); keeping
 #     Steam's windows from it before the game has a window would hide Steam's launch dialogs instead.
+#   - 0061 VolumeStep: what one press of a volume key does to the level. Off the 5 grid it must land
+#     on it, in the key's direction; a press wrote nine racing levels before, and the speaker moved by
+#     0 to 10 (Air X).
+#   - 0062 DeclaredProfile: whose game a launcher's declared gamepad profile is for. Given to any
+#     focused app, a game started beside an emulator got the emulator's hotkeys (Air X); given to
+#     none, an emulator loses them.
+#   - 0064 FocusOffers: which windows gamescope has newly made focusable, by OGUI's own record. Told
+#     by the signal's "from" list, half of a game's launches beside another game left it hidden behind
+#     it for good (Air X); a record that never forgets would miss the next launch, whose windows get
+#     the same ids.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,12 +37,15 @@ P0032="$PATCHES/0032-card-art-only-near-the-screen.patch"
 P0053="$PATCHES/0053-launch-manager-reads-a-process-environment-only-while-it-is-new.patch"
 P0054="$PATCHES/0054-input-manager-does-not-ask-dbus-whether-inputplumber-runs-on-every-event.patch"
 P0060="$PATCHES/0060-launch-manager-a-steam-window-never-takes-the-focus-from-the-game.patch"
+P0061="$PATCHES/0061-audio-a-volume-key-press-is-written-once-on-the-5-grid.patch"
+P0062="$PATCHES/0062-launch-manager-a-declared-profile-is-its-launchers-apps-a-missing-one-is-passed-over.patch"
+P0064="$PATCHES/0064-launch-manager-a-newly-focusable-window-is-told-by-our-own-record.patch"
 
 PASS=0; FAIL=0; CASE=""
 ok()  { PASS=$((PASS+1)); printf '  ok   %s -- %s\n' "$CASE" "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s -- %s\n' "$CASE" "$1"; }
 
-for f in "$P0032" "$P0053" "$P0054" "$P0060"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
+for f in "$P0032" "$P0053" "$P0054" "$P0060" "$P0061" "$P0062" "$P0064"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
 T="$(mktemp -d)" && [ -d "$T" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
@@ -360,6 +373,17 @@ else
   [ "$(grep -c '^+.*may_focus(' "$P0060" | tr -d ' ')" -ge 5 ] && grep -q '^+.*newest: int = app.steam_game_window(to)' "$P0060" \
     && ok "new, newly focusable and already focused windows, the fallback and grab_focus() all ask it" \
     || bad "a window choice in launch_manager.gd or running_app.gd does not go through it"
+  # Asked inside gamescope's signal, godot-rust refuses the call and any window may have the focus
+  # (1,554 panics in one launch, Air X): the choice of a window runs deferred. The focused window
+  # that is gone still loses the focus inside the signal: decided later, a check in between has
+  # already cleared it and no other app's window gets the screen.
+  grep -q '^+.*_focus_focusable_window\.call_deferred(from, to, dropped)' "$P0060" \
+    && grep -q '^+func _focus_focusable_window(from: PackedInt64Array, to: PackedInt64Array, dropped: bool) -> void:$' "$P0060" \
+    && ok "the choice of a focusable window asks out of gamescope's signal (deferred)" \
+    || bad "the focusable-windows handler still chooses inside gamescope's signal"
+  ! grep -q '^-.*_xwayland_primary.remove_baselayer_window()' "$P0060" && ! grep -q '^-.*dropped = true' "$P0060" \
+    && ok "a focused window that is gone still loses the focus at once" \
+    || bad "the focus of a window that is gone is no longer dropped inside the signal"
   printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P60/project.godot"
   cat > "$P60/steam_focus_test.gd" <<GD
 extends SceneTree
@@ -396,6 +420,185 @@ func _init() -> void:
 	quit(1 if failed else 0)
 GD
   out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P60" --script res://steam_focus_test.gd 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+  n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+  PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+  if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+    bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+  fi
+fi
+
+CASE="volume key step (0061)"
+if [ -z "$GODOT" ]; then
+  printf '  skip %s -- no Godot (set RETROFORGE_GODOT to a Godot 4 binary)\n' "$CASE"
+else
+  P61="$T/p61"; mkdir -p "$P61"
+  added_file "$P0061" core/global/volume_step.gd > "$P61/volume_step.gd"
+  grep -q '^static func next(' "$P61/volume_step.gd" \
+    && ok "the patch adds core/global/volume_step.gd" || bad "volume_step.gd not found in the patch"
+  # The keys go through it, and a slider shown a level does not write it back (both menus).
+  [ "$(grep -c '^+.*audio_manager.call_deferred("step_volume", -\{0,1\}1)' "$P0061" | tr -d ' ')" -eq 4 ] \
+    && ! grep -q '^+.*VOLUME.RELATIVE' "$P0061" \
+    && ok "both input managers' volume keys call step_volume()" || bad "a volume key still makes a relative change"
+  [ "$(grep -c '^+	if _showing_volume:$' "$P0061" | tr -d ' ')" -eq 2 ] \
+    && ok "neither menu writes back a level it is shown" || bad "a volume slider still writes back the level it is shown"
+  printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P61/project.godot"
+  cat > "$P61/volume_step_test.gd" <<GD
+extends SceneTree
+
+const VolumeStep := preload("res://volume_step.gd")
+var failed := 0
+
+
+func check(what: String, got, want) -> void:
+	if got == want:
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+
+func _init() -> void:
+	check("up from the grid: one step", VolumeStep.next(55, 1), 60)
+	check("down from the grid: one step", VolumeStep.next(55, -1), 50)
+	check("up from off the grid: the next multiple of 5", VolumeStep.next(52, 1), 55)
+	check("down from off the grid: the one below", VolumeStep.next(52, -1), 50)
+	check("just under a multiple, up: that multiple", VolumeStep.next(59, 1), 60)
+	check("just over a multiple, down: that multiple", VolumeStep.next(51, -1), 50)
+	check("never below silence", VolumeStep.next(0, -1), 0)
+	check("3 down is silence, not -5", VolumeStep.next(3, -1), 0)
+	check("never above the limit", VolumeStep.next(100, 1), 100)
+	check("98 up stops at the limit", VolumeStep.next(98, 1), 100)
+	check("a higher limit is reached in steps", VolumeStep.next(100, 1, 200), 105)
+	var level := 52
+	var seen := []
+	for i in 4:
+		level = VolumeStep.next(level, 1)
+		seen.append(level)
+	check("presses in a row stay on the grid", seen, [55, 60, 65, 70])
+	quit(1 if failed else 0)
+GD
+  out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P61" --script res://volume_step_test.gd 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+  n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+  PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+  if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+    bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+  fi
+fi
+
+CASE="declared profile owner (0062)"
+if [ -z "$GODOT" ]; then
+  printf '  skip %s -- no Godot (set RETROFORGE_GODOT to a Godot 4 binary)\n' "$CASE"
+else
+  P62="$T/p62"; mkdir -p "$P62"
+  added_file "$P0062" core/systems/launcher/declared_profile.gd > "$P62/declared_profile.gd"
+  grep -q '^static func applies(' "$P62/declared_profile.gd" \
+    && ok "the patch adds core/systems/launcher/declared_profile.gd" || bad "declared_profile.gd not found in the patch"
+  grep -q '^+.*DeclaredProfile.applies(declarer_id, app != null' "$P0062" && grep -q '^+	var declared := _get_declared_profile(app)$' "$P0062" \
+    && ok "the declared profile is asked for the focused app" || bad "the declared profile is still loaded for any app"
+  # A game profile that is gone is passed over before it is asked for (nothing was loaded: no input).
+  grep -q '^+	if not profile_path.is_empty() and not (profile_path.ends_with(".json") and FileAccess.file_exists(profile_path)):$' "$P0062" \
+    && ok "a game's own profile that is gone is passed over" || bad "a missing game profile is still asked for"
+  printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P62/project.godot"
+  cat > "$P62/declared_profile_test.gd" <<GD
+extends SceneTree
+# applies(declarer's OGUI_ID, an app has the focus, its OGUI_ID, OpenGamepadUI started it)
+
+const DeclaredProfile := preload("res://declared_profile.gd")
+var failed := 0
+
+
+func check(what: String, got, want) -> void:
+	if got == want:
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+
+func _init() -> void:
+	check("the emulator its launcher started", DeclaredProfile.applies("shadowdemo", true, "shadowdemo", true), true)
+	check("not a game started beside it", DeclaredProfile.applies("shadowdemo", true, "Hollow Knight", true), false)
+	check("not an app OpenGamepadUI took up beside it", DeclaredProfile.applies("shadowdemo", true, "", false), false)
+	check("not when OpenGamepadUI cannot name the focused app", DeclaredProfile.applies("shadowdemo", false, "", false), false)
+	check("a launcher started elsewhere: the app OpenGamepadUI did not start", DeclaredProfile.applies("", true, "", false), true)
+	check("and the app it cannot name", DeclaredProfile.applies("", false, "", false), true)
+	check("but not a game OpenGamepadUI started", DeclaredProfile.applies("", true, "Hollow Knight", true), false)
+	quit(1 if failed else 0)
+GD
+  out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P62" --script res://declared_profile_test.gd 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+  n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+  PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+  if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+    bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+  fi
+fi
+
+CASE="focus offers (0064)"
+if [ -z "$GODOT" ]; then
+  printf '  skip %s -- no Godot (set RETROFORGE_GODOT to a Godot 4 binary)\n' "$CASE"
+else
+  P64="$T/p64"; mkdir -p "$P64"
+  added_file "$P0064" core/systems/launcher/focus_offers.gd > "$P64/focus_offers.gd"
+  grep -q '^static func fresh(' "$P64/focus_offers.gd" \
+    && ok "the patch adds core/systems/launcher/focus_offers.gd" || bad "focus_offers.gd not found in the patch"
+  # The handler no longer asks the signal's "from" list, and a window focused as it is first listed
+  # is recorded, so it is not given the focus a second time later.
+  grep -q '^-			if window in from or not window in app.window_ids:$' "$P0064" && grep -q '^+		for window in fresh:$' "$P0064" \
+    && ok "a newly focusable window is told by the record, not by the signal's from list" \
+    || bad "the handler still tells a newly focusable window by the signal's from list"
+  grep -q '^+				_focus_offered.append(window)$' "$P0064" \
+    && ok "a window focused as it is first listed is recorded" || bad "switch_to_new_window does not record the window it focuses"
+  printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P64/project.godot"
+  cat > "$P64/focus_offers_test.gd" <<GD
+extends SceneTree
+# gamescope's list: window id, app id, pid for each window. 67108865: Hollow Knight's window (the same
+# id at every launch), 23068679: the emulator's.
+
+const FocusOffers := preload("res://focus_offers.gd")
+var failed := 0
+
+
+func check(what: String, got, want) -> void:
+	if got == want:
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+
+func ids(a: Array) -> PackedInt64Array:
+	return PackedInt64Array(a)
+
+
+func _init() -> void:
+	var both := ids([67108865, 367520, 126829, 23068679, 212526005, 125947])
+	check("the list's window ids, without app ids and pids", FocusOffers.windows(both), ids([67108865, 23068679]))
+	check("a list that is not in threes is taken as it is", FocusOffers.windows(ids([5, 6])), ids([5, 6]))
+	check("an empty list has none", FocusOffers.windows(ids([])), ids([]))
+	var emulator := ids([23068679])
+	var game := ids([67108865])
+	var known := ids([23068679, 67108865, 33554434])
+	# The emulator has the screen; the game's window becomes focusable. The signal's from list
+	# already had it: only the record says it is new.
+	check("a window gamescope lists that was not offered the focus is new", FocusOffers.fresh(ids([67108865, 23068679]), known, emulator), game)
+	check("in gamescope's order when there are several", FocusOffers.fresh(ids([67108865, 23068679]), known, ids([])), ids([67108865, 23068679]))
+	check("one already offered is not", FocusOffers.fresh(ids([67108865, 23068679]), known, ids([67108865, 23068679])), ids([]))
+	check("a window no app has listed yet is not offered", FocusOffers.fresh(ids([67108865, 23068679]), emulator, emulator), ids([]))
+	check("nor remembered, so it is new once its app lists it",
+		FocusOffers.fresh(ids([67108865, 23068679]), known, FocusOffers.remember(ids([67108865, 23068679]), emulator)), game)
+	var record := FocusOffers.remember(ids([67108865, 23068679]), known)
+	check("the record holds the apps' focusable windows", record, ids([67108865, 23068679]))
+	# The game ends: its window leaves the list. The next launch's window gets the same id.
+	record = FocusOffers.remember(ids([23068679]), known)
+	check("a window gamescope can no longer focus is forgotten", record, emulator)
+	check("so the next launch's window with that id is new again", FocusOffers.fresh(ids([67108865, 23068679]), known, record), game)
+	check("an empty list forgets all", FocusOffers.remember(ids([]), known), ids([]))
+	quit(1 if failed else 0)
+GD
+  out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P64" --script res://focus_offers_test.gd 2>&1)"; rc=$?
   printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
   n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
   PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))

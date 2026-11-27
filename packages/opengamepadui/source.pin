@@ -56,8 +56,10 @@
 #   0012  ours, for upstream: MANGMI pads matched no icon mapping (a warning per icon refresh);
 #         the Xbox Series mapping takes "MANGMI". Digital L2/R2 (Gamepad:Button:*Trigger) get the
 #         trigger icons, and Gamepad Settings stops warning about the Sync capability.
-#   0013  ours, for upstream: one GPU needs no glxinfo to be found active (absent on SoC boards:
-#         "Failed to run glxinfo" + "Could not identify active GPU" on every query).
+#   0013  ours, for upstream: one GPU needs no glxinfo to be found active. On SoC boards glxinfo was
+#         absent ("Failed to run glxinfo"); the image has it now (mesa-utils, for PortMaster) and it
+#         still names no card: "Could not identify active GPU" on every query (stock pck, Air X,
+#         2026-11-27).
 #   0014  ours, for upstream: the home screen warned for each recent app no library provides
 #         (an emulator started on its own, Steam, a ROM before its plugin library loads) on every
 #         refresh; the icon processor flipped the device name to "" on OGUI's own actions.
@@ -65,10 +67,6 @@
 #         library provides (an emulator opened from RetroForge's Emulators page): it returned early
 #         when the library lookup missed, also skipping its window buttons. Falls back to the launch
 #         item's name, as the quick bar does (HW, Pocket ACE, 2026-10-17).
-#   0016  ours, for upstream: nothing starts the shared ThreadPool (thread_pool.tres) any more, so the
-#         Steam plugin's library refresh after login queued forever and the Steam library never
-#         loaded (HW, Pocket ACE, 2026-10-17). exec() starts the pool on first use; the resource's
-#         `size = null` is dropped.
 #   0017  ours, for upstream: a Steam launch ended (the client SIGTERMed) once only Steam windows were
 #         left for 4 s, which a first Proton launch always reaches (driver query, prefix setup, windowless install
 #         scripts: DirectX, PhysX, EOS). A launch now counts as alive while Steam's own
@@ -100,11 +98,6 @@
 #         short-lived startup window), the app's newest focusable window gets the focus, from
 #         either handler; it is removed only when there is none (issue #29: loading screen over a
 #         running Steam, KONKR Pocket FIT, 2026-11-01; was a separate 0044).
-#   0021  ours, for upstream: OGUI's desktop library lists the shortcut Steam writes for each game it
-#         installs, and its quirk for them added '-silent' only (the Steam plugin's flags are there,
-#         commented out). Without -gamepadui Steam came up in its desktop mode over the game: a
-#         sign-in window, the desktop library and a "Launching..." dialog (HW, KONKR Pocket FIT,
-#         2026-10-21). The quirk now adds the Steam plugin's flags.
 #   0022  ours, for upstream: LaunchManager warned about every orphan window (one no running app
 #         claims) on every check_running(), once a second. Steam kept running between games has a
 #         dozen such windows, so the journal took two lines a second idle in the menu and ~4.5
@@ -113,8 +106,9 @@
 #         dropped and added again kept a card on the old LibraryItem, which has no launch item: its
 #         page showed no art and Play did nothing (HW, KONKR Pocket FIT, 2026-10-22: Hades, first
 #         listed by Steam's desktop shortcut, which the RetroForge plugin removes). A card frees
-#         itself on removed_from_library, but only listens once its art has loaded. Reused now only
-#         while it shows the very item.
+#         itself on removed_from_library, but does not listen from the start (once its art has
+#         loaded; since 0032, in a scroller, a frame after it gets its item). Reused now only while
+#         it shows the very item.
 #   0024  ours, agreed with ShadowApex 2026-10-26: no InputPlumber intercept mode. OGUI loads
 #         ogui_focus.json (every input -> its DBus UI action) while it has focus, and in game the
 #         game's profile: OGUI's per-game setting, else the one the launcher declares in
@@ -220,7 +214,7 @@
 #         (KONKR Pocket FIT, 2026-11-01, issue #28). The handler now only queues the change.
 #   0045  ours, for upstream: the volume keys moved the volume by 6%, and left/right moved the quick
 #         settings volume slider by 1 and the brightness slider by 3 (user, 2026-11-08). All move by 5
-#         now; a slider snaps to its step, so a volume left off the grid lands on a multiple of 5.
+#         now; a slider snaps what it shows to its step (the keys' landing on the 5 grid is 0061's).
 #         The Saturation slider is hidden: its handler does nothing upstream ("TODO: Deprecate").
 #   0046  ours, for upstream: Settings > General showed "Unknown" for BIOS Version and an empty Vendor
 #         on every Arm board (no DMI on a devicetree board) and the core types for CPU Model
@@ -264,6 +258,11 @@
 #         the silent sink rootfs keeps for WirePlumber restarts (99-retroforge-fallback.conf). It was
 #         Audio/Duplex to stay out of that list, but on a board without a mic that made it the default
 #         source and SDL3 played into it (#45); as an Audio/Sink the list would offer it otherwise.
+#   0053  ours, for upstream: check_running() read every process's environment every second to sort
+#         the processes by OGUI_ID: 332 environments, 24-40 ms of the main thread a second, during
+#         games too (Air X). An environment only changes when the process execs, so a new pid is read
+#         in its first three checks, every other one once in 30 (staggered by pid), and a pid that has
+#         gone is forgotten (ogui_id_cache.gd).
 #   0054  ours, for upstream: InputManager._input() asked InputPlumberInstance.is_running() for every
 #         input event, a new DBus proxy and a blocking NameHasOwner round trip each time, then dropped
 #         the event when it came from a joypad. During a game Godot's joypad driver reads
@@ -279,7 +278,8 @@
 #         gamescope focuses a window of the game (a Steam window only after 5 s: its "Starting game"
 #         dialog stays hidden, a prompt is seen; or the app ends, or 180 s), with the game's banner,
 #         its logo or name and "Starting...", all still (no spinner); OGUI's own screen until the
-#         art is found and for a game without art.
+#         art is found and for a game without art. An app OGUI did not start (taken up when its
+#         window has the focus) gets none.
 #   0056  ours, for upstream: the launch menu gave game settings the launcher's own data dictionary,
 #         and game settings erases its "item" when it closes. After the first visit the launcher had no
 #         game ("No library item found", its button stopped following installs) and the next visit to
@@ -307,10 +307,47 @@
 #         then showed it, and the game's own window was never the app's (Steam's reaper starts it, with
 #         the game's Steam app id), so OGUI never switched to it (Parking Garage, Air X, 2026-11-27).
 #         A window with the launched Steam app id is the app's now, and while it can be focused no
-#         window of Steam's gets the focus from OGUI; one that has it hands it to the game.
+#         window of Steam's gets the focus from OGUI; one that has it hands it to the game. The
+#         focusable-windows handler chooses its window deferred, as 0043's (a focused window that is
+#         gone still loses the focus inside the signal): inside gamescope's signal these checks
+#         panicked ("already bound", 1,554 in one launch through a running client, Air X) and let
+#         any window through.
+#   0061  ours, for upstream: one press of a volume key ran nine `wpctl set-volume` and nine
+#         `set-mute`: the key's change was announced to the two volume sliders, each wrote it back
+#         twice (snapped to its step, then as given), and a write that changed the level was
+#         announced again. They raced: a press moved the speaker by 0 to 10, and a level set
+#         elsewhere jumped (0.30 to 0.97 on one press; Air X, 2026-11-27). A press now reads the
+#         system's level, moves to the next multiple of 5 that way and writes once; a slider shown a
+#         level set elsewhere does not write it back.
+#   0062  ours, with 0024: a launcher's declared profile was loaded for whichever app had the focus
+#         (Hollow Knight beside a 3DS game got Azahar's hotkeys; Air X, 2026-11-27): now only for the
+#         launcher's own app (its OGUI_ID), or, declared outside OGUI, for an app OGUI did not start.
+#         And a game whose own profile file is gone was left on the focus profile after a menu
+#         visit, with no input: such a profile is passed over (declared, then global, then default).
+#   0063  ours, with 0018: a failed join asks for the password again up to 45 s later; with the Network
+#         page left, the keyboard opened over whatever was on the screen (the dialog itself did
+#         not), and the menu under it lost the focus. The prompt, its keyboard and the page's B now
+#         need the page on the screen; a prompt that comes later is dropped, selecting the network
+#         asks again.
+#   0064  ours, for upstream: a launched app's window only got the focus if gamescope could focus it
+#         when OGUI first listed it, or if focusable_windows_updated reported it as added, and that
+#         signal's "from" list is whatever was last read: OGUI's own reads (one per new window) made
+#         it equal to "to", and an emptied list kept the last game's window ids, which the next
+#         launch gets again. Half of Hollow Knight's launches beside a 3DS game left it hidden behind
+#         it for good; alone, gamescope showed a game anyway, with no focused window set (Air X,
+#         2026-11-27). OGUI keeps its own record of the windows it has offered the focus.
 #
 # 0020, 0028 and 0044 fixed the patch they follow and were folded into it (0017, 0026, 0019) on
 # 2026-11-11; their numbers stay unused so the others keep theirs.
+#
+# 0021 (a Steam desktop shortcut starts Steam's gamepad UI) was dropped on 2026-11-27: the RetroForge
+# plugin takes those shortcuts out of the library as OGUI lists them (11 on the Air X's disk, none
+# in its library), and 0039 keeps the plugin on.
+#
+# 0016 (OGUI's own ThreadPool starts on first use) was dropped the same day: only OGUI's Steam plugin
+# used that pool, and RetroForge ships no such plugin and no store to get it from (0039). OGUI itself
+# never starts the pool, and our plugin and patches run their background work on Godot's
+# WorkerThreadPool, whose threads the engine already has.
 #
 # The earlier 0006/0007 (plugin store URL as a project setting, set to "" for RetroForge) were dropped on
 # 2026-10-06: with the store off, OGUI's first-start screen showed an empty catalog. 0039 removes the
@@ -328,4 +365,4 @@
 name: opengamepadui
 pkgbuild_local: PKGBUILD
 pkgrel_suffix: 1
-patches: 0004-running-app-exit-before-window.patch 0005-performance-manager-save-default-profiles.patch 0006-performance-menu-power-profiles-without-tdp.patch 0007-performance-manager-profile-key-app-id.patch 0008-animated-effects-setting.patch 0009-library-banner-clip-with-a-scissor-not-a-canvas-group.patch 0010-inputplumber-signal-handlers-deferred.patch 0011-settings-unset-keys-quiet.patch 0012-input-icons-mangmi-digital-triggers.patch 0013-hardware-manager-single-gpu-no-glxinfo.patch 0014-home-recents-and-icon-device-name-quiet.patch 0015-running-game-card-name-without-library-item.patch 0016-thread-pool-start-on-first-use.patch 0017-running-app-steam-launch-alive-while-steam-reaper-runs.patch 0018-network-one-working-profile-connected-means-activated-forget.patch 0019-launch-focus-a-focusable-window-of-the-app.patch 0021-library-desktop-steam-shortcuts-start-steams-gamepad-ui.patch 0022-launch-manager-orphan-windows-warned-once.patch 0023-home-card-rebuilt-when-its-library-item-is-replaced.patch 0024-input-focus-profile-instead-of-intercept-mode.patch 0025-running-app-a-game-steam-starts-keeps-its-own-app-id.patch 0026-osk-touches-outside-the-keys-reach-the-menu.patch 0027-wifi-one-row-per-network.patch 0029-network-the-open-network-in-use-can-be-forgotten.patch 0030-card-button-a-tap-presses-on-release.patch 0031-audio-manager-a-volume-above-zero-clears-a-mute.patch 0032-card-art-only-near-the-screen.patch 0033-launch-manager-recent-apps-names-only.patch 0034-running-app-a-steam-launch-counts-once-steam-starts-the-game.patch 0035-library-menu-a-card-is-rebuilt-when-its-library-item-is-replaced.patch 0036-card-art-rounds-its-own-corners-shadows-skip-their-hidden-centre.patch 0037-scripts-with-no-per-frame-work-stop-running-every-frame.patch 0038-input-menus-follow-the-d-pad-again-after-a-touch.patch 0039-settings-and-first-boot-no-plugin-store.patch 0040-hardware-manager-platform-gpu-no-pci-ids.patch 0041-input-icon-manager-loads-each-mapping-once.patch 0042-disks-menu-builds-its-cards-when-shown.patch 0043-launch-manager-focused-app-handled-deferred.patch 0045-quick-settings-volume-and-brightness-step-by-5.patch 0046-settings-general-arm-soc-name-and-no-bios-row.patch 0047-audio-manager-the-startup-volume-reaches-the-sliders.patch 0048-power-saver-input-during-a-game-keeps-the-screen-lit.patch 0049-wifi-password-keyboard-opens-and-enter-submits.patch 0051-settings-d-pad-moves-between-the-list-and-its-page.patch 0052-audio-manager-the-fallback-sink-is-not-an-output-device.patch 0053-launch-manager-reads-a-process-environment-only-while-it-is-new.patch 0054-input-manager-does-not-ask-dbus-whether-inputplumber-runs-on-every-event.patch 0055-game-loading-stays-until-the-game-has-focus-with-its-art.patch 0056-game-settings-keeps-the-game-after-it-closes.patch 0057-card-the-focused-card-stands-out.patch 0058-power-saver-a-dim-left-in-place-is-undone-at-the-next-start.patch 0059-launch-manager-never-focuses-a-window-gamescope-cannot-focus.patch 0060-launch-manager-a-steam-window-never-takes-the-focus-from-the-game.patch
+patches: 0004-running-app-exit-before-window.patch 0005-performance-manager-save-default-profiles.patch 0006-performance-menu-power-profiles-without-tdp.patch 0007-performance-manager-profile-key-app-id.patch 0008-animated-effects-setting.patch 0009-library-banner-clip-with-a-scissor-not-a-canvas-group.patch 0010-inputplumber-signal-handlers-deferred.patch 0011-settings-unset-keys-quiet.patch 0012-input-icons-mangmi-digital-triggers.patch 0013-hardware-manager-single-gpu-no-glxinfo.patch 0014-home-recents-and-icon-device-name-quiet.patch 0015-running-game-card-name-without-library-item.patch 0017-running-app-steam-launch-alive-while-steam-reaper-runs.patch 0018-network-one-working-profile-connected-means-activated-forget.patch 0019-launch-focus-a-focusable-window-of-the-app.patch 0022-launch-manager-orphan-windows-warned-once.patch 0023-home-card-rebuilt-when-its-library-item-is-replaced.patch 0024-input-focus-profile-instead-of-intercept-mode.patch 0025-running-app-a-game-steam-starts-keeps-its-own-app-id.patch 0026-osk-touches-outside-the-keys-reach-the-menu.patch 0027-wifi-one-row-per-network.patch 0029-network-the-open-network-in-use-can-be-forgotten.patch 0030-card-button-a-tap-presses-on-release.patch 0031-audio-manager-a-volume-above-zero-clears-a-mute.patch 0032-card-art-only-near-the-screen.patch 0033-launch-manager-recent-apps-names-only.patch 0034-running-app-a-steam-launch-counts-once-steam-starts-the-game.patch 0035-library-menu-a-card-is-rebuilt-when-its-library-item-is-replaced.patch 0036-card-art-rounds-its-own-corners-shadows-skip-their-hidden-centre.patch 0037-scripts-with-no-per-frame-work-stop-running-every-frame.patch 0038-input-menus-follow-the-d-pad-again-after-a-touch.patch 0039-settings-and-first-boot-no-plugin-store.patch 0040-hardware-manager-platform-gpu-no-pci-ids.patch 0041-input-icon-manager-loads-each-mapping-once.patch 0042-disks-menu-builds-its-cards-when-shown.patch 0043-launch-manager-focused-app-handled-deferred.patch 0045-quick-settings-volume-and-brightness-step-by-5.patch 0046-settings-general-arm-soc-name-and-no-bios-row.patch 0047-audio-manager-the-startup-volume-reaches-the-sliders.patch 0048-power-saver-input-during-a-game-keeps-the-screen-lit.patch 0049-wifi-password-keyboard-opens-and-enter-submits.patch 0051-settings-d-pad-moves-between-the-list-and-its-page.patch 0052-audio-manager-the-fallback-sink-is-not-an-output-device.patch 0053-launch-manager-reads-a-process-environment-only-while-it-is-new.patch 0054-input-manager-does-not-ask-dbus-whether-inputplumber-runs-on-every-event.patch 0055-game-loading-stays-until-the-game-has-focus-with-its-art.patch 0056-game-settings-keeps-the-game-after-it-closes.patch 0057-card-the-focused-card-stands-out.patch 0058-power-saver-a-dim-left-in-place-is-undone-at-the-next-start.patch 0059-launch-manager-never-focuses-a-window-gamescope-cannot-focus.patch 0060-launch-manager-a-steam-window-never-takes-the-focus-from-the-game.patch 0061-audio-a-volume-key-press-is-written-once-on-the-5-grid.patch 0062-launch-manager-a-declared-profile-is-its-launchers-apps-a-missing-one-is-passed-over.patch 0063-wifi-a-late-password-prompt-only-on-the-network-page.patch 0064-launch-manager-a-newly-focusable-window-is-told-by-our-own-record.patch

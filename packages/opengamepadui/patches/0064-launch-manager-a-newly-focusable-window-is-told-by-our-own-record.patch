@@ -1,0 +1,158 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 27 Nov 2026 19:00:00 +0000
+Subject: [PATCH] fix(LaunchManager): a newly focusable window is told by
+ OpenGamepadUI's own record
+
+A launched app's window gets the focus when gamescope can focus it as
+OpenGamepadUI first lists it, or else when focusable_windows_updated
+reports it as added (0019, 0059). The signal's "from" list does not say
+that. It is the list as the core last read it, and
+get_focusable_windows(), which OpenGamepadUI calls for every new window
+of an app, is that read: a change OpenGamepadUI has read before the
+signal is handled arrives with from equal to to, and the window is
+passed over as not new. An emptied list also leaves the last one in
+place (the getter returns without storing it), with the window ids the
+next launch of the same game gets again (Hollow Knight's is 67108865
+every time).
+
+Such a window never got the focus. Alone, gamescope showed the game all
+the same, but with no window made the focused one, so a window of
+Steam's carrying the game's id could take the screen unseen by 0060.
+Started beside another game, the new one stayed hidden behind it: Hollow
+Knight beside a 3DS game, 5 launches in 10 (MANGMI Air X, 2026-11-27; in
+the two that were traced its window was listed before gamescope could
+focus it, and no signal after that had it as added).
+
+OpenGamepadUI now keeps its own record of the running apps' windows it
+has offered the focus (focus_offers.gd), and offers it to those
+gamescope lists that are not in it. A window gamescope can no longer
+focus is forgotten. The list holds each window's id, app id and pid:
+only the ids are read. After, on the same device: Hollow Knight came up
+beside the 3DS game in 8 launches of 8 (16 to 24 s), its window made the
+focused one by OpenGamepadUI each time, as the emulator's was in 7
+starts and Hollow Knight's in 3 launches on its own; the emulator had
+the screen back 1 s after the game ended.
+---
+diff --git a/core/global/launch_manager.gd b/core/global/launch_manager.gd
+index 600e092..1abacd7 100644
+--- a/core/global/launch_manager.gd
++++ b/core/global/launch_manager.gd
+@@ -73,6 +73,9 @@ var _orphan_windows := PackedInt64Array()
+ var _input_manager: InputManager
+ const OguiIdCache := preload("res://core/systems/launcher/ogui_id_cache.gd")
+ const DeclaredProfile := preload("res://core/systems/launcher/declared_profile.gd")
++const FocusOffers := preload("res://core/systems/launcher/focus_offers.gd")
++## The running apps' windows gamescope can focus that have been offered the focus (focus_offers.gd)
++var _focus_offered := PackedInt64Array()
+ ## Every running process's OGUI_ID, read from its environment only while it is new (ogui_id_cache.gd).
+ var _ogui_ids := OguiIdCache.new(func(pid: int) -> Dictionary: return Reaper.get_pid_environment(pid))
+ 
+@@ -140,7 +143,7 @@ func _init() -> void:
+ 			# ("Gd<T>::bind() failed, already bound"). The question then got no answer, so a window of
+ 			# Steam's counted as any other, and each try logged a panic (1,554 in one launch through a
+ 			# running Steam client, MANGMI Air X, 2026-11-27).
+-			_focus_focusable_window.call_deferred(from, to, dropped)
++			_focus_focusable_window.call_deferred(to, dropped)
+ 		_xwayland_primary.focusable_windows_updated.connect(on_focusable_windows_changed)
+ 
+ 	# Listen for signals from the secondary Gamescope XWayland
+@@ -216,10 +219,20 @@ func _on_focused_app_changed(to: int) -> void:
+ 	set_app_gamepad_profile(self._current_app)
+ 
+ 
+-## The windows gamescope can focus changed from `from` to `to` (focusable_windows_updated, deferred):
+-## gives the focus to the window that should have it now. `dropped`: the focused window had just gone.
+-func _focus_focusable_window(from: PackedInt64Array, to: PackedInt64Array, dropped: bool) -> void:
++## The windows gamescope can focus changed to `to` (focusable_windows_updated, deferred): gives the
++## focus to the window that should have it now. `dropped`: the focused window had just gone.
++func _focus_focusable_window(to: PackedInt64Array, dropped: bool) -> void:
+ 	var baselayer_window := _xwayland_primary.baselayer_window
++	# Which of the apps' windows gamescope has newly made focusable, by our own record: the signal's
++	# "from" list missed half of them (focus_offers.gd), and a game's window then never got the
++	# focus. Alone, gamescope showed the game all the same; started beside another game it stayed
++	# hidden behind it (Hollow Knight beside a 3DS game, 5 launches in 10, MANGMI Air X, 2026-11-27).
++	var known := PackedInt64Array()
++	for app in _running:
++		known.append_array(app.window_ids)
++	var focusable := FocusOffers.windows(to)
++	var fresh := FocusOffers.fresh(focusable, known, _focus_offered)
++	_focus_offered = FocusOffers.remember(focusable, known)
+ 	# A window of a running app that has just become focusable gets the focus, even with
+ 	# another one focused: a new window is only focused once gamescope lists it
+ 	# (switch_to_new_window), and it may list it after the app's windows were read (a
+@@ -235,8 +248,8 @@ func _focus_focusable_window(from: PackedInt64Array, to: PackedInt64Array, dropp
+ 			app.switch_window(app.steam_game_window(to))
+ 			return
+ 	for app in running:
+-		for window in to:
+-			if window in from or not window in app.window_ids:
++		for window in fresh:
++			if not window in app.window_ids:
+ 				continue
+ 			# Not one of Steam's while the game has a window: Steam shows its hidden
+ 			# desktop window at times during a game.
+@@ -331,12 +344,16 @@ func launch(app: LibraryLaunchItem) -> RunningApp:
+ 	# becomes focusable later gets the focus from on_focusable_windows_changed.
+ 	var switch_to_new_window := func(old_windows: PackedInt64Array, new_windows: PackedInt64Array):
+ 		var focusable := _xwayland_primary.get_focusable_windows() if _xwayland_primary else PackedInt64Array()
++		var switched := false
+ 		for window in new_windows:
+-			if window in old_windows:
++			if window in old_windows or not window in focusable:
+ 				continue
+-			if window in focusable and running_app.may_focus(window, focusable):
++			# Offered the focus here: not again when gamescope's list next changes
++			if not window in _focus_offered:
++				_focus_offered.append(window)
++			if not switched and running_app.may_focus(window, focusable):
+ 				running_app.switch_window(window)
+-				return
++				switched = true
+ 	running_app.window_ids_changed.connect(switch_to_new_window)
+ 
+ 	# When the focused window goes (a launcher's splash or updater window), the app's newest window
+diff --git a/core/systems/launcher/focus_offers.gd b/core/systems/launcher/focus_offers.gd
+new file mode 100644
+index 0000000..33c9307
+--- /dev/null
++++ b/core/systems/launcher/focus_offers.gd
+@@ -0,0 +1,38 @@
++extends RefCounted
++
++## Which windows gamescope has newly made focusable, by OpenGamepadUI's own record of the ones it has
++## already offered the focus. The "from" list of focusable_windows_updated cannot tell: it is the list
++## as it was last read, by anyone, so when OpenGamepadUI reads it before the signal comes (it does
++## for every new window of an app) the signal has from equal to to; and an emptied list leaves the
++## last one in place, with the window ids the next launch of the same game gets again.
++
++
++## The window ids in gamescope's focusable list, which holds each window's id, app id and pid.
++static func windows(focusable: PackedInt64Array) -> PackedInt64Array:
++	if focusable.size() % 3 != 0:
++		return focusable
++	var ids := PackedInt64Array()
++	for i in range(0, focusable.size(), 3):
++		ids.append(focusable[i])
++	return ids
++
++
++## The windows gamescope can focus (`focusable`, ids only, its order kept) that belong to a running app
++## (`known`) and have not been offered the focus yet (`offered`).
++static func fresh(focusable: PackedInt64Array, known: PackedInt64Array, offered: PackedInt64Array) -> PackedInt64Array:
++	var out := PackedInt64Array()
++	for window in focusable:
++		if window in known and not window in offered and not window in out:
++			out.append(window)
++	return out
++
++
++## The record once `fresh` has been dealt with: the running apps' windows gamescope can focus. A window
++## it can no longer focus is forgotten, so it is offered the focus again when it comes back, and so is
++## the next window that gets its id.
++static func remember(focusable: PackedInt64Array, known: PackedInt64Array) -> PackedInt64Array:
++	var out := PackedInt64Array()
++	for window in focusable:
++		if window in known and not window in out:
++			out.append(window)
++	return out

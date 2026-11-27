@@ -32,53 +32,137 @@ that has the focus when the game's window can take it hands the focus
 to the game. Before the game has a window, Steam's windows are focused
 as before (its launch dialogs, a prompt it needs answered, Big Picture).
 
+Which window gets the focus when the focusable windows change is decided
+deferred, as the focused app's change is (the focused window that is
+gone still loses the focus at once). The signal is emitted while
+GamescopeInstance is bound, and these checks ask it about the apps'
+windows (is_steam_window), which godot-rust refuses there
+("Gd<T>::bind() failed, already bound"). Asked inside the signal, a
+check got no answer and let any window have the focus, so the handler's
+two rules did nothing, and each try logged a panic (MANGMI Air X,
+2026-11-27: 1,554 in one 70 s launch through a running Steam client).
+The focus was right all the same, by the same check in grab_focus() and
+the two window_ids_changed callbacks. Deferred, the handler's own
+switch_window calls need no deferring. Checked with a stand-in for
+Steam's window beside Hollow Knight (a window of a process named
+steamwebhelper, tagged with the game's id and made the focused window):
+it kept the screen before, also once the focusable windows changed (10
+of 10 samples, 46 panics); now the game had it back within half a second
+(16 of 16, no panic).
+
 With the game's window counted, the Steam state reaches RUNNING for a
 game a running client started, so 4 s after the game's window has gone
-and Steam's reaper with it, the launch's own `steam` process is sent
-TERM, as for a launch that starts Steam.
+and Steam's reaper with it, a process named steam among the launch's own
+is sent TERM, as for a launch that starts Steam. RetroForge's launch has
+none (its wrapper runs as bash and ends by itself): nothing is sent.
 ---
 diff --git a/core/global/launch_manager.gd b/core/global/launch_manager.gd
-index d47d65d..608c1db 100644
+index d47d65d..e1d0893 100644
 --- a/core/global/launch_manager.gd
 +++ b/core/global/launch_manager.gd
-@@ -142,10 +142,20 @@ func _init() -> void:
- 			# own layer: a black screen over a running Steam.
- 			var running := _running.duplicate()
- 			running.reverse()
-+			# Steam's window focused while the game Steam started has one gamescope can focus: the
-+			# game's window gets it (steam_game_focus.gd).
-+			for app in running:
-+				if baselayer_window > 0 and baselayer_window in app.window_ids and not app.may_focus(baselayer_window, to):
-+					app.switch_window.call_deferred(app.steam_game_window(to))
-+					return
- 			for app in running:
- 				for window in to:
- 					if window in from or not window in app.window_ids:
- 						continue
-+					# Not one of Steam's while the game has a window: Steam shows its hidden
-+					# desktop window at times during a game.
-+					if not app.may_focus(window, to):
-+						continue
- 					if window != baselayer_window:
- 						# Deferred: this signal is emitted while GamescopeInstance is bound, and
- 						# switch_window calls back into it (gamescope.get_xwayland), which godot-rust
-@@ -159,10 +169,11 @@ func _init() -> void:
- 			if not dropped:
- 				return
- 			for app in running:
+@@ -132,40 +132,14 @@ func _init() -> void:
+ 			var dropped := false
+ 			if baselayer_window > 0 and not baselayer_window in to:
+ 				_xwayland_primary.remove_baselayer_window()
+-				baselayer_window = 0
+ 				dropped = true
+-			# A window of a running app that has just become focusable gets the focus, even with
+-			# another one focused: a new window is only focused once gamescope lists it
+-			# (switch_to_new_window), and it may list it after the app's windows were read (a
+-			# dialog). With nothing focused this is also what keeps an app whose first windows never
+-			# become focusable (Steam's startup and helper windows) from leaving gamescope on our
+-			# own layer: a black screen over a running Steam.
+-			var running := _running.duplicate()
+-			running.reverse()
+-			for app in running:
+-				for window in to:
+-					if window in from or not window in app.window_ids:
+-						continue
+-					if window != baselayer_window:
+-						# Deferred: this signal is emitted while GamescopeInstance is bound, and
+-						# switch_window calls back into it (gamescope.get_xwayland), which godot-rust
+-						# refuses there ("Gd<T>::bind() failed, already bound") and the switch is lost.
+-						app.switch_window.call_deferred(window)
+-					return
+-			# When the focused window has just gone (a launcher's splash or updater window that had
+-			# the focus), the newest window of a running app gamescope can focus gets it, even one
+-			# that was focusable before: Steam's Big Picture is, and gamescope was left with nothing
+-			# focused, OpenGamepadUI's loading screen over a running Steam (issue #29).
+-			if not dropped:
+-				return
+-			for app in running:
 -				var newest := -1
 -				for window in to:
 -					if window in app.window_ids:
 -						newest = maxi(newest, window)
-+				var newest: int = app.steam_game_window(to)
-+				if newest < 0:
-+					for window in to:
-+						if window in app.window_ids:
-+							newest = maxi(newest, window)
- 				if newest > 0:
- 					app.switch_window.call_deferred(newest)
- 					return
-@@ -312,7 +323,7 @@ func launch(app: LibraryLaunchItem) -> RunningApp:
+-				if newest > 0:
+-					app.switch_window.call_deferred(newest)
+-					return
++			# Which window gets the focus is decided deferred, as the focused app's change is: this
++			# signal is emitted while GamescopeInstance is bound, and the choice asks it about the
++			# apps' windows (RunningApp.may_focus, switch_window), which godot-rust refuses there
++			# ("Gd<T>::bind() failed, already bound"). The question then got no answer, so a window of
++			# Steam's counted as any other, and each try logged a panic (1,554 in one launch through a
++			# running Steam client, MANGMI Air X, 2026-11-27).
++			_focus_focusable_window.call_deferred(from, to, dropped)
+ 		_xwayland_primary.focusable_windows_updated.connect(on_focusable_windows_changed)
+ 
+ 	# Listen for signals from the secondary Gamescope XWayland
+@@ -241,6 +215,53 @@ func _on_focused_app_changed(to: int) -> void:
+ 	set_app_gamepad_profile(self._current_app)
+ 
+ 
++## The windows gamescope can focus changed from `from` to `to` (focusable_windows_updated, deferred):
++## gives the focus to the window that should have it now. `dropped`: the focused window had just gone.
++func _focus_focusable_window(from: PackedInt64Array, to: PackedInt64Array, dropped: bool) -> void:
++	var baselayer_window := _xwayland_primary.baselayer_window
++	# A window of a running app that has just become focusable gets the focus, even with
++	# another one focused: a new window is only focused once gamescope lists it
++	# (switch_to_new_window), and it may list it after the app's windows were read (a
++	# dialog). With nothing focused this is also what keeps an app whose first windows never
++	# become focusable (Steam's startup and helper windows) from leaving gamescope on our
++	# own layer: a black screen over a running Steam.
++	var running := _running.duplicate()
++	running.reverse()
++	# Steam's window focused while the game Steam started has one gamescope can focus: the
++	# game's window gets it (steam_game_focus.gd).
++	for app in running:
++		if baselayer_window > 0 and baselayer_window in app.window_ids and not app.may_focus(baselayer_window, to):
++			app.switch_window(app.steam_game_window(to))
++			return
++	for app in running:
++		for window in to:
++			if window in from or not window in app.window_ids:
++				continue
++			# Not one of Steam's while the game has a window: Steam shows its hidden
++			# desktop window at times during a game.
++			if not app.may_focus(window, to):
++				continue
++			if window != baselayer_window:
++				app.switch_window(window)
++			return
++	# When the focused window has just gone (a launcher's splash or updater window that had
++	# the focus), the newest window of a running app gamescope can focus gets it, even one
++	# that was focusable before: Steam's Big Picture is, and gamescope was left with nothing
++	# focused, OpenGamepadUI's loading screen over a running Steam (issue #29). Not when a
++	# window has been given the focus since.
++	if not dropped or baselayer_window > 0:
++		return
++	for app in running:
++		var newest: int = app.steam_game_window(to)
++		if newest < 0:
++			for window in to:
++				if window in app.window_ids:
++					newest = maxi(newest, window)
++		if newest > 0:
++			app.switch_window(newest)
++			return
++
++
+ # Loads persistent data like recent games launched, etc.
+ func _load_persist_data():
+ 	# Create the data directory if it doesn't exist
+@@ -312,7 +333,7 @@ func launch(app: LibraryLaunchItem) -> RunningApp:
  		for window in new_windows:
  			if window in old_windows:
  				continue
@@ -87,7 +171,7 @@ index d47d65d..608c1db 100644
  				running_app.switch_window(window)
  				return
  	running_app.window_ids_changed.connect(switch_to_new_window)
-@@ -330,7 +341,7 @@ func launch(app: LibraryLaunchItem) -> RunningApp:
+@@ -330,7 +351,7 @@ func launch(app: LibraryLaunchItem) -> RunningApp:
  			return
  		var focusable := _xwayland_primary.get_focusable_windows()
  		for i in range(new_windows.size() - 1, -1, -1):

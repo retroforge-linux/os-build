@@ -29,13 +29,16 @@ down. Once the game's art is found it shows its banner, dimmed, behind
 its logo (its name when it has no logo) and "Starting...", all still: no
 spinner, so OpenGamepadUI draws nothing while the game loads. Until then,
 and for a game with no art, it is the screen it was.
+
+An app OpenGamepadUI did not start is taken up once its window has the
+focus, so it gets no loading screen: there is nothing to wait for.
 ---
- core/ui/common/game/game_loading.gd   | 130 +++++++++++++++++++++++++-
- core/ui/common/game/game_loading.tscn |  42 +++++++++
- 2 files changed, 170 insertions(+), 2 deletions(-)
+ core/ui/common/game/game_loading.gd   | 133 +++++++++++++++++++++++++++++++++-
+ core/ui/common/game/game_loading.tscn |  42 +++++++++++
+ 2 files changed, 173 insertions(+), 2 deletions(-)
 
 diff --git a/core/ui/common/game/game_loading.gd b/core/ui/common/game/game_loading.gd
-index de84a78..c7857a7 100644
+index de84a78..9d1aaa2 100644
 --- a/core/ui/common/game/game_loading.gd
 +++ b/core/ui/common/game/game_loading.gd
 @@ -2,7 +2,18 @@ extends Control
@@ -78,7 +81,7 @@ index de84a78..c7857a7 100644
  
  
  # Called when the node enters the scene tree for the first time.
-@@ -29,16 +50,121 @@ func _ready() -> void:
+@@ -29,16 +50,124 @@ func _ready() -> void:
  		visible = to in [in_game_state, popup_state]
  	state_machine.state_changed.connect(on_state_changed)
  
@@ -94,6 +97,9 @@ index de84a78..c7857a7 100644
 +
  
  func _on_app_launched(app: RunningApp):
++	# An app OpenGamepadUI did not start is taken up once its window has the focus: nothing to wait for
++	if not app.is_ogui_managed:
++		return
  	game_launching = true
 +	_app = app
 +	_focused_at_launch = _xwayland_primary.focused_app if _xwayland_primary else 0

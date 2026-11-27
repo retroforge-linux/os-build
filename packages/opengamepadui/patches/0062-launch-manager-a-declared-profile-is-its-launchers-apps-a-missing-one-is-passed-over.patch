@@ -1,0 +1,116 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 27 Nov 2026 19:00:00 +0000
+Subject: [PATCH] fix(LaunchManager): a declared gamepad profile is for
+ its launcher's app, a missing one is passed over
+
+The profile a launcher declares (0024) was loaded for whichever app had
+the focus while that launcher ran: Hollow Knight, started beside a 3DS
+game, got Azahar's hotkey profile (MANGMI Air X, 2026-11-27). It is now
+loaded only for the app the launcher belongs to: the launcher's OGUI_ID
+is the focused app's, or, for a launcher OpenGamepadUI did not start,
+the focused app is one it did not start either (declared_profile.gd).
+
+A game whose own profile (its setting) is a file that is gone had
+nothing loaded when it got the focus. At launch that left the default
+profile, loaded as the launch began; after the first visit to a menu it
+left the focus profile, which sends every input to OpenGamepadUI, and
+none reached the game (same device and day). Such a profile is now
+passed over for the declared one or the global one, and a global profile
+in the settings that is gone for the default one. After, on the same
+device: Hollow Knight beside the emulator kept the default profile, the
+emulator had its own again once it had the screen back, and a game with
+a missing profile kept the default one through menu visits.
+---
+diff --git a/core/global/launch_manager.gd b/core/global/launch_manager.gd
+index e1d0893..600e092 100644
+--- a/core/global/launch_manager.gd
++++ b/core/global/launch_manager.gd
+@@ -72,6 +72,7 @@ var _focused_app_id := 0
+ var _orphan_windows := PackedInt64Array()
+ var _input_manager: InputManager
+ const OguiIdCache := preload("res://core/systems/launcher/ogui_id_cache.gd")
++const DeclaredProfile := preload("res://core/systems/launcher/declared_profile.gd")
+ ## Every running process's OGUI_ID, read from its environment only while it is new (ogui_id_cache.gd).
+ var _ogui_ids := OguiIdCache.new(func(pid: int) -> Dictionary: return Reaper.get_pid_environment(pid))
+ 
+@@ -584,6 +585,11 @@ func set_app_gamepad_profile(app: RunningApp) -> void:
+ 		profile_gamepad = settings_manager.get_value(section, "gamepad_profile_target", "") as String
+ 	else:
+ 		logger.debug("No app available to set gamepad profile")
++	# A profile that is gone is passed over. Asked for, nothing was loaded and the focus profile
++	# stayed: after the first visit to a menu no input reached the game.
++	if not profile_path.is_empty() and not (profile_path.ends_with(".json") and FileAccess.file_exists(profile_path)):
++		logger.warn("The game's gamepad profile is missing, passing it over: " + profile_path)
++		profile_path = ""
+ 	if not profile_path.is_empty():
+ 		logger.debug("Using profile '" + profile_path + "' with gamepad type '" + profile_gamepad + "'")
+ 		set_gamepad_profile(profile_path, profile_gamepad)
+@@ -591,7 +597,7 @@ func set_app_gamepad_profile(app: RunningApp) -> void:
+ 
+ 	# Then the profile the game's launcher declared, which also covers an app OpenGamepadUI did
+ 	# not launch itself
+-	var declared := _get_declared_profile()
++	var declared := _get_declared_profile(app)
+ 	if not declared.is_empty():
+ 		logger.info("Loading the gamepad profile the launcher declared: " + declared)
+ 		for device: CompositeDevice in input_plumber.get_composite_devices():
+@@ -636,7 +642,12 @@ func set_gamepad_profile(profile_path: String, target_gamepad: String = "") -> v
+ 
+ 			# Try check to see if there is a global gamepad setting
+ 			#TODO: This is a global setting, refactor settings to permit individual gamepads to have different profiles
++			var default_path := profile_path
+ 			profile_path = settings_manager.get_value("input", "gamepad_profile", profile_path) as String
++			# A global profile set in the settings that is gone: the default one
++			if profile_path != default_path and not FileAccess.file_exists(profile_path):
++				logger.warn("The global gamepad profile is missing, using the default: " + profile_path)
++				profile_path = default_path
+ 
+ 			# Verify can load a valid profile, or fallback.
+ 			if not profile_path.ends_with(".json") or not FileAccess.file_exists(profile_path):
+@@ -702,9 +713,9 @@ func _install_focus_profile() -> void:
+ 	file.store_string(source)
+ 
+ 
+-## The profile a launcher declared for the running game, or "" when there is none or its owner
+-## is gone.
+-func _get_declared_profile() -> String:
++## The profile a launcher declared for `app`, the app that has the focus (null: none
++## OpenGamepadUI knows), or "" when there is none, its owner is gone or it is another app's.
++func _get_declared_profile(app: RunningApp) -> String:
+ 	if not FileAccess.file_exists(_declared_profile):
+ 		return ""
+ 	var lines := FileAccess.get_file_as_string(_declared_profile).split("\n", false)
+@@ -714,6 +725,10 @@ func _get_declared_profile() -> String:
+ 	if not DirAccess.dir_exists_absolute("/proc/" + lines[1]):
+ 		logger.debug("Ignoring the profile declaration of a launcher that is gone: " + lines[1])
+ 		return ""
++	var declarer_id := str(Reaper.get_pid_environment(lines[1].to_int()).get("OGUI_ID", ""))
++	if not DeclaredProfile.applies(declarer_id, app != null, app.ogui_id if app else "", app.is_ogui_managed if app else false):
++		logger.debug("Ignoring a profile declared for another app: " + declarer_id)
++		return ""
+ 	if not FileAccess.file_exists(lines[0]):
+ 		logger.warn("Declared gamepad profile does not exist: " + lines[0])
+ 		return ""
+diff --git a/core/systems/launcher/declared_profile.gd b/core/systems/launcher/declared_profile.gd
+new file mode 100644
+index 0000000..0a22165
+--- /dev/null
++++ b/core/systems/launcher/declared_profile.gd
+@@ -0,0 +1,16 @@
++extends RefCounted
++
++## Whose game a gamepad profile declared by a launcher is for (LaunchManager._get_declared_profile).
++
++
++## Whether the declared profile is for the app that has the focus. `declarer_id` is the OGUI_ID of the
++## launcher that declared it ("" when OpenGamepadUI did not start that launcher). The focused app is
++## one OpenGamepadUI started (`app_managed`, with `app_id` as its OGUI_ID), one it took up, or one it
++## could not name (`has_app` false).[br]
++## A launcher OpenGamepadUI started declares for its own app only: another game started beside an
++## emulator got the emulator's hotkey profile. One started elsewhere declares for the app
++## OpenGamepadUI did not start.
++static func applies(declarer_id: String, has_app: bool, app_id: String, app_managed: bool) -> bool:
++	if declarer_id.is_empty():
++		return not has_app or not app_managed
++	return has_app and declarer_id == app_id

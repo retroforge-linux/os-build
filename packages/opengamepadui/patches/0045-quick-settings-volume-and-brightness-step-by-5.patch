@@ -9,9 +9,9 @@ settings volume slider by 1 and the brightness slider by 3 (user,
 2026-11-08). All of them move by 5 now: the keys change the volume by
 5%, and both sliders step by 5.
 
-A slider snaps its value to its step, so a volume the keys leave off
-the grid (one set elsewhere before) lands on the nearest multiple of 5
-the next time the quick settings slider shows it, and stays on it.
+A slider snaps what it shows to its step. The level itself only lands
+on that grid since 0061: until then the keys left it off it (0.52 went
+to 0.57 or 0.60, MANGMI Air X, 2026-11-27).
 
 The Saturation slider is hidden: its handler does nothing upstream
 ("TODO: Deprecate"), so moving it changed nothing.
