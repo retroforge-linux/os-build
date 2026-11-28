@@ -1,0 +1,70 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 28 Nov 2026 07:45:00 -0800
+Subject: [PATCH] drm/msm/dpu: limit vertical downscale behind the inline
+ rotator to 11/5
+
+Behind the SSPP inline rotator the scaler gets the source width as its
+input height. msm_sde allows at most 11/5 of vertical downscale there on
+a real-time pipe unless the inline pre-downscaler (v2.0.0 and later) is
+in use, and 4 only with it (sde_hw_catalog.c
+MAX_DOWNSCALE_RATIO_INROT_NOPD_RT, _sde_plane_get_max_downscale_limits).
+We never program the pre-downscaler, so the general limit of 4 let a
+rotated plane ask for more downscale than the rotator path can deliver.
+
+Refuse a rotated plane whose source width is more than 11/5 of its
+destination height. It applies to every inline rotator: v1.0.0 (SM8250)
+and v2.0.x (SM4450, SM8550, SM8650, SM8750).
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+index e4ae7b9..da0d026 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane.c
+@@ -704,9 +704,18 @@ static void dpu_plane_cleanup_fb(struct drm_plane *plane,
+ 				old_pstate->needs_dirtyfb);
+ }
+ 
++/*
++ * Behind the inline rotator the scaler gets the source width as its input
++ * height. Without the pre-downscaler, which we never program, msm_sde allows
++ * at most 11/5 of vertical downscale there on a real-time pipe.
++ */
++#define DPU_INLINE_ROT_MAX_VDOWNSCALE_NUM	11
++#define DPU_INLINE_ROT_MAX_VDOWNSCALE_DEN	5
++
+ static int dpu_plane_check_inline_rotation(struct dpu_plane *pdpu,
+ 					   struct dpu_sw_pipe *pipe,
+ 					   struct drm_rect src,
++					   struct drm_rect dst,
+ 					   const struct msm_format *fmt)
+ {
+ 	const struct dpu_sspp_sub_blks *sblk = pipe->sspp->cap->sblk;
+@@ -733,6 +742,13 @@ static int dpu_plane_check_inline_rotation(struct dpu_plane *pdpu,
+ 		return -EINVAL;
+ 	}
+ 
++	if (drm_rect_width(&src) * DPU_INLINE_ROT_MAX_VDOWNSCALE_DEN >
++	    drm_rect_height(&dst) * DPU_INLINE_ROT_MAX_VDOWNSCALE_NUM) {
++		DPU_DEBUG_PLANE(pdpu, "too much downscale for inline rot: %d -> %d lines\n",
++				drm_rect_width(&src), drm_rect_height(&dst));
++		return -E2BIG;
++	}
++
+ 	supported_formats = sblk->rotation_cfg->rot_format_list;
+ 	num_formats = sblk->rotation_cfg->rot_num_formats;
+ 
+@@ -827,7 +843,8 @@ static int dpu_plane_atomic_check_pipe(struct dpu_plane *pdpu,
+ 	}
+ 
+ 	if (pipe_cfg->rotation & DRM_MODE_ROTATE_90) {
+-		ret = dpu_plane_check_inline_rotation(pdpu, pipe, pipe_cfg->src_rect, fmt);
++		ret = dpu_plane_check_inline_rotation(pdpu, pipe, pipe_cfg->src_rect,
++						      pipe_cfg->dst_rect, fmt);
+ 		if (ret)
+ 			return ret;
+ 	}

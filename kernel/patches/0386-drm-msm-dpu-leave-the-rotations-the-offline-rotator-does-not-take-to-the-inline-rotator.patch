@@ -1,0 +1,59 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 28 Nov 2026 07:50:00 -0800
+Subject: [PATCH] drm/msm/dpu: leave the rotations the offline rotator does not
+ take to the inline rotator
+
+dpu_plane_rot_check() refuses every 90/270 plane the offline rotator
+does not take (YUV, reflected) when the SoC has an offline rotator. That
+was right while no such SoC had an SSPP inline rotator, but SM8250 has
+both now: its VIG pipes rotate UBWC NV12 inline, which the offline
+rotator does not take.
+
+Where some SSPP has an inline rotator, return 0 for such a plane and
+leave it to the normal path, which reserves a rotating pipe and checks
+the format and the size. Packed RGB still goes to the offline rotator.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/gpu/drm/msm/disp/dpu1/dpu_plane_rot.c | 19 ++++++++++++++++++-
+ 1 file changed, 18 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane_rot.c b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane_rot.c
+index 03bcb91..08de53e 100644
+--- a/drivers/gpu/drm/msm/disp/dpu1/dpu_plane_rot.c
++++ b/drivers/gpu/drm/msm/disp/dpu1/dpu_plane_rot.c
+@@ -204,6 +204,17 @@ static int dpu_plane_rot_check_geometry(struct drm_plane_state *new_plane_state,
+ 	return 0;
+ }
+ 
++static bool dpu_plane_rot_has_inline(const struct dpu_mdss_cfg *catalog)
++{
++	int i;
++
++	for (i = 0; i < catalog->sspp_count; i++)
++		if (test_bit(DPU_SSPP_INLINE_ROTATION, &catalog->sspp[i].features))
++			return true;
++
++	return false;
++}
++
+ int dpu_plane_rot_check(struct drm_plane *plane,
+ 			struct drm_plane_state *plane_state,
+ 			const struct drm_crtc_state *crtc_state,
+@@ -225,8 +236,14 @@ int dpu_plane_rot_check(struct drm_plane *plane,
+ 		return 0;
+ 	if (!crtc_state)
+ 		return 0;
++	/*
++	 * A rotation this rotator does not take (YUV, reflected) goes to an SSPP
++	 * inline rotator where there is one (SM8250: UBWC NV12), which the
++	 * normal path validates.
++	 */
+ 	if (!dpu_plane_rot_needed(dpu_kms, plane_state))
+-		return (plane_state->rotation & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270)) ? -EINVAL : 0;
++		return (plane_state->rotation & (DRM_MODE_ROTATE_90 | DRM_MODE_ROTATE_270)) &&
++		       !dpu_plane_rot_has_inline(catalog) ? -EINVAL : 0;
+ 
+ 	reqs.yuv = false;
+ 	reqs.scale = (plane_state->fb->height != drm_rect_width(&plane_state->dst)) ||
