@@ -1,0 +1,385 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: retroforge <retroforge@invalid>
+Date: Sat, 28 Nov 2026 12:00:00 +0100
+Subject: [PATCH] feat(DisksMenu): only /home's partition, and the SD card on
+ an internal install
+
+The Disks settings menu listed udisks2's "unprotected" devices: every
+disk but the one holding /home, each once per partition with no
+filesystem, so a handheld's internal storage filled it with the vendor's
+partitions (super, vbmeta, xbl, ...) and the disk RetroForge keeps its
+data on was missing. It now reads the mount table (shown_disks.gd) and
+shows the disk holding /home with that partition alone (on the internal
+storage or on the SD card booted from), and, when /home is not on an SD
+card, the SD card with its mounted partitions. The mount table is read
+again each time the menu is shown, and each second while it is: an SD
+card is mounted after udisks2 reports it, and again after a format,
+with no udisks2 signal.
+
+A partition card shows the partition's main mount point alone, the
+first place its whole filesystem is mounted: udisks2 lists the bind
+mounts too, and /home's partition is also bound at /opt, /root, /srv,
+/var/cache/pacman, /var/log, ... (an SD card at /run/retroforge/sdcard). Its
+size is the filesystem's free space of its size while it is mounted
+("24.65 GB free of 24.73 GB", from df), the partition's size when not.
+---
+diff --git a/core/ui/card_ui/settings/disks_settings_menu.gd b/core/ui/card_ui/settings/disks_settings_menu.gd
+--- a/core/ui/card_ui/settings/disks_settings_menu.gd
++++ b/core/ui/card_ui/settings/disks_settings_menu.gd
+@@ -4,6 +4,11 @@
+ var steam_disks := load("res://core/systems/disks/steam_removable_media_manager.tres") as SteamRemovableMediaManager
+ 
+ const drive_card_scene: PackedScene = preload("res://core/ui/components/drive_card.tscn")
++const ShownDisks := preload("res://core/systems/disks/shown_disks.gd")
++## The resource path prefix the udisks2 extension caches its devices under (BlockDevice::new).
++const UDISKS2_RES_PREFIX := "dbus://org.freedesktop.UDisks2"
++## How often the mount table is read while the menu is shown, in seconds.
++const MOUNTS_POLL_INTERVAL := 1.0
+ 
+ var logger := Log.get_logger("DisksMenu", Log.LEVEL.INFO)
+ 
+@@ -15,6 +20,11 @@
+ ## handheld's internal storage alone is ~85 vendor partitions, a card each, and listing and
+ ## building them (twice, as udisks2 settles) held the shell's first frame back ~2 s at boot.
+ var _stale := true
++## The partitions the cards were built for (ShownDisks.partitions()).
++var _shown := {}
++## Reads the mount table while the menu is shown: an SD card is mounted after udisks2 reports
++## it, and a card formatted here is mounted again after, with no udisks2 signal either time.
++var _mounts_timer := Timer.new()
+ 
+ 
+ # Called when the node enters the scene tree for the first time.
+@@ -24,23 +34,42 @@
+ 
+ 	udisks2.unprotected_devices_updated.connect(_on_devices_updated)
+ 	visibility_changed.connect(_refresh)
++	_mounts_timer.wait_time = MOUNTS_POLL_INTERVAL
++	_mounts_timer.timeout.connect(_on_mounts_poll)
++	add_child(_mounts_timer)
+ 	_refresh()
+ 
+ 
+-func _on_devices_updated(devices: Array[BlockDevice]) -> void:
++func _on_devices_updated(_devices: Array[BlockDevice]) -> void:
+ 	if is_visible_in_tree():
+-		_on_drives_updated(devices)
++		_on_drives_updated()
+ 	else:
+ 		_stale = true
+ 
+ 
+ func _refresh() -> void:
+-	if not _stale or not is_visible_in_tree():
++	if not is_visible_in_tree():
++		# What the menu shows also follows the mount table, which changes with no udisks2
++		# signal (an SD card is mounted after udisks2 reports it): read it again at each show.
++		_stale = true
++		_mounts_timer.stop()
++		return
++	_mounts_timer.start()
++	if not _stale:
+ 		return
+-	_on_drives_updated(udisks2.get_unprotected_devices())
++	_on_drives_updated()
++
++
++func _on_mounts_poll() -> void:
++	if ShownDisks.partitions(ShownDisks.read_file("/proc/self/mounts")) != _shown:
++		_on_drives_updated()
+ 
+ 
+-func _on_drives_updated(devices: Array[BlockDevice]) -> void:
++## Builds a card for each disk ShownDisks names, with only the partitions it names: /home's,
++## and an internal install's SD card. udisks2's unprotected devices are not used: they leave out
++## the disk holding /home, the very one to show, list every other disk once per partition with
++## no filesystem, and are read over D-Bus partition by partition.
++func _on_drives_updated() -> void:
+ 	_stale = false
+ 	logger.debug("Got updated drives")
+ 
+@@ -52,28 +81,25 @@
+ 		container.remove_child(child)
+ 		child.queue_free()
+ 
+-	# Show a label if no drives are available
+-	if devices.size() == 0:
+-		no_drive_label.visible = true
+-		container.visible = false
+-		return
+-
+-	no_drive_label.visible = false
+-	container.visible = true
+-
+ 	# Poplulate drives
+ 	var last_focus: FocusGroup
+-	for drive in devices:
+-		var drive_type = drive.dbus_path.trim_prefix(steam_disks.BLOCK_PREFIX)
+-
+-		# Ignore loop devices
+-		if drive_type.contains("loop"):
++	var shown := ShownDisks.partitions(ShownDisks.read_file("/proc/self/mounts"))
++	_shown = shown
++	if shown.is_empty():
++		logger.warn("No partition mounted at /home")
++	for disk: String in shown:
++		var drive := _block_device(disk)
++		if not drive:
++			logger.warn("udisks2 does not know /dev/" + disk)
+ 			continue
++		var partitions := PackedStringArray()
++		for partition: String in shown[disk]:
++			partitions.append(steam_disks.BLOCK_PREFIX + "/" + partition)
+ 
+ 		# Create Drive Card
+ 		var drive_card := drive_card_scene.instantiate() as DriveCard
+ 		container.add_child(drive_card)
+-		drive_card.setup(drive)
++		drive_card.setup(drive, partitions)
+ 		drive_card.visible = true
+ 
+ 		# Set up focus
+@@ -82,3 +108,16 @@
+ 			last_focus.focus_neighbor_bottom = drive_focus
+ 			drive_focus.focus_neighbor_top = last_focus
+ 		last_focus = drive_focus
++
++	# Show a label if no drives are available
++	no_drive_label.visible = last_focus == null
++	container.visible = last_focus != null
++
++
++## The udisks2 BlockDevice for a disk, from the resource cache: the extension keeps one there
++## for every block device it tracks, and offers no other way to look one up by name.
++func _block_device(disk: String) -> BlockDevice:
++	var path := UDISKS2_RES_PREFIX + steam_disks.BLOCK_PREFIX + "/" + disk
++	if not ResourceLoader.exists(path):
++		return null
++	return load(path) as BlockDevice
+diff --git a/core/ui/components/drive_card.gd b/core/ui/components/drive_card.gd
+--- a/core/ui/components/drive_card.gd
++++ b/core/ui/components/drive_card.gd
+@@ -13,6 +13,8 @@
+ 
+ var block_device: BlockDevice
+ var device_path: String
++## The DBus paths of the partitions to show, or all of them when empty.
++var shown_partitions: PackedStringArray
+ var highlight_tween: Tween
+ 
+ signal pressed
+@@ -36,10 +38,12 @@
+ var log_level:= Log.LEVEL.INFO
+ 
+ 
+-## Performs _ready fucntionality with the given BlockDevice
+-func setup(device: BlockDevice) -> void:
++## Performs _ready fucntionality with the given BlockDevice, showing the given partitions
++## (DBus paths) or all of them
++func setup(device: BlockDevice, partitions := PackedStringArray()) -> void:
+ 	# Setup UDisks2 information
+ 	self.block_device = device
++	self.shown_partitions = partitions
+ 	self.device_path = "/dev" + self.block_device.dbus_path.trim_prefix(steam_disks.BLOCK_PREFIX)
+ 
+ 	logger = Log.get_logger("DriveCard|"+self.device_path, log_level)
+@@ -176,6 +180,9 @@
+ 	var last_focus: FocusGroup
+ 	for partition in self.block_device.get_partitions():
+ 
++		if not shown_partitions.is_empty() and partition.dbus_path not in shown_partitions:
++			continue
++
+ 		# Ignore loop devices
+ 		if partition.partition_name.contains("/dev/loop"):
+ 			continue
+diff --git a/core/ui/components/partition_card.gd b/core/ui/components/partition_card.gd
+--- a/core/ui/components/partition_card.gd
++++ b/core/ui/components/partition_card.gd
+@@ -3,6 +3,7 @@
+ 
+ var steam_disks := load("res://core/systems/disks/steam_removable_media_manager.tres") as SteamRemovableMediaManager
+ var notification_manager := load("res://core/global/notification_manager.tres") as NotificationManager
++const ShownDisks := preload("res://core/systems/disks/shown_disks.gd")
+ 
+ var partition_device: PartitionDevice
+ var partition_device_path: String
+@@ -28,7 +29,6 @@
+ 	logger.debug("Setup card for:", self.partition_device.dbus_path)
+ 	name_label.text = self.partition_device_path
+ 	filesystem_label.text = self.partition_device.get_filesystem_type()
+-	size_label.text = partition_device.get_readable_size()
+ 	_populate_mounts()
+ 
+ 	# Setup SteamRemovableMedia interfaces
+@@ -72,14 +72,29 @@
+ 		child.queue_free()
+ 
+ 
+-## Populates the mount grid with an item for every mount point on this PartitionDevice
++## Populates the mount grid with this PartitionDevice's main mount point, and sets its size:
++## the filesystem's free space of its size while it is mounted. udisks2 also lists
++## every bind mount of the filesystem: the /home partition is bound at /opt, /root, /srv,
++## /var/cache/pacman, /var/log, ... and an SD card at /run/retroforge/sdcard (the network share).
+ func _populate_mounts() -> void:
+ 	_clear_mounts()
++	size_label.text = partition_device.get_readable_size()
+ 	var filesystem_device = self.partition_device.get_filesystem()
+ 	if not filesystem_device:
+ 		return
+ 	var mounts: PackedStringArray = filesystem_device.get_mounts()
+ 	logger.debug("Mounts:", str(mounts))
++	var main := ShownDisks.main_mount(ShownDisks.read_file("/proc/self/mountinfo"),
++		self.partition_device_path.get_file())
++	if not main.is_empty():
++		mounts = PackedStringArray([main])
++	elif mounts.size() > 1:
++		mounts = mounts.slice(0, 1)
++	# A mounted filesystem shows its free space of its size (a little less than the partition's).
++	if not mounts.is_empty():
++		var space := ShownDisks.free_of_total(mounts[0])
++		if not space.is_empty():
++			size_label.text = space
+ 	for mount in mounts:
+ 		var fs_label := Label.new()
+ 		fs_label.text = mount
+diff --git a/core/systems/disks/shown_disks.gd b/core/systems/disks/shown_disks.gd
+new file mode 100644
+--- /dev/null
++++ b/core/systems/disks/shown_disks.gd
+@@ -0,0 +1,135 @@
++extends RefCounted
++
++## Which disks and partitions the Disks settings menu shows: the partition mounted at /home on its
++## disk, and, when /home is not on an SD card (an internal install), the SD card's mounted
++## partitions. The rest of a handheld's internal storage is the vendor's (super, vbmeta, xbl, ...:
++## ~85 partitions), nothing a player manages there. Read from the mount table and sysfs; `sys` and
++## `dev` stand for /sys and /dev. And what a partition card says of its partition: its main mount
++## point and the space left on it.
++
++
++## The partitions to show, by disk, as kernel names ({"sda": ["sda17"]}), the disk holding /home
++## first. `mounts` is the text of /proc/self/mounts. Empty when nothing is mounted at /home.
++static func partitions(mounts: String, sys := "/sys", dev := "/dev") -> Dictionary:
++	var shown := {}
++	var home := ""
++	var mounted: Array[String] = []
++	for line in mounts.split("\n", false):
++		var fields := line.split(" ", false)
++		if fields.size() < 2 or not fields[0].begins_with("/dev/"):
++			continue
++		var partition := kernel_name(dev + fields[0].trim_prefix("/dev"))
++		if fields[1] == "/home":
++			home = partition
++		if partition not in mounted:
++			mounted.append(partition)
++
++	var home_disk := disk_of(home, sys)
++	if home_disk.is_empty():
++		return shown
++	shown[home_disk] = [home]
++	if is_sd_card(home_disk, sys):
++		return shown
++
++	for partition in mounted:
++		var disk := disk_of(partition, sys)
++		if disk.is_empty() or disk == home_disk or not is_sd_card(disk, sys):
++			continue
++		if disk not in shown:
++			shown[disk] = []
++		(shown[disk] as Array).append(partition)
++
++	return shown
++
++
++## A partition's main mount point: the first place its whole filesystem is mounted, in the order
++## of `mountinfo` (the text of /proc/self/mountinfo). Its bind mounts come after it, or mount a
++## directory of it (/home's partition is also at /opt, /root, /var/log, ...). "" when unmounted.
++static func main_mount(mountinfo: String, partition: String, dev := "/dev") -> String:
++	for line in mountinfo.split("\n", false):
++		# 110 33 179:8 / /home rw,relatime shared:222 - ext4 /dev/mmcblk0p8 rw
++		var halves := line.split(" - ", false, 1)
++		var fields := halves[0].split(" ", false)
++		if halves.size() < 2 or fields.size() < 5 or fields[3] != "/":
++			continue
++		var source := halves[1].split(" ", false)
++		if source.size() < 2 or not source[1].begins_with("/dev/"):
++			continue
++		if kernel_name(dev + source[1].trim_prefix("/dev")) == partition:
++			# The kernel writes a space, tab, newline or backslash as \040, \011, \012, \134
++			# (an SD card labelled "MY GAMES" is at /run/media/player/MY\040GAMES).
++			return fields[4].replace("\\040", " ").replace("\\011", "\t") \
++				.replace("\\012", "\n").replace("\\134", "\\")
++	return ""
++
++
++## "24.65 GB free of 24.73 GB" for the filesystem mounted at `mount`, "" when df cannot tell.
++static func free_of_total(mount: String) -> String:
++	var output := []
++	if OS.execute("df", ["-B1", "--output=size,avail", "--", mount], output) != 0 or output.is_empty():
++		return ""
++	return space_text(output[0])
++
++
++## The text for df's `--output=size,avail` output (a header line, then the two in bytes), or "".
++static func space_text(df_output: String) -> String:
++	var lines := df_output.strip_edges().split("\n", false)
++	if lines.size() < 2:
++		return ""
++	var values := lines[-1].split(" ", false)
++	if values.size() != 2 or not values[0].is_valid_int() or not values[1].is_valid_int():
++		return ""
++	return readable_size(int(values[1])) + " free of " + readable_size(int(values[0]))
++
++
++## A size in decimal units with two decimals, as udisks2's own sizes are shown ("25.58 GB").
++static func readable_size(bytes: int) -> String:
++	const UNITS := ["B", "KB", "MB", "GB", "TB", "PB"]
++	var value := float(bytes)
++	var unit := 0
++	while value >= 1000.0 and unit < UNITS.size() - 1:
++		value /= 1000.0
++		unit += 1
++	return "%.2f %s" % [value, UNITS[unit]]
++
++
++## The kernel name of a device node (/dev/sda17 -> sda17), through a link (/dev/disk/by-*).
++static func kernel_name(device: String) -> String:
++	var dir := DirAccess.open(device.get_base_dir())
++	if dir and dir.is_link(device):
++		return dir.read_link(device).get_file()
++	return device.get_file()
++
++
++## The disk a partition is on (sda17 -> sda), or "" when it is not a partition.
++static func disk_of(partition: String, sys := "/sys") -> String:
++	if partition.is_empty():
++		return ""
++	var path := sys + "/class/block/" + partition
++	if not FileAccess.file_exists(path + "/partition"):
++		return ""
++	var dir := DirAccess.open(sys + "/class/block")
++	if not dir or not dir.is_link(path):
++		return ""
++	# ../../devices/.../block/sda/sda17
++	return dir.read_link(path).get_base_dir().get_file()
++
++
++## Whether the disk is an SD card: the MMC core types a card "SD" and an eMMC "MMC" (the internal
++## storage of the SM6115 handhelds is an mmcblk too).
++static func is_sd_card(disk: String, sys := "/sys") -> bool:
++	if not disk.begins_with("mmcblk"):
++		return false
++	return read_file(sys + "/block/" + disk + "/device/type").strip_edges() == "SD"
++
++
++## The whole content of a file, "" when it cannot be read. /proc and /sys files report a size of 0
++## (or 4096), so it is read until EOF.
++static func read_file(path: String) -> String:
++	var file := FileAccess.open(path, FileAccess.READ)
++	if not file:
++		return ""
++	var data := PackedByteArray()
++	while not file.eof_reached():
++		data.append_array(file.get_buffer(4096))
++	return data.get_string_from_utf8()

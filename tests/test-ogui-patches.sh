@@ -32,6 +32,10 @@
 #   - 0065 GameBeside: which game L1 or R1 shows next on a game's page. Stepping onto Home's Library
 #     card, or a card a search has hidden, would open the page on no game; stepping past the ends of
 #     a row or grid must do nothing.
+#   - 0066 ShownDisks: which disks and partitions the Disks settings menu shows, from the mount table
+#     and sysfs. /home's partition alone on its disk, and an internal install's mounted SD card; any
+#     more is the vendor's ~85 internal partitions it listed before (Air X), any less hides the disk
+#     RetroForge keeps its data on.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -44,12 +48,13 @@ P0061="$PATCHES/0061-audio-a-volume-key-press-is-written-once-on-the-5-grid.patc
 P0062="$PATCHES/0062-launch-manager-a-declared-profile-is-its-launchers-apps-a-missing-one-is-passed-over.patch"
 P0064="$PATCHES/0064-launch-manager-a-newly-focusable-window-is-told-by-our-own-record.patch"
 P0065="$PATCHES/0065-game-page-l1-and-r1-show-the-game-before-or-after.patch"
+P0066="$PATCHES/0066-disks-menu-shows-home-and-the-sd-card-only.patch"
 
 PASS=0; FAIL=0; CASE=""
 ok()  { PASS=$((PASS+1)); printf '  ok   %s -- %s\n' "$CASE" "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s -- %s\n' "$CASE" "$1"; }
 
-for f in "$P0032" "$P0053" "$P0054" "$P0060" "$P0061" "$P0062" "$P0064" "$P0065"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
+for f in "$P0032" "$P0053" "$P0054" "$P0060" "$P0061" "$P0062" "$P0064" "$P0065" "$P0066"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
 T="$(mktemp -d)" && [ -d "$T" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
@@ -705,6 +710,146 @@ func _init() -> void:
 	quit(1 if failed else 0)
 GD
   out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P65" --script res://game_beside_test.gd 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+  n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+  PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+  if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+    bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+  fi
+fi
+
+CASE="shown disks (0066)"
+if [ -z "$GODOT" ]; then
+  printf '  skip %s -- no Godot (set RETROFORGE_GODOT to a Godot 4 binary)\n' "$CASE"
+else
+  P66="$T/p66"; mkdir -p "$P66"
+  added_file "$P0066" core/systems/disks/shown_disks.gd > "$P66/shown_disks.gd"
+  grep -q '^static func partitions(' "$P66/shown_disks.gd" \
+    && ok "the patch adds core/systems/disks/shown_disks.gd" || bad "shown_disks.gd not found in the patch"
+  # The menu builds from ShownDisks, not from udisks2's unprotected devices (which leave out the disk
+  # holding /home and are read over D-Bus partition by partition), and a drive card shows only the
+  # partitions it is given.
+  grep -q '^+	var shown := ShownDisks.partitions(ShownDisks.read_file("/proc/self/mounts"))$' "$P0066" \
+    && grep -q '^-	_on_drives_updated(udisks2.get_unprotected_devices())$' "$P0066" \
+    && ! grep -q '^+.*get_unprotected_devices' "$P0066" \
+    && ok "the menu shows what ShownDisks names, without udisks2's unprotected devices" \
+    || bad "the menu still builds from udisks2's unprotected devices"
+  grep -q '^+		if not shown_partitions.is_empty() and partition.dbus_path not in shown_partitions:$' "$P0066" \
+    && ok "a drive card shows only the partitions it is given" || bad "a drive card still shows every partition"
+  grep -q '^+	var main := ShownDisks.main_mount(ShownDisks.read_file("/proc/self/mountinfo"),$' "$P0066" \
+    && grep -q '^+		mounts = PackedStringArray(\[main\])$' "$P0066" \
+    && ok "a partition card shows its main mount point alone, not udisks2's bind mounts" \
+    || bad "a partition card still lists every bind mount (/opt, /root, /var/log, ...)"
+  grep -q '^+		var space := ShownDisks.free_of_total(mounts\[0\])$' "$P0066" \
+    && ok "a mounted partition's size is its free space of its size" || bad "a partition card shows no free space"
+  # An SD card is mounted after udisks2 reports it, with no signal: the mount table is read at each show.
+  grep -q '^+		_stale = true$' "$P0066" \
+    && ok "the menu reads the mount table again each time it is shown" || bad "the menu keeps cards built before an SD card was mounted"
+  grep -q '^+	if ShownDisks.partitions(ShownDisks.read_file("/proc/self/mounts")) != _shown:$' "$P0066" \
+    && grep -q '^+		_mounts_timer.stop()$' "$P0066" && grep -q '^+	_mounts_timer.start()$' "$P0066" \
+    && ok "and while it is shown, so a card mounted then (inserted, or formatted here) appears" \
+    || bad "a card mounted while the menu is shown stays missing until it is shown again"
+
+  # Fake /sys and /dev. part <disk> <partition> <host path>: a partition in sysfs, its class/block link
+  # relative like the kernel's. disk <disk> [SD|MMC]: a disk, with the MMC core's type for mmcblk.
+  SYS="$P66/sys"; DEV="$P66/dev"; mkdir -p "$SYS/block" "$SYS/class/block" "$DEV/disk/by-partlabel"
+  disk() {
+    mkdir -p "$SYS/devices/$1/block/$1"
+    ln -s "../devices/$1/block/$1" "$SYS/block/$1"
+    ln -s "../../devices/$1/block/$1" "$SYS/class/block/$1"
+    if [ -n "${2:-}" ]; then mkdir -p "$SYS/devices/$1/device"; echo "$2" > "$SYS/devices/$1/device/type"
+      ln -s ../../device "$SYS/devices/$1/block/$1/device"; fi
+  }
+  part() {
+    mkdir -p "$SYS/devices/$1/block/$1/$2"; echo "${2##*[a-z]}" > "$SYS/devices/$1/block/$1/$2/partition"
+    ln -s "../../devices/$1/block/$1/$2" "$SYS/class/block/$2"
+  }
+  disk sda; for n in 1 2 17; do part sda sda$n; done      # UFS LUN 0: the vendor's, and an install's /home
+  disk sde; part sde sde4                                 # UFS LUN 4: firmware
+  disk mmcblk0 MMC; part mmcblk0 mmcblk0p70               # SM6115 eMMC: an install's /home
+  disk mmcblk1 SD; for n in 1 2 8; do part mmcblk1 mmcblk1p$n; done   # SD card
+  ln -s ../../sda17 "$DEV/disk/by-partlabel/retroforge-home"
+  printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P66/project.godot"
+  cat > "$P66/shown_disks_test.gd" <<GD
+extends SceneTree
+
+const ShownDisks := preload("res://shown_disks.gd")
+const SYS := "$SYS"
+const DEV := "$DEV"
+var failed := 0
+
+
+func check(what: String, got, want) -> void:
+	if got == want:
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+
+func shown(mounts: Array) -> Dictionary:
+	return ShownDisks.partitions("\n".join(mounts) + "\n", SYS, DEV)
+
+
+func _init() -> void:
+	var common := ["proc /proc proc rw 0 0", "tmpfs /tmp tmpfs rw 0 0", "overlay /etc overlay rw 0 0"]
+	# Booted from the SD card: its root, ESP and /home are all on it.
+	check("a card boot: /home's partition alone, not the card's system partitions",
+		shown(common + ["/dev/mmcblk1p2 / erofs ro 0 0", "/dev/mmcblk1p1 /esp vfat rw 0 0",
+			"/dev/mmcblk1p8 /home ext4 rw 0 0"]), {"mmcblk1": ["mmcblk1p8"]})
+	# Installed on UFS, an SD card mounted for the player (and bound for the network share).
+	var ufs := common + ["/dev/sda2 / erofs ro 0 0", "/dev/sda1 /esp vfat rw 0 0",
+		"/dev/sde4 /usr/lib/firmware/qcom vfat ro 0 0", "/dev/sda17 /home ext4 rw 0 0"]
+	check("a UFS install: /home's partition, then the SD card's",
+		shown(ufs + ["/dev/mmcblk1p1 /run/media/player/GAMES exfat rw 0 0",
+			"/dev/mmcblk1p1 /run/retroforge/sdcard exfat rw 0 0"]), {"sda": ["sda17"], "mmcblk1": ["mmcblk1p1"]})
+	check("the order is /home's disk first whatever the mount order",
+		shown(["/dev/mmcblk1p1 /run/media/player/GAMES exfat rw 0 0"] + ufs).keys(), ["sda", "mmcblk1"])
+	check("with no SD card mounted: /home's alone", shown(ufs), {"sda": ["sda17"]})
+	check("each of an SD card's mounted partitions, once",
+		shown(ufs + ["/dev/mmcblk1p1 /run/media/player/A ext4 rw 0 0", "/dev/mmcblk1p2 /run/media/player/B ext4 rw 0 0"]),
+		{"sda": ["sda17"], "mmcblk1": ["mmcblk1p1", "mmcblk1p2"]})
+	# Installed on the eMMC of an SM6115 board: an mmcblk too, typed MMC.
+	check("an eMMC install: the eMMC is not taken for an SD card",
+		shown(common + ["/dev/mmcblk0p70 /home ext4 rw 0 0", "/dev/mmcblk1p1 /run/media/player/GAMES exfat rw 0 0"]),
+		{"mmcblk0": ["mmcblk0p70"], "mmcblk1": ["mmcblk1p1"]})
+	check("/home mounted through a /dev/disk link", shown(["/dev/disk/by-partlabel/retroforge-home /home ext4 rw 0 0"]),
+		{"sda": ["sda17"]})
+	check("nothing at /home: nothing", shown(common + ["/dev/mmcblk1p1 /run/media/player/GAMES exfat rw 0 0"]), {})
+	check("a whole disk at /home is no partition: nothing", shown(["/dev/sde /home ext4 rw 0 0"]), {})
+	check("an empty mount table: nothing", ShownDisks.partitions("", SYS, DEV), {})
+	check("disk_of: the partition's disk", ShownDisks.disk_of("sda17", SYS), "sda")
+	check("disk_of: none for a disk", ShownDisks.disk_of("sda", SYS), "")
+	check("disk_of: none for an unknown name", ShownDisks.disk_of("nvme9n1p1", SYS), "")
+	check("is_sd_card: a card", ShownDisks.is_sd_card("mmcblk1", SYS), true)
+	check("is_sd_card: not an eMMC", ShownDisks.is_sd_card("mmcblk0", SYS), false)
+	check("is_sd_card: not UFS", ShownDisks.is_sd_card("sda", SYS), false)
+	# /proc/self/mountinfo on a card boot (Pocket ACE): /home's partition, then its offload binds.
+	var info := "\n".join([
+		"33 1 0:30 / / ro,relatime shared:1 - btrfs /dev/mmcblk1p4 ro",
+		"110 33 179:8 / /home rw,relatime shared:222 - ext4 /dev/mmcblk1p8 rw",
+		"116 33 179:8 /.retroforge/offload/root /root rw,relatime shared:222 - ext4 /dev/mmcblk1p8 rw",
+		"299 33 179:8 /.retroforge/offload/opt /opt rw,relatime shared:222 - ext4 /dev/mmcblk1p8 rw",
+		"300 33 0:40 / /tmp rw shared:5 - tmpfs tmpfs rw",
+		"301 40 179:1 / /run/media/player/MY\\\\040GAMES rw,nosuid shared:7 - exfat /dev/mmcblk1p1 rw",
+		"302 40 179:1 / /run/retroforge/sdcard rw,nosuid shared:7 - exfat /dev/mmcblk1p1 rw",
+		"303 33 8:17 / /home rw shared:9 - ext4 /dev/disk/by-partlabel/retroforge-home rw"]) + "\n"
+	check("main_mount: /home, not the binds of its directories", ShownDisks.main_mount(info, "mmcblk1p8", DEV), "/home")
+	check("main_mount: an SD card's own mount, not the share's bind of it, spaces decoded",
+		ShownDisks.main_mount(info, "mmcblk1p1", DEV), "/run/media/player/MY GAMES")
+	check("main_mount: through a /dev/disk link", ShownDisks.main_mount(info, "sda17", DEV), "/home")
+	check("main_mount: none for a partition not mounted", ShownDisks.main_mount(info, "mmcblk1p2", DEV), "")
+	check("main_mount: none from an empty table", ShownDisks.main_mount("", "mmcblk1p8", DEV), "")
+	check("space_text: free of total, from df --output=size,avail",
+		ShownDisks.space_text("     1B-blocks        Avail\n24728096768 24652804096\n"), "24.65 GB free of 24.73 GB")
+	check("space_text: nothing from df's error output", ShownDisks.space_text("df: /x: No such file or directory\n"), "")
+	check("space_text: nothing from a header alone", ShownDisks.space_text("1B-blocks Avail\n"), "")
+	check("readable_size: decimal units, as udisks2 shows them", ShownDisks.readable_size(25575796736), "25.58 GB")
+	check("readable_size: small sizes in bytes", ShownDisks.readable_size(512), "512.00 B")
+	check("readable_size: a terabyte card", ShownDisks.readable_size(1024209543168), "1.02 TB")
+	quit(1 if failed else 0)
+GD
+  out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P66" --script res://shown_disks_test.gd 2>&1)"; rc=$?
   printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
   n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
   PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
