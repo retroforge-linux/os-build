@@ -1,0 +1,207 @@
+#!/usr/bin/env python3
+# retroforge-steam-fex — which build of Steam's FEX tool runs x86 Linux games (Apps > Steam Client >
+# "FEX for Linux games"): the tool's branch, the choice its Properties > Betas makes in Steam.
+#
+#   retroforge-steam-fex status       print (JSON) the branch the tool is on, the FEX version installed,
+#                                     and the branches on offer; {"installed": false} before Steam has
+#                                     installed the tool (it comes with the first x86 game)
+#   retroforge-steam-fex set BRANCH   join BRANCH through the running Steam client, wait for Steam to
+#                                     install it, and print the status
+#
+# TWO FEXES. Steam's FEX tool (app 3127680 "FEX", folder FEX-Emu) runs x86 Linux programs: native Linux
+# games (Megabonk, Stardew Valley's Linux build) and the x86 Steam Linux Runtimes around them. Steam keeps
+# one copy for every game, so this is one setting, not a game's. Windows games do not use it: each arm64
+# Proton has its own FEX compiled in (libarm64ecfex, libwow64fex: FEX-2610 in Proton-CachyOS ARMv8.0 of
+# 2026-10-15), which changes only with the Proton.
+#
+# THE BRANCHES (MANGMI Air X, 2026-11-28), from the client's app cache (depots/branches):
+#   public         Steam's default: FEX-2607-76-g37265b1, built 2026-07-10          "Stable"
+#   beta           FEX-2611, 2026-11-05                                             "Beta"
+#   bleeding-edge  FEX-2611-112-gd663eb8, rebuilt most days                         "Bleeding edge"
+# gamma and previous name public's build and are not offered; a tool the player put on one of those in
+# Steam shows it. The version is the installed tool's own (VERSIONS.txt), so only the branch in use has one.
+#
+# HOW. SteamClient.Apps.JoinAppContentBeta(appid, name), "" for public as Steam's own page passes it, in
+# the client's SharedJSContext page (python/steam_tool.py's client_call: a frozen web helper is woken for
+# it and frozen again). The client writes the branch to the tool's app manifest (UserConfig/BetaKey) at
+# once and downloads the other build, 15-18 MB, with its UI closed too: branch, download and install were
+# done 5 s after the call, three times of three. Not by writing BetaKey while the client is stopped: the
+# client's next start then marks the tool "Update Required" and puts the download off by six hours
+# ("Update delayed for 22033 secs"). So with no client running nothing is changed (exit 4). Nor while
+# Steam runs a game (exit 3): a Linux game may be running on the tool, and waking the client's UI takes
+# memory the game may need.
+# /usr/bin/steam reads the tool's VERSIONS.txt at every launch (its FEXServer pre-start is for FEX before
+# 2611 only), so a change of branch needs nothing else.
+#
+# Exit 0; 1 when Steam did not take the branch or the tool is not installed; 2 for a bad invocation or a
+# branch not on offer; 3 while Steam runs a game; 4 when no Steam client runs.
+#
+# TEST SEAMS (tests/test-steam-fex.sh): RETROFORGE_STEAM_ROOT, RETROFORGE_STEAM_LIBRARY (the steam-library
+# whose readers this uses), RETROFORGE_STEAM_FEX_WAIT (s to wait for Steam's install, 60), and
+# python/steam_tool.py's (the client's DevTools port, retroforge-steam-keep, /proc).
+import importlib.machinery
+import importlib.util
+import json
+import os
+import sys
+import time
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
+import steam_tool  # noqa: E402
+
+DATA = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+STEAM_ROOT = (os.environ.get("RETROFORGE_STEAM_ROOT") or os.path.join(DATA, "Steam")).rstrip("/")
+STEAM_LIBRARY = os.environ.get("RETROFORGE_STEAM_LIBRARY", "/usr/lib/retroforge/steam-library")
+INSTALL_WAIT = float(os.environ.get("RETROFORGE_STEAM_FEX_WAIT", "60"))
+APPID = 3127680
+OFFERED = (("public", "Stable"), ("beta", "Beta"), ("bleeding-edge", "Bleeding edge"))  # see THE BRANCHES
+FULLY_INSTALLED = 4
+JOIN_JS = """(async () => {
+  if (!window.SteamClient || !SteamClient.Apps || typeof SteamClient.Apps.JoinAppContentBeta !== "function") return "nofn";
+  try { await Promise.race([Promise.resolve(SteamClient.Apps.JoinAppContentBeta(%d, %s)), new Promise(r => setTimeout(r, 3000))]); }
+  catch (e) { return "error"; }
+  return "ok";
+})()"""
+
+
+def log(msg):
+    print(f"retroforge-steam-fex: {msg}", file=sys.stderr, flush=True)
+
+
+def steam_library():
+    """/usr/lib/retroforge/steam-library as a module: its app cache reader and library folders."""
+    loader = importlib.machinery.SourceFileLoader("steam_library", STEAM_LIBRARY)
+    spec = importlib.util.spec_from_loader("steam_library", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def manifest(sl):
+    """(library, the tool's app manifest as a tree) from any library; None while Steam has not installed it."""
+    for lib in sl.library_dirs(STEAM_ROOT):
+        text = steam_tool.read(os.path.join(lib, "steamapps", f"appmanifest_{APPID}.acf"))
+        try:
+            app = steam_tool.child(steam_tool.tree(text), "AppState") if text else {}
+        except ValueError:
+            app = {}
+        if isinstance(app, dict) and app:
+            return lib, app
+    return None
+
+
+def field(app, key):
+    value = steam_tool.child(app, key)
+    return value if isinstance(value, str) else ""
+
+
+def branch_of(app):
+    """The branch the manifest names (UserConfig/BetaKey): public when it names none."""
+    return field(steam_tool.child(app, "UserConfig"), "BetaKey") or "public"
+
+
+def branches(sl):
+    """{name: {buildid, timeupdated, description, pwdrequired}} of the tool, from the client's app cache;
+    {} when it cannot be read."""
+    try:
+        node = sl.app_nodes(STEAM_ROOT, {APPID}).get(APPID, {})
+    except (OSError, sl.Unreadable):
+        return {}
+    found = node.get("appinfo", node).get("depots", {}).get("branches", {})
+    return {str(k): v for k, v in found.items() if isinstance(v, dict)} if isinstance(found, dict) else {}
+
+
+def version(folder):
+    """The installed tool's FEX version (VERSIONS.txt: "FEX describe<TAB>FEX-2611"), "" when it has none."""
+    for line in steam_tool.read(os.path.join(folder, "VERSIONS.txt")).splitlines():
+        words = line.split()
+        if words[:2] == ["FEX", "describe"] and len(words) > 2:
+            return words[2]
+    return ""
+
+
+def label(title, branch):
+    """A branch as the row lists it: its title and the day Valve last built it."""
+    stamp = str(branch.get("timeupdated", ""))
+    return f"{title} ({time.strftime('%-d %b %Y', time.gmtime(int(stamp)))})" if stamp.isdigit() and int(stamp) else title
+
+
+def status(sl):
+    found = manifest(sl)
+    if not found:
+        return {"installed": False}
+    lib, app = found
+    have, mine, flags = branches(sl), branch_of(app), field(app, "StateFlags")
+    out = {"installed": True, "branch": mine,
+           "version": version(os.path.join(lib, "steamapps", "common", field(app, "installdir") or "FEX-Emu")),
+           "branches": [{"name": name, "label": label(title, have[name])} for name, title in OFFERED
+                        if name in have and str(have[name].get("pwdrequired", 0)) in ("0", "")]}
+    # Steam is still to install the branch: its files are changing, or are another build's than the branch's
+    build = str(have.get(mine, {}).get("buildid", ""))
+    out["updating"] = flags != str(FULLY_INSTALLED) or (build != "" and field(app, "buildid") != build)
+    if mine not in [b["name"] for b in out["branches"]]:
+        out["other"] = label(str(have.get(mine, {}).get("description") or mine), have.get(mine, {}))
+    return out
+
+
+def joined(sl, branch):
+    """True once the tool's manifest names branch, within steam_tool.SET_WAIT s of the client's call."""
+    deadline = time.monotonic() + steam_tool.SET_WAIT
+    while True:
+        found = manifest(sl)
+        if found and branch_of(found[1]) == branch:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.2)
+
+
+def join(sl, branch):
+    """Exit status of `set BRANCH` (see HOW); the status is printed when Steam took the branch."""
+    now = status(sl)
+    if not now["installed"]:
+        log("Steam has not installed its FEX tool yet (it comes with the first x86 game)")
+        return 1
+    if branch not in [b["name"] for b in now["branches"]]:
+        log(f"not a branch on offer: {branch}")
+        return 2
+    if branch != now["branch"] or now["updating"]:
+        with steam_tool.locked():
+            if steam_tool.game_running():
+                log("the FEX tool stays as it is: Steam is running a game")
+                return 3
+            if not steam_tool.client_pid():
+                log("no Steam client runs: the branch is changed through it (written to the manifest, Steam "
+                    "puts the download off by hours)")
+                return 4
+            took, _ = steam_tool.client_call(JOIN_JS % (APPID, json.dumps("" if branch == "public" else branch)),
+                                             lambda: joined(sl, branch), log, "FEX")
+        if not took:
+            log(f"Steam did not put its FEX tool on {branch}")
+            return 1
+        deadline = time.monotonic() + INSTALL_WAIT
+        while status(sl)["updating"] and time.monotonic() < deadline:
+            time.sleep(0.5)
+        now = status(sl)
+        log(f"Steam's FEX tool is on {branch}: " + ("Steam is still installing it" if now["updating"] else now["version"] or "installed"))
+    print(json.dumps(now))
+    return 0
+
+
+def main(argv):
+    sl = steam_library()
+    if argv == ["status"]:
+        print(json.dumps(status(sl)))
+        return 0
+    if len(argv) == 2 and argv[0] == "set":
+        try:
+            return join(sl, argv[1])
+        except OSError as err:
+            log(f"could not change the FEX tool's branch: {err}")
+            return 1
+    log("usage: retroforge-steam-fex status|set BRANCH")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -62,6 +62,7 @@ var _os: Resource  # retroforge_os.gd, installed as OGUI's platform.os
 var _tool: RefCounted  # proton_tool.gd
 var _keep: RefCounted  # steam_keep.gd
 var _direct: RefCounted  # steam_direct.gd
+var _fex: RefCounted  # steam_fex.gd
 var _stores_page: RefCounted  # steam_settings.gd: Settings > Stores
 var _store_rows: RefCounted  # store_settings.gd: GOG and Epic sign-in
 var _watch: RefCounted  # rom_watch.gd
@@ -143,6 +144,7 @@ func _ready() -> void:
 	_tool = load(plugin_base.path_join("proton_tool.gd")).new().setup(get_tree())
 	_keep = load(plugin_base.path_join("steam_keep.gd")).new().setup(get_tree())
 	_direct = load(plugin_base.path_join("steam_direct.gd")).new().setup(get_tree())
+	_fex = load(plugin_base.path_join("steam_fex.gd")).new().setup(get_tree())
 	if is_instance_valid(_emulators_screen):
 		_emulators_screen.page.steam_rows = _add_steam_rows
 		_emulators_screen.page.proton_entry = _tool.entry
@@ -207,6 +209,8 @@ func unload() -> void:
 		_keep.detach()
 	if _direct:
 		_direct.detach()
+	if _fex:
+		_fex.detach()
 	if _store_rows:
 		_store_rows.detach()
 	if _stores_page:
@@ -291,10 +295,10 @@ func _add_emulators_screen() -> void:
 
 
 ## Apps > Steam Client's page ends with these, under its own rows (apps_page.gd builds the page
-## again at each visit, so this runs each time): keep Steam running, start without Steam. A row whose
-## command is missing is left out.
+## again at each visit, so this runs each time): keep Steam running, start without Steam, the FEX
+## tool's branch. A row whose command is missing is left out.
 func _add_steam_rows(box: Node) -> void:
-	for row in [_keep, _direct]:
+	for row in [_keep, _direct, _fex]:
 		row.attach(box)
 
 

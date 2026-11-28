@@ -709,6 +709,22 @@ setup client` until the unit stopped (Parking Garage Rally Circuit after a crash
 On FEX-2611 the server first gained nothing anyway: Megabonk's window 30-38 s after the launch with it or
 without (2026-11-24). The runtime's helpers keep running without Multiblock on every version.
 
+**The tool's branch** (Apps > Steam Client > "FEX for Linux games", `steam_fex.gd`,
+`/usr/bin/retroforge-steam-fex status|set BRANCH`). Steam's FEX tool (app 3127680) is one copy for every
+x86 Linux game, with Valve's branches as its Properties > Betas offers them: `public` (Stable:
+FEX-2607-76, built 2026-07-10), `beta` (FEX-2611, 2026-11-05) and `bleeding-edge` (FEX-2611-112 on
+2026-11-28, rebuilt most days); `gamma` and `previous` name Stable's build and are not offered. The row
+lists them with the day of each build and shows the installed tool's own version. The running client
+makes the change (`SteamClient.Apps.JoinAppContentBeta` over the DevTools port, as the compatibility
+tool row reaches Steam): it wrote the branch to the tool's manifest at once and had downloaded and
+installed the other build, 15-18 MB, 5 s after the call, three times of three, with its UI closed
+(MANGMI Air X, 2026-11-28). A branch written to the manifest while the client is stopped is not used:
+the client's next start marked the tool `Update Required` and put the download off by six hours (`Update
+delayed for 22033 secs`). So nothing changes with no client running, nor while Steam runs a game, and the
+row says which. Windows games are not affected: each arm64 Proton has its own FEX compiled in
+(`libarm64ecfex`, `libwow64fex`: FEX-2610 in Proton-CachyOS ARMv8.0 of 2026-10-15), which changes only
+with the Proton.
+
 ### Only our drivers in the guest
 
 Most of those helpers are pressure-vessel's library capture: through the guest's x86 ld.so, for each

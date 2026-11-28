@@ -377,6 +377,22 @@ assert "for row in [_tool, _tso, " in s and "_focus_group.current_focus = _tool 
 choice = s[s.index("func _on_game_choice("):s.index("## The game's emulator options")]
 assert 'args.append_array(["set", key, str(values[index])])' in choice and "if code == 3" in choice
 PY4
+# The FEX tool's branch (x86 Linux games) is Steam's own setting too, one for every game: its row ends
+# Apps > Steam Client's rows, shows what retroforge-steam-fex says and changes it through that command,
+# and says why nothing changed while Steam runs a game (exit 3) or is not running (exit 4).
+python3 - "$SRC/plugin.gd" "$SRC/steam_fex.gd" <<'PY5' \
+  && ok "Apps > Steam Client ends with the FEX tool's branch row, read from and changed through retroforge-steam-fex" \
+  || bad "plugin.gd does not attach steam_fex.gd after the Steam toggles, or the row does not go through retroforge-steam-fex"
+import sys
+plugin, row = (open(p).read() for p in sys.argv[1:3])
+assert 'load(plugin_base.path_join("steam_fex.gd")).new().setup(get_tree())' in plugin and "_fex.detach()" in plugin
+assert "for row in [_keep, _direct, _fex]:" in plugin
+assert 'const TOOL := "/usr/bin/retroforge-steam-fex"' in row
+assert 'Command.create(TOOL, ["status"])' in row and 'Command.create(TOOL, ["set", want])' in row
+assert row.index("_row.disabled = true") < row.index("target.add_child(_row)") < row.index("_row.clear()")
+chosen = row[row.index("func _on_selected("):row.index("func _notify(")]
+assert "3: _notify(" in chosen and "4: _notify(" in chosen
+PY5
 
 # =================================================================================================
 CASE="zip"
