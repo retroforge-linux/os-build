@@ -318,7 +318,11 @@ cat >"$W/bin/fakekill" <<EOF
 sig=\$1; shift; echo "\$sig \$*" >>"$W/kills"
 if [ "\$sig" = -TERM ]; then for p in "\$@"; do rm -rf "$P/\${p:?}"; done; fi
 EOF
-chmod +x "$W/bin/systemctl" "$W/bin/systemd-run" "$W/bin/fakekill"
+cat >"$W/bin/prlimit" <<EOF
+#!/usr/bin/env bash
+echo "\$*" >>"$W/prlimit.args"
+EOF
+chmod +x "$W/bin/systemctl" "$W/bin/systemd-run" "$W/bin/fakekill" "$W/bin/prlimit"
 fakeproc() {  # fakeproc <pid> <ppid> <comm> <argv...>
   local pid=$1 ppid=$2 comm=$3; shift 3
   mkdir -p "$P/$pid"; echo "$comm" >"$P/$pid/comm"; printf '%s\0' "$@" >"$P/$pid/cmdline"
@@ -355,6 +359,11 @@ grep -qx "rt: unset" "$W/call1" && ok "STEAM_RUNTIME is unset" || bad "$(grep rt
 ( ulimit -c unlimited 2>/dev/null; wrap 0 -gamepadui -silent steam://rungameid/42 )
 grep -qx "core: 0" "$W/call1" && ok "no core files from the client or what it starts, whatever the session's limit" \
   || bad "$(grep core: "$W/call1")"
+CCONF="$W/home/.config/retroforge/game-core-dumps.conf"; mkdir -p "$(dirname "$CCONF")"; echo "GAME_CORE_DUMPS=on" >"$CCONF"
+( ulimit -c unlimited 2>/dev/null; wrap 0 -gamepadui -silent steam://rungameid/42 )
+grep -qx "core: unlimited" "$W/call1" && ok "Settings > General > Game crash dumps on: the session's core limit" \
+  || bad "Game crash dumps on: $(grep core: "$W/call1")"
+rm -f "$CCONF"
 [ -z "$WERR" ] && ok "nothing on stderr" || bad "stderr: $WERR"
 [ "$(readlink "$W/home/.steam/bin64")" = "$WROOT/ubuntu12_64" ] && [ "$(readlink "$W/home/.steam/bin32")" = "$WROOT/ubuntu12_32" ] \
   && ok "~/.steam/bin64 and bin32 point at ubuntu12_64 and ubuntu12_32 (the overlay's preload paths)" || bad "links: $(ls -la "$W/home/.steam")"
@@ -708,6 +717,20 @@ kill -0 "$wpid" 2>/dev/null && ok "Steam refuses it (the game already runs): the
 gone 4242
 finish
 [ "$WRC" = 0 ] && ok "and ends with it" || bad "rc=$WRC $(cat "$W/err")"
+
+CASE="keep: the kept client's core limit, at each launch handed to it"
+for want in 0 unlimited; do
+  reset_keep; touch "$W/unit-active"; rm -f "$W/prlimit.args"
+  mkdir -p "$W/home/.steam"; fakeproc 7100 1 steam "$WROOT/steamrtarm64/steam"; echo 7100 >"$W/home/.steam/steam.pid"
+  [ "$want" = unlimited ] && echo "GAME_CORE_DUMPS=on" >"$CCONF"
+  fakeproc 4242 1 reaper "$STEAM_REAPER" SteamLaunch AppId=42 -- game
+  bg_wrap RETROFORGE_STEAM_KEEP=on -- steam://rungameid/42
+  until_true '[ -e "$W/call1" ]'
+  grep -qx -- "--pid 7100 --core=$want:" "$W/prlimit.args" 2>/dev/null \
+    && ok "set to $want (soft) before the client gets the launch: its game inherits Game crash dumps" \
+    || bad "prlimit: $(cat "$W/prlimit.args" 2>&1)"
+  gone 4242; finish; gone 7100; rm -f "$W/home/.steam/steam.pid" "$CCONF"
+done
 
 CASE="keep: turned off during a game"
 reset_keep; touch "$W/unit-active"

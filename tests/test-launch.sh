@@ -1008,6 +1008,15 @@ touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null; reset_logs
 ( ulimit -c unlimited; exec "$LAUNCH" psx "$ROM" 2>"$T/launch.err" ) & lpid=$!; echo "$lpid" >> "$T/pids"
 wait_for emu_up; [ "$(field core)" = 0 ] && ok "by default the emulator runs with no core file (RLIMIT_CORE 0)" || bad "default core limit: '$(field core)'"
 touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null; reset_logs
+# Settings > General > Game crash dumps (game-core-dumps.conf, python/crash_dumps.py): on keeps the limit.
+CCONF="$HOME/.config/retroforge/game-core-dumps.conf"; mkdir -p "$(dirname "$CCONF")"; echo "GAME_CORE_DUMPS=on" > "$CCONF"
+( ulimit -c unlimited; exec "$LAUNCH" psx "$ROM" 2>"$T/launch.err" ) & lpid=$!; echo "$lpid" >> "$T/pids"
+wait_for emu_up; [ "$(field core)" = unlimited ] && ok "Game crash dumps on: the emulator keeps the session's core limit" || bad "Game crash dumps on: '$(field core)'"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null; reset_logs
+echo "GAME_CORE_DUMPS=on" > "$CCONF"; echo "GAME_CORE_DUMPS=off" >> "$CCONF"
+( ulimit -c unlimited; exec "$LAUNCH" psx "$ROM" 2>"$T/launch.err" ) & lpid=$!; echo "$lpid" >> "$T/pids"
+wait_for emu_up; [ "$(field core)" = 0 ] && ok "Game crash dumps: the last line wins (off)" || bad "GAME_CORE_DUMPS on then off: '$(field core)'"
+touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null; reset_logs; rm -f "$CCONF"
 # OOM victim (header): the emulator starts at 900, as Steam's games do; the launcher keeps ours.
 start_launcher; wait_for emu_up
 [ "$(field oom)" = 900 ] && ok "the emulator starts at oom_score_adj 900, the OOM killer's first choice" \

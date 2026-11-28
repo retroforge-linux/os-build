@@ -116,9 +116,9 @@
 # OGUI, and pipewire-pulse and wireplumber (200, systemd's user@ default) above both. Raising a
 # child needs no privilege. The launcher stays at 0 so it is still there to release the mount.
 #
-# No core file: the emulator starts with RLIMIT_CORE 0, so systemd-coredump logs a crash in the journal
-# (no stack) and reads nothing. A core holds the crashed game's memory until it is written: 41-46 s
-# for Ghostrunner's (MANGMI Air X, 2026-11-26). core_dumps true keeps them for one emulator.
+# No core file unless Settings > General > Game crash dumps is on (python/crash_dumps.py): the emulator
+# starts with RLIMIT_CORE 0, so systemd-coredump logs a crash in the journal (no stack) and reads nothing.
+# core_dumps true in a definition keeps them for that emulator.
 #
 # Exit status: the emulator's (128 + N when signal N ended it), or 2 for a bad invocation or
 # definition, 3 when the emulator is not installed or does not start (its AppImage does not mount),

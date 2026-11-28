@@ -58,10 +58,16 @@ MAGIC_RESTART_EXITCODE=42
 
 log() { echo "steam: $*" >&2; }
 
-# No core files from the client or anything it starts (games, FEX, the web helper): a crash's core holds
-# its memory until written, 383 MB for Stardew Valley under FEX (MANGMI Air X, 2026-11-27), and nobody
-# reads a Steam game's on the device. systemd-coredump still logs each crash in the journal.
-ulimit -c 0
+# Settings > General > Game crash dumps (python/crash_dumps.py), off by default: no core files from the
+# client or anything it starts (games, FEX), as a crash's core holds its memory until written (383 MB for
+# Stardew Valley under FEX, MANGMI Air X, 2026-11-27). The soft limit only: a kept client's is set again
+# at each launch handed to it (kept_core_limit), so the switch needs no restart of Steam.
+game_cores() {
+  local v
+  v="$(sed -n 's/^[[:space:]]*GAME_CORE_DUMPS[[:space:]]*=//p' "${XDG_CONFIG_HOME:-$HOME/.config}/retroforge/game-core-dumps.conf" 2>/dev/null | tail -n1)"
+  [ "$(printf '%s' "$v" | tr -d '[:space:]')" = on ]
+}
+game_cores || ulimit -S -c 0
 
 # The shell's VRAM report limit reaches Steam's games on purpose: retroforge-session starts OGUI and the
 # boot-time client with mesa's vram-report-limit layer on (a 512 MiB heap on a board under 4 GiB), a game
@@ -192,6 +198,14 @@ kept_start() {
   done
   systemd-run --user --quiet --collect --unit="$KEPT_UNIT" -p TasksMax=infinity --working-directory="$HOME" \
     "${env[@]}" --setenv=OGUI_ID=Steam --setenv=RETROFORGE_STEAM_KEPT=1 "$self" "$@" >/dev/null
+}
+kept_core_limit() {  # the kept client's soft core limit as Game crash dumps says now: its next game inherits it
+  local pid comm
+  { read -r pid <"$HOME/.steam/steam.pid"; } 2>/dev/null || return 0
+  case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  { read -r comm <"${RETROFORGE_PROC:-/proc}/$pid/comm"; } 2>/dev/null && [ "$comm" = steam ] || return 0
+  prlimit --pid "$pid" --core="$(game_cores && echo unlimited || echo 0):" 2>/dev/null \
+    || log "could not set the kept client's core limit"
 }
 kept_url() {  # URL: hand a steam:// URL to the running client over its pipe
   ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
@@ -353,6 +367,7 @@ kept_launch() {
       exit 0
     elif [ "$installed" != screen ]; then
       kept_unstick_focus "$appid"
+      kept_core_limit
       log "handing this launch to the kept Steam ($KEPT_UNIT.service)"
       ( cd "$RETROFORGE_STEAM_ROOT/steamrtarm64" &&
         LD_LIBRARY_PATH="$RETROFORGE_STEAM_ROOT/steamrtarm64:$RETROFORGE_STEAM_ROOT/steamrtarm64/video${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \

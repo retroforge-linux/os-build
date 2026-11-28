@@ -8,6 +8,8 @@ import resource
 import subprocess
 import sys
 
+import crash_dumps
+
 ENV = os.environ
 EMU_DATA_DIR = ENV.get("RETROFORGE_EMU_DATA_DIR", "/usr/share/retroforge/emulators")
 EMU_DIR = ENV.get("RETROFORGE_EMU_DIR", "/home/player/emulators")
@@ -47,7 +49,10 @@ def device_field(name):
 
 def emulator_child(core_dumps=False):
     """The preexec_fn of every emulator process: in the child, before exec, the OOM killer's first
-    choice (retroforge-launch's header), and no core file unless core_dumps."""
+    choice (retroforge-launch's header), and no core file unless core_dumps or Settings > General >
+    Game crash dumps (crash_dumps)."""
+    core_dumps = core_dumps or crash_dumps.wanted()
+
     def preexec():
         try:
             with open("/proc/self/oom_score_adj", "w") as f:

@@ -871,6 +871,18 @@ reset_calls()
 store("gog", "launch", "1")
 ok(not [c for c in calls() if c[0] == "runner" and "wineboot" in c], "the prefix is set up once")
 
+CCONF = os.path.join(HOME, ".config", "retroforge", "game-core-dumps.conf")  # Settings > General > Game crash dumps
+with open(CCONF, "w") as f:
+    f.write("GAME_CORE_DUMPS=on\n")
+os.remove(OOMS)
+reset_calls()
+resource.setrlimit(resource.RLIMIT_CORE, (CORE[1], CORE[1]))
+store("gog", "launch", "1")
+resource.setrlimit(resource.RLIMIT_CORE, CORE)
+os.remove(CCONF)
+cores = [json.loads(line)[3] for line in open(OOMS)] if os.path.exists(OOMS) else []
+ok(cores and all(c == [CORE[1], CORE[1]] for c in cores), "Game crash dumps on: the game keeps the session's core limit", str(cores))
+
 CASE = "launch, Proton as installed"
 open(COMPAT_LOG, "w").close()
 reset_calls()

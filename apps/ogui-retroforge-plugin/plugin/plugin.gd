@@ -52,6 +52,7 @@ var _touch_keyboard: RefCounted  # touch_keyboard.gd
 var _buttons: RefCounted  # button_layout.gd
 var _pause: RefCounted  # pause_on_menu.gd
 var _fast_cores: RefCounted  # fast_cores_setting.gd: Settings > General > Fast cores only
+var _crash_dumps: RefCounted  # crash_dumps_setting.gd: Settings > General > Game crash dumps
 var _time_zone: RefCounted  # time_zone_settings.gd
 var _scraper: RefCounted  # scraper_settings.gd
 var _psn: RefCounted  # psn_settings.gd
@@ -120,6 +121,9 @@ func _ready() -> void:
 	_fast_cores = load(plugin_base.path_join("fast_cores_setting.gd")).new().setup(get_tree())
 	if not _fast_cores.attach():
 		logger.warn("OGUI general settings layout not found; no Fast cores only toggle")
+	_crash_dumps = load(plugin_base.path_join("crash_dumps_setting.gd")).new().setup(get_tree())
+	if not _crash_dumps.attach():
+		logger.warn("OGUI general settings layout not found; no Game crash dumps toggle")
 	_time_zone = load(plugin_base.path_join("time_zone_settings.gd")).new().setup(get_tree())
 	if not _time_zone.attach():
 		logger.warn("no tzdata, or OGUI general settings layout not found; no Time zone row")
@@ -188,6 +192,8 @@ func unload() -> void:
 		_pause.detach()
 	if _fast_cores:
 		_fast_cores.detach()
+	if _crash_dumps:
+		_crash_dumps.detach()
 	if _time_zone:
 		_time_zone.detach()
 	if _scraper:
