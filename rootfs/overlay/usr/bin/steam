@@ -104,7 +104,7 @@ done
 # client running, and Hades played without it (2026-10-22). /usr/bin/retroforge-steam-direct decides
 # (`check`: the player's setting, no client running but the kept one, a launch of this game that Steam
 # has run on this device before and that needs nothing only the client sets up) and replays that
-# launch (`run`). Then the client's own set-up below is skipped (the x86 guest, the ARMv8.0 Proton and
+# launch (`run`). Then the client's own set-up below is skipped (the x86 guest, our Proton and
 # FEX), but not the D-Bus check, and this script becomes the helper. With "Keep Steam
 # running" on, the kept client runs beside the game, minimal ("Beside a game started without it"
 # below). Anything else (Steam's UI, an install, a game's first launch, an x86 game) starts the
@@ -160,18 +160,19 @@ fi
 # is stopped once that launch ends. Without a user manager (systemd-run fails), Steam runs with this
 # launch, as with the setting off. steam-install's run of the client's update sets
 # RETROFORGE_STEAM_KEPT=1 too: the client runs under it, its lines on the install's bar.
-# ARMv8.0 CPUs: our Proton becomes Steam's tool only while the client is stopped (the ARMv8.0 block
-# below). A kept client that started without it (opened while Steam Client's install or the build's
-# download ran, or a Windows game installed under it since) is stopped first when nothing else uses
-# it, so the client this launch starts has it: retroforge-steam-proton pending (once per entry and
-# boot) and retroforge-steam-keep stop-unused. That launch starts Steam cold.
+# Where our Proton is Steam's tool (retroforge-steam-proton says on which boards: ARMv8.0 CPUs, and
+# GPUs that need DXVK-Sarek), it becomes so only while the client is stopped ("Our Proton as Steam's
+# tool" below). A kept client that started without it (opened while Steam Client's install or the
+# build's download ran, or a game it is set for installed under it since) is stopped first when nothing
+# else uses it, so the client this launch starts has it: retroforge-steam-proton pending (once per
+# entry and boot; never on another board) and retroforge-steam-keep stop-unused. That launch starts
+# Steam cold.
 # TEST SEAMS (tests/test-steam.sh): RETROFORGE_STEAM_KEEP_CLI, RETROFORGE_STEAM_LAUNCH_WAIT,
 # RETROFORGE_STEAM_MINIMAL_DELAY, RETROFORGE_STEAM_SIGNIN_WAIT, RETROFORGE_STEAM_UI_WAIT,
 # RETROFORGE_STEAM_UI_SETTLE, RETROFORGE_STEAM_UI_CLOSE_WAIT, RETROFORGE_PROC, RETROFORGE_STEAM_PROTON_CLI, RETROFORGE_CPUINFO, and
 # systemd-run and systemctl from PATH.
 keep_cli="${RETROFORGE_STEAM_KEEP_CLI:-/usr/bin/retroforge-steam-keep}"
 proton_cli="${RETROFORGE_STEAM_PROTON_CLI:-/usr/bin/retroforge-steam-proton}"
-lacks_atomics() { grep '^Features' "${RETROFORGE_CPUINFO:-/proc/cpuinfo}" 2>/dev/null | grep -vqw atomics; }
 KEPT_UNIT=retroforge-steam
 kept_active() { systemctl --user is-active --quiet "$KEPT_UNIT.service" 2>/dev/null; }
 kept_start() {
@@ -307,8 +308,8 @@ kept_launch() {
   case "$appid" in *[!0-9]*) appid="" ;; esac
   # before the hand-off, so Steam's UI launch never takes this game for one started from it
   [ -z "$appid" ] || "$keep_cli" follow "$appid" $$
-  if kept_active && lacks_atomics && [ -x "$proton_cli" ] && "$proton_cli" pending && "$keep_cli" stop-unused; then
-    log "stopped the kept Steam: it starts again with Proton-CachyOS ARMv8.0 as its tool"
+  if kept_active && [ -x "$proton_cli" ] && "$proton_cli" pending && "$keep_cli" stop-unused; then
+    log "stopped the kept Steam: it starts again with Proton-CachyOS as its tool"
   fi
   if kept_active; then
     local wlog="$RETROFORGE_STEAM_ROOT/logs/webhelper.txt" lines=0 woke wait
@@ -628,8 +629,8 @@ case "${DBUS_SESSION_BUS_ADDRESS-}" in
 esac
 unset STEAM_RUNTIME STEAM_RUNTIME_LIBRARY_PATH
 
-# ARMv8.0 CPUs: Proton-CachyOS ARMv8.0 as Steam's default tool, set while the client is not running
-# (retroforge-steam-proton; nothing elsewhere). TEST SEAM: RETROFORGE_STEAM_PROTON_CLI.
+# Our Proton as Steam's tool, on the boards where Valve's is the wrong one (ARMv8.0 CPUs, GPUs that
+# need DXVK-Sarek): set while the client is not running (retroforge-steam-proton; nothing elsewhere). TEST SEAM: RETROFORGE_STEAM_PROTON_CLI.
 # Only when the client starts: what it sets is the client's, and it also starts an update in the
 # background, which a launch without the client would have competing with the game's start.
 # (proton_cli is set with the kept client's seams above.)

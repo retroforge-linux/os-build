@@ -13,11 +13,13 @@
 #     console_log.txt or console_log.previous.txt, kept in a cache so a rotated log does not lose it;
 #     run as Steam ran it (/bin/sh -c, at oom_score_adj 900), word for word, from the launch entry's
 #     working folder, with Steam's compat variables (the game's library on an SD card too) and the
-#     launch's own environment;
+#     launch's own environment; with the compatibility tool the game is set to in Steam now, when that
+#     is an installed Proton on the logged launch's runtime;
 #   when it is not: the setting off (silently), a client running other than the kept one in the
 #     background (a stale steam.pid is not one), a game Steam never started here, not installed or
-#     changing, an x86 game (Steam's FEX tool), a compat tool that is gone; each says why, and nothing
-#     runs;
+#     changing, an x86 game (Steam's FEX tool), a compat tool that is gone, a game set to a tool its
+#     logged launch cannot be given (one Steam has yet to download, its Linux build), or set back to
+#     Steam's choice since; each says why, and nothing runs;
 #   the wrapper: execs the helper for a game it can start, with the D-Bus check and DXVK-Sarek done
 #     and none of the client's own set-up; with keep-running on, the kept client beside it, minimal:
 #     started first (and signed in) when Steam has a remembered sign-in, without the game's URI; the
@@ -73,13 +75,13 @@ acf "$S" 4628740 "Proton 11.0 (ARM64)" 4
 
 # The app cache (mkappinfo [format]: the current client's shards, or 29 for an older client's
 # appinfo.vdf; tests/lib-steam-appinfo.py): Hades's launch entries (the Vulkan one runs from x64Vk; one
-# entry names a working folder that is not its executable's), and Valve's per-game Proton settings
-# (app 891390).
+# entry names a working folder that is not its executable's), Valve's per-game Proton settings (app
+# 891390), and Steam's own compatibility tools (that app's list and the arm64 one, app 3043620).
 mkappinfo() {
   python3 - "$T/apps.json" <<'PY' && python3 "$ROOT/tests/lib-steam-appinfo.py" "${1:-shards}" "$S" "$T/apps.json"
 import json, sys
 apps = {
-    1145360: {"appinfo": {"appid": 1145360, "common": {"name": "Hades", "type": "Game",
+    1145360: {"appinfo": {"appid": 1145360, "common": {"name": "Hades", "type": "Game", "oslist": "windows",
                                                        "steam_frame_compatibility": {"configuration": {"tso_enable": 0}}}, "config": {
         "installdir": "Hades", "launch": {
             "0": {"executable": "x64\\Hades.exe", "workingdir": "x64\\", "arguments": "/c=..\\ /steampowered"},
@@ -97,8 +99,15 @@ apps = {
     3405340: {"appinfo": {"appid": 3405340, "common": {"name": "Megabonk", "type": "Game",
                                                        "steam_frame_compatibility": {"configuration": {"tso_enable": 1}}}}},
     891390: {"appinfo": {"appid": 891390, "common": {"name": "SteamPlay 2.0 Manifests", "type": "Config"}, "extended": {
+        "compat_tools": {"steamlinuxruntime": {"aliases": "native,scout", "appid": 1070560, "display_name": "Steam Linux Runtime 1.0",
+                                               "from_oslist": "linux", "to_oslist": "linux", "unlisted": 0}},
         "app_compat_configs": {"2310": {"appid": 2310, "config": "oldglstr", "comment": "QUAKE"},
                                "1145360": {"appid": 1145360, "config": "gamedrive,heapdelayfree", "comment": "test"}}}}},
+    3043620: {"appinfo": {"appid": 3043620, "common": {"name": "Steam Frame ARM64 Compat List", "type": "Config"}, "extended": {"compat_tools": {
+        "proton-experimental-arm64": {"aliases": "proton-experimental", "appid": 4427310, "display_name": "Proton Experimental (ARM64)",
+                                      "from_oslist": "windows", "to_oslist": "linux"},
+        "proton_11-arm64": {"aliases": "proton-stable-arm64,proton-stable", "appid": 4628740, "display_name": "Proton 11.0-3 (ARM64)",
+                            "from_oslist": "windows", "require_tool_appid": 4185400, "to_oslist": "linux"}}}}},
 }
 json.dump(apps, open(sys.argv[1], "w"))
 PY
@@ -321,13 +330,75 @@ fresh_log; reset_run; mapping - proton-cachyos-armv8-retroforge
 direct -- run 1145360
 grep -qxF "$OURS/proton" "$T/ran.args" && [ "$(ran_env STEAM_COMPAT_TOOL_PATHS)" = "$OURS:$SLR" ] && grep -q "runs with proton-cachyos-armv8-retroforge" <<<"$ERR" \
   && ok "Steam's default is our tool: it runs instead of the Proton Steam logged" || bad "args=$(grep proton "$T/ran.args") err=$ERR"
-fresh_log; reset_run; mapping proton_11_arm64 proton-cachyos-armv8-retroforge
+fresh_log; reset_run; mapping proton_11-arm64 proton-cachyos-armv8-retroforge
 direct -- run 1145360
-grep -qxF "$PROTON/proton" "$T/ran.args" && ok "a game set to one of Steam's own tools keeps its logged launch" || bad "args=$(grep proton "$T/ran.args")"
+grep -qxF "$PROTON/proton" "$T/ran.args" && ok "a game set to the tool Steam logged keeps its logged launch (one of Steam's own, by its app's folder)" || bad "args=$(grep proton "$T/ran.args") err=$ERR"
 fresh_log; reset_run; mapping - proton-cachyos-armv8-retroforge
 sed -i.b 's/4185400/1628350/' "$OURS/toolmanifest.vdf"
 direct -- run 1145360
 grep -qxF "$PROTON/proton" "$T/ran.args" && ok "a tool on another runtime is not swapped in" || bad "args=$(grep proton "$T/ran.args")"
+mapping proton-cachyos-armv8-retroforge proton_11-arm64
+direct -- check 1145360
+[ "$RC" = 1 ] && grep -q "set to run with proton-cachyos-armv8-retroforge now, which Steam's last launch of it did not use" <<<"$ERR" \
+  && ok "nor replayed when the game itself is set to it: Steam starts it on that runtime once" || bad "rc=$RC err=$ERR"
+mv "$OURS/toolmanifest.vdf.b" "$OURS/toolmanifest.vdf"
+
+# The game's own tool (Game settings > RetroForge > Compatibility tool, or Steam's Properties): followed
+# at once where the logged launch can be given it.
+CASE="run: the tool the game is set to"
+OURS_CMD="$(cmdline 1145360 "$SLR" "$OURS" "$GAME/x64Vk/Hades.exe")"
+ours_log() { fresh_log; logline "$SLOG" "2026-10-23 08:00:00" 1145360 "$OURS_CMD"; }   # Steam last ran it with our build
+fresh_log; reset_run; mapping proton-cachyos-armv8-retroforge proton_11-arm64
+direct -- run 1145360
+grep -qxF "$OURS/proton" "$T/ran.args" && [ "$(ran_env STEAM_COMPAT_TOOL_PATHS)" = "$OURS:$SLR" ] \
+  && ok "set to a compatibilitytools.d Proton: it runs instead of the one Steam logged" || bad "args=$(grep proton "$T/ran.args") err=$ERR"
+ours_log; reset_run; mapping proton_11-arm64 proton-cachyos-armv8-retroforge
+direct -- run 1145360
+grep -qxF "$PROTON/proton" "$T/ran.args" && [ "$(ran_env STEAM_COMPAT_TOOL_PATHS)" = "$PROTON:$SLR" ] && grep -q "runs with Proton 11.0 (ARM64), not proton-cachyos-armv8-retroforge" <<<"$ERR" \
+  && ok "set to one of Steam's own Protons, installed: its app's folder takes the logged tool's place" || bad "args=$(grep proton "$T/ran.args") err=$ERR"
+ours_log; reset_run; mapping proton-stable proton-cachyos-armv8-retroforge
+direct -- run 1145360
+grep -qxF "$PROTON/proton" "$T/ran.args" && ok "set by an alias (proton-stable): the tool it means in the arm64 list" || bad "args=$(grep proton "$T/ran.args") err=$ERR"
+ours_log; reset_run; mapping proton-experimental-arm64 proton-cachyos-armv8-retroforge
+direct -- check 1145360
+[ "$RC" = 1 ] && grep -q "app 1145360 starts through Steam: it is set to run with Proton Experimental (ARM64) now" <<<"$ERR" \
+  && ok "set to a tool Steam has yet to download: through Steam, which downloads it" || bad "rc=$RC err=$ERR"
+direct -- run 1145360
+[ "$RC" = 1 ] && [ ! -e "$T/ran.args" ] && ok "and nothing is replayed with the old tool" || bad "rc=$RC args=$(cat "$T/ran.args" 2>&1)"
+acf "$S" 1070560 SteamLinuxRuntime 4; mkdir -p "$S/steamapps/common/SteamLinuxRuntime"
+mapping steamlinuxruntime proton-cachyos-armv8-retroforge
+direct -- check 1145360
+[ "$RC" = 1 ] && grep -q "set to run with Steam Linux Runtime 1.0 now" <<<"$ERR" \
+  && ok "set to the Linux runtime (the game's other build): through Steam" || bad "rc=$RC err=$ERR"
+mapping some-tool-that-is-gone proton-cachyos-armv8-retroforge
+direct -- check 1145360
+[ "$RC" = 1 ] && grep -q "set to run with some-tool-that-is-gone now" <<<"$ERR" && ok "set to a tool nothing lists: through Steam" || bad "rc=$RC err=$ERR"
+mv "$S/appcache" "$T/appcache.away"; reset_run
+direct -- run 1145360
+grep -qxF "$OURS/proton" "$T/ran.args" && ok "Steam's lists unreadable: a name that cannot be looked up leaves the logged launch as it is" || bad "rc=$RC args=$(grep proton "$T/ran.args" 2>&1) err=$ERR"
+mv "$T/appcache.away" "$S/appcache"
+# Back to Steam's choice (Default): no entry to follow, so the launch logged with the tool just left is
+# not replayed, until Steam has logged a newer one.
+printf 'Features\t: fp asimd atomics\n' >"$T/v82"
+ours_log; reset_run; mapping proton-cachyos-armv8-retroforge proton_11-arm64
+direct RETROFORGE_CPUINFO="$T/v82" -- game 1145360 set tool default
+[ "$RC" = 0 ] && ! grep -q '"1145360"' "$S/config/config.vdf" && [ -f "$CACHE/1145360.stale" ] \
+  && ok "Default: the game's entry is gone from config.vdf, and Steam's launch with the old tool is marked" || bad "rc=$RC err=$ERR $(ls "$CACHE" 2>&1)"
+direct -- check 1145360
+[ "$RC" = 1 ] && grep -q "its compatibility tool went back to Steam's choice after Steam's launch of 2026-10-23 08:00:00" <<<"$ERR" \
+  && ok "that launch is not replayed: Steam starts the game once, with its own choice" || bad "rc=$RC err=$ERR"
+logline "$SLOG" "2026-10-23 09:00:00" 1145360 "$HADES_CMD"
+direct -- check 1145360
+[ "$RC" = 0 ] && [ ! -e "$CACHE/1145360.stale" ] && ok "once Steam has logged a newer launch, that one is replayed, and the mark is gone" || bad "rc=$RC err=$ERR"
+direct RETROFORGE_CPUINFO="$T/v82" -- game 1145360 set tool proton_11-arm64
+[ "$RC" = 0 ] && [ ! -e "$CACHE/1145360.stale" ] && ok "a tool chosen leaves no mark: its entry is followed" || bad "rc=$RC err=$ERR"
+fresh_log; reset_run; mapping proton_11-arm64 proton-cachyos-armv8-retroforge
+direct RETROFORGE_CPUINFO="$T/v82" -- game 1145360 set tool default
+direct -- run 1145360
+[ -f "$CACHE/1145360.stale" ] && grep -qxF "$OURS/proton" "$T/ran.args" \
+  && ok "Default where Steam's default is a compatibilitytools.d tool: the launch is replayed with that one, as for any game with no tool of its own" \
+  || bad "rc=$RC args=$(grep proton "$T/ran.args" 2>&1) err=$ERR"
+rm -f "$S/steamapps/appmanifest_1070560.acf" "$CACHE/1145360.stale"; rm -rf "$S/steamapps/common/SteamLinuxRuntime"
 rm -rf "$S/compatibilitytools.d" "$S/config/config.vdf"
 
 CASE="run: per-game choices"

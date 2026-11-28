@@ -428,9 +428,9 @@ app id and OGUI's Steam handling (patch 0017) works as with the client.
   launch wrapper or reaper is gone. A file not written yet, in a folder that exists (a log the game
   is told to write), is fine. Paths are compared resolved, so a library named through a link works.
 
-A launch option or compat tool the player changes in Steam reaches a game started this way only
-once Steam has started it again. Open Main menu > Emulators > Steam Client and start the game from
-there once.
+A launch option the player changes in Steam reaches a game started this way only once Steam has
+started it again. Open Main menu > Emulators > Steam Client and start the game from there once. Its
+compatibility tool is followed at once (below).
 
 **The kept client beside it.** With Steam kept running in the background (on by default),
 `/usr/bin/steam` makes sure the kept client runs beside the game, minimal, before it starts the game.
@@ -459,12 +459,36 @@ opens Steam (2026-10-25; it was on only for the SM6115 and the 4 GB boards befor
 next launch without a library rescan. Keeping Steam running applies to all of them: a game started
 without the client gets the kept client beside it, and first launches and Steam's own UI go to it.
 
-**Per game** (Game settings > RetroForge, `game_settings_page.gd`): a Steam game's FEX TSO (on or off),
-launch option and resolution, and an x86 game's graphics driver ("The device's own driver", below:
-set before every launch, through the client too). (Its own Proton, ARMv8.0 stable or experimental, went with the Valve-based
-ARMv8.0 builds on 2026-11-01: there is one ARMv8.0 Proton, and Steam's Properties > Compatibility picks
-any other.) `retroforge-steam-direct game APPID [set KEY VALUE]` keeps them in
-`~/.config/retroforge/steam-games.json`. A launch without the client applies them to Steam's logged
+**Per game** (Game settings > RetroForge, `game_settings_page.gd`): a Steam game's compatibility tool,
+FEX TSO (on or off), launch option and resolution, and an x86 game's graphics driver ("The device's
+own driver", below: set before every launch, through the client too).
+`retroforge-steam-direct game APPID [set KEY VALUE]` keeps them in
+`~/.config/retroforge/steam-games.json`, all but the tool.
+
+The **compatibility tool** is Steam's own setting, the one its Properties > Compatibility makes: the
+game's entry in `config.vdf`'s `CompatToolMapping`, at priority 250 (`python/steam_tool.py`, through
+`game APPID set tool NAME|default`). The row offers the tools in `compatibilitytools.d`, the Protons of
+Steam's arm64 list (Proton 11.0-3 (ARM64), Proton Experimental (ARM64); "slower on this CPU" on an
+ARMv8.0 one, where the kernel emulates the LSE atomics Valve builds them with) and, for a game with a
+Linux build, Steam Linux Runtime 1.0, which runs that x86 build through Steam's FEX tool. On a GPU that
+needs DXVK-Sarek (the Adreno 610 and 613, `steam_tool.needs_sarek`) Valve's Protons are not offered:
+they carry only upstream DXVK, so no DirectX game starts with them there (Among Us on the MANGMI Air X,
+2026-11-28: `d3d11: failed to create factory (80004005)`, then Unity's crash handler; user's choice). Steam's page
+lists 17 to 21 tools; the 14 x86 Protons and the ones it marks incompatible are left out (user's
+choice, 2026-11-27), and a game set to one of those in Steam keeps it. Default is no entry (Steam's
+choice: Valve's recommendation for the game, else Steam's default), except where our build is Steam's
+tool (an ARMv8.0 CPU, or a GPU that needs DXVK-Sarek) for a game Steam would start with a Proton, where
+it is the entry `retroforge-steam-proton` gives the game ("When it is installed", below). A running client makes the
+change itself (`SteamClient.Apps.SpecifyCompatTool` over the DevTools port, the kept client's web helper
+woken for ~10 s and frozen again): it applies at once and the client writes `config.vdf` in the same
+second, with no restart (Among Us, MANGMI Air X, 2026-11-27). With no client the file is edited; while
+Steam runs a game nothing changes, and the page says to close the game first. A launch without the
+client follows the tool the game is set to, set here or on Steam's page: an installed Proton on the
+logged launch's runtime takes the logged one's place; any other tool (one Steam has yet to download,
+the Linux build, an x86 Proton) sends that launch through Steam, which logs the new one; and a game
+set back to Default goes through Steam once, since Steam's choice is Steam's to make, unless Steam's
+default is a `compatibilitytools.d` tool that fits the logged launch (the ARMv8.0 boards' build), which
+a game with no tool of its own has always started with when it starts without the client. A launch without the client applies them to Steam's logged
 command: the tool when it runs on the same runtime; the launch option's executable, its arguments and
 its working folder, the arguments in place of those of the entry Steam ran (the player's own launch
 options after them stay); `STEAM_FEX_TSOENABLED`, which Proton writes into the
@@ -1086,7 +1110,9 @@ follows it too.
 **When it is installed.** On these CPUs it is not an optional download:
 - **Steam:** part of Steam Client's install (`steam-install`, a stage of its bar after the x86 guest and
   before the client's own update; the install fails without it). Then `retroforge-steam-proton apply`
-  makes it Steam's default compatibility tool and each installed Windows-only game's own. The client
+  makes it Steam's default compatibility tool and the own tool of each installed game Steam would start
+  with a Proton: a Windows-only game, and one with a Linux build that Valve maps to a Proton all the
+  same (below). The client
   writes `config.vdf` only at its first real start, so when there is none yet `apply` writes one holding
   just that default, which the client reads and keeps; the first Windows game already runs with it. It
   does so again at each `steam` start (updating it in the
@@ -1098,10 +1124,31 @@ follows it too.
   holding its UI (`retroforge-steam-proton pending`, `retroforge-steam-keep stop-unused`). That
   launch starts Steam cold, with the tool set. Once per entry and boot: an entry the client drops
   after it was written does not restart it again. A game started from inside Steam's own UI while
-  it is open still gets the old tool. On CPUs with LSE atomics Proton-CachyOS stays an optional
-  download (Apps > Proton) and is never made a default.
+  it is open still gets the old tool. On a board with LSE atomics whose GPU runs upstream DXVK
+  Proton-CachyOS stays an optional download (Apps > Proton) and is never made a default.
 - **GOG and Epic:** part of the first game's install (`store install`: its download is 85-99% of that
   bar), on every CPU, as the tool this CPU takes.
+
+**Games with a Linux build that Valve maps to a Proton (2026-11-28).** Valve recommends a tool for a
+game in two places of the app cache, and the first that names one counts: `extended/app_mappings` of app
+891390 (priority 100; 36 games on 2026-11-28, 30 of them to a Proton; Hollow Knight: `proton-stable`) and
+the game's own Deck test result, `common/steam_deck_compatibility/configuration/recommended_runtime`
+(priority 85: `native`, or a Proton; SuperTux: `proton-10.0-3RC`). The arm64 client runs any Proton named
+there as Proton 11.0-3 (ARM64), and both beat Steam's default (75). So the client started Hollow Knight
+with Valve's Proton while the launches without the client swapped ours in, and on the Air X it died
+there like Among Us (`d3d11: failed to create factory (80004005)`, 63 s after Steam created its process,
+most of them Proton converting the prefix). Such a game gets its own entry like a Windows-only one
+(`steam_tool.proton_game`; user's choice), and its Default in Game settings is our build, with Steam
+Linux Runtime 1.0 (its Linux build) as the other choice. A game Valve leaves on its Linux build
+(`native`: Stardew Valley, Megabonk) stays Steam's.
+
+**GPUs that need DXVK-Sarek on a CPU with LSE atomics (the SM4450's Adreno 613; user's choice,
+2026-11-28).** Valve's Protons start no DirectX game there either, so the same rules hold with
+Proton-CachyOS's own arm64 build (`proton-cachyos-arm64-retroforge`, ~356 MB;
+`steam_tool.our_proton` says which build a board takes): part of Steam Client's install, Steam's
+default, and the own tool of each game Steam would start with a Proton. A device that has Steam Client
+already downloads it in the background at the next `steam` start, and it is set at the first start of
+the client after that (a kept one is restarted for it). Not run on an SM4450 board.
 
 **The Valve-based builds before it (until 2026-11-01).** ARMv8.0 CPUs took
 [sunshineinabox/proton-armv8](https://github.com/sunshineinabox/proton-armv8)'s rebuild of Valve's Proton

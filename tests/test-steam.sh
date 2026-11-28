@@ -1231,8 +1231,9 @@ XDG_CACHE_HOME="$W/cache" wrap 0 -gamepadui
 [ "$WRC" = 0 ] && [ -e "$W/call1" ] && ok "once it is done (its lock file left, not held), Steam starts" || bad "rc=$WRC err=$WERR"
 rm -rf "$W/cache"
 
-# ARMv8.0: a kept client that started without our Proton (retroforge-steam-proton pending) is stopped
-# before it gets a launch, when nothing else uses it, so the launch starts one that has it.
+# Where our Proton is Steam's tool: a kept client that started without it (retroforge-steam-proton
+# pending) is stopped before it gets a launch, when nothing else uses it, so the launch starts one that
+# has it. The helper knows the boards (ARMv8.0 CPUs, GPUs that need DXVK-Sarek): it is asked on every one.
 CASE="keep: stop-unused"
 reset_keep; rm -rf "$W/run/retroforge-steam-full"; touch "$W/unit-active"
 fakeproc 4343 1 reaper "$STEAM_REAPER" SteamLaunch AppId=43 -- game
@@ -1256,7 +1257,7 @@ case "\$1" in pending) [ -e "$W/pending" ] ;; apply) echo armv8 ;; esac
 EOF
 chmod +x "$W/bin/proton-pending"
 PVARS=(RETROFORGE_STEAM_KEEP=on RETROFORGE_CPUINFO="$W/v80" RETROFORGE_STEAM_PROTON_CLI="$W/bin/proton-pending")
-CASE="keep: ARMv8.0, the tool pending"
+CASE="keep: our Proton pending"
 reset_keep; rm -f "$W/proton.calls"; touch "$W/unit-active" "$W/pending"
 bg_wrap "${PVARS[@]}" -- -gamepadui -steamos3
 until_true '[ -s "$W/sdrun.args" ]'
@@ -1264,7 +1265,7 @@ grep -q "stop retroforge-steam.service" "$W/sysd.log" && [ -s "$W/sdrun.args" ] 
   && ok "the kept client is stopped, and this launch starts a new one (whose run sets the tool first), not handed to the old one" \
   || bad "sysd=$(cat "$W/sysd.log") call1=$(cat "$W/call1" 2>&1) $(cat "$W/err")"
 kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
-grep -q "starts again with Proton-CachyOS ARMv8.0" "$W/err" && ok "and it is said" || bad "$(cat "$W/err")"
+grep -q "starts again with Proton-CachyOS as its tool" "$W/err" && ok "and it is said" || bad "$(cat "$W/err")"
 reset_keep; rm -f "$W/proton.calls"; touch "$W/unit-active" "$W/pending"
 fakeproc 4343 1 reaper "$STEAM_REAPER" SteamLaunch AppId=43 -- game
 bg_wrap "${PVARS[@]}" -- -gamepadui
@@ -1279,10 +1280,11 @@ grep -qx pending "$W/proton.calls" 2>/dev/null && [ -e "$W/call1" ] && [ ! -e "$
   && ok "nothing pending: handed over as before" || bad "calls=$(cat "$W/proton.calls" 2>&1) $(cat "$W/err")"
 kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
 reset_keep; rm -f "$W/proton.calls"; touch "$W/unit-active" "$W/pending"
-bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_PROTON_CLI="$W/bin/proton-pending" -- -gamepadui   # $W/cpuinfo has atomics
-until_true '[ -e "$W/call1" ]'
-[ -e "$W/call1" ] && [ ! -e "$W/proton.calls" ] && [ ! -e "$W/sdrun.args" ] \
-  && ok "a CPU with LSE atomics: not even asked" || bad "calls=$(cat "$W/proton.calls" 2>&1)"
+bg_wrap RETROFORGE_STEAM_KEEP=on RETROFORGE_STEAM_PROTON_CLI="$W/bin/proton-pending" -- -gamepadui -steamos3   # $W/cpuinfo has atomics
+until_true '[ -s "$W/sdrun.args" ]'
+grep -qx pending "$W/proton.calls" 2>/dev/null && grep -q "stop retroforge-steam.service" "$W/sysd.log" && [ -s "$W/sdrun.args" ] && [ ! -e "$W/call1" ] \
+  && ok "a CPU with LSE atomics is asked too (its GPU may need Sarek): a pending tool restarts the client there as well" \
+  || bad "calls=$(cat "$W/proton.calls" 2>&1) sysd=$(cat "$W/sysd.log") $(cat "$W/err")"
 kill -TERM "$wpid"; wait "$wpid" 2>/dev/null
 rm -f "$W/pending" "$W/proton.calls"
 reset_keep

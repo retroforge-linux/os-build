@@ -5,8 +5,9 @@
 # in Apps > Proton (retroforge-proton), and when a store game needs a Proton. It downloads the release into the player's home and installs it as
 # <Steam root>/compatibilitytools.d/<dir>/, with DXVK-Sarek on in it where the GPU needs it (the
 # SM4450's Adreno 613; ARMv8.0 CPUs such as the SM6115 take proton-cachyos-armv8.pin).
-# Steam lists it from its next start on. Nothing selects it: the player does, per game or as the Steam
-# Play default (docs/steam-arm64.md).
+# Steam lists it from its next start on. Where the GPU needs Sarek, retroforge-steam-proton makes it
+# Steam's default and it comes with Steam Client's install; elsewhere nothing selects it: the player
+# does, per game or as the Steam Play default (docs/steam-arm64.md).
 #
 # Why: every upstream DXVK (1.10.3, 2.x, 3.x) needs multiViewport, which Turnip does not give the A610.
 # Today it only gets it because session.conf sets TU_DEBUG=noconform there, which Mesa 26.3 removes

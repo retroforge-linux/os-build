@@ -15,7 +15,10 @@
 #   retroforge-steam-direct game APPID [set KEY VALUE]
 #                                        print (JSON) APPID's own FEX TSO, launch option, resolution,
 #                                        graphics driver, graphics API and Run on fast cores (Game
-#                                        settings > RetroForge), after saving one
+#                                        settings > RetroForge), after saving one; and its compatibility
+#                                        tool, the choice of Steam's Properties > Compatibility, after
+#                                        making it in Steam (`set tool NAME|default`; python/steam_tool.py
+#                                        says which tools and how). Exit 3: not while Steam runs a game
 #   retroforge-steam-direct fastcores APPID PID...
 #                                        when APPID runs on fast cores (its choice), put PIDs and the
 #                                        processes below them there (python/fastcores.py): /usr/bin/steam
@@ -81,8 +84,9 @@
 #     Steam Linux Runtime, with settings only the client makes;
 #   - the command names no compat tool or no program of the game, or a path in a folder that is gone
 #     (the compat tool was changed or uninstalled), or Steam's launch wrapper or reaper is gone.
-# A launch option or compat tool the player changes in Steam reaches a game started this way once
-# Steam has started it again (Main menu > Emulators > Steam Client, then the game from there).
+# A launch option the player changes in Steam reaches a game started this way once Steam has started
+# it again (Main menu > Emulators > Steam Client, then the game from there). Its compatibility tool is
+# followed at once (follow_tool): the tool the game is set to in Steam, here or on Steam's own page.
 # An update Steam has queued (StateFlags 2) does not stop a launch: Steam installs it once it runs
 # (Main menu > Emulators > Steam Client), and the game runs its installed version until then.
 # Not run without the client: the install scripts, the Cloud download before the game, the overlay and
@@ -102,7 +106,7 @@
 # Exit 0; 1 when the setting could not be saved, or (check, run) the game starts through Steam; 2 for a
 # bad invocation.
 #
-# TEST SEAMS (tests/test-steam-direct.sh): RETROFORGE_STEAM_ROOT (also set by /usr/bin/steam),
+# TEST SEAMS (tests/test-steam-direct.sh, test-steam-tool.sh): RETROFORGE_STEAM_ROOT (also set by /usr/bin/steam),
 # RETROFORGE_PROC (/proc), RETROFORGE_STEAM_LIBRARY (the steam-library whose readers this uses),
 # XDG_CONFIG_HOME, XDG_CACHE_HOME,
 # RETROFORGE_STEAM_XWAYLAND (a JSON file standing in for the game's X server), RETROFORGE_STEAM_DETACH
@@ -124,6 +128,7 @@ import time
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
 import fastcores  # noqa: E402
 import graphics_api  # noqa: E402
+import steam_tool  # noqa: E402
 
 HOME = os.path.expanduser("~")
 DATA = os.environ.get("XDG_DATA_HOME") or os.path.join(HOME, ".local", "share")
@@ -390,6 +395,77 @@ def swap_tool(appid, tools, command, want=None):
         return tools, command
     log(f"app {appid} runs with {os.path.basename(want)}, not {os.path.basename(proton[0])} as last logged")
     return [want if t == proton[0] else t for t in tools], command.replace(proton[0], want)
+
+
+def follow_tool(appid, sl, launch, tools, command):
+    """tools and command for the compatibility tool the game is set to in Steam now (Game settings >
+    Compatibility tool, or Steam's own page), when Steam's logged launch (stamp, command) used another:
+    an installed Proton on the same runtime takes the logged one's place, as Steam would start it.
+    Refused for anything else (a tool Steam has yet to download, the game's Linux build, an x86 Proton):
+    Steam starts the game with it once, and logs that launch. A game with no tool of its own gets Steam's
+    default when that is a compatibilitytools.d tool (swap_tool); set back to Default since that launch
+    (forget), it is replayed only with that default. A name that cannot be looked up (Steam's lists
+    unreadable) leaves the logged launch as it is."""
+    name = steam_tool.own_tool(STEAM_ROOT, appid)
+    if not name:
+        tools, command = swap_tool(appid, tools, command)
+        if forgotten(appid, launch) and mapped_tool(appid) not in tools:
+            raise Refused(f"its compatibility tool went back to Steam's choice after Steam's launch of {launch[0]} "
+                          "(Steam starts it once)")
+        return tools, command
+    tool = steam_tool.find_tool(sl, STEAM_ROOT, name)
+    if tool is None and not steam_tool.listed_tools(sl, STEAM_ROOT):
+        return tools, command
+    folder = tool["folder"] if tool else ""
+    if folder and any(os.path.realpath(folder) == os.path.realpath(t) for t in tools):
+        return tools, command
+    if folder:
+        swapped = swap_tool(appid, tools, command, folder)
+        if swapped[0] != tools:
+            return swapped
+    raise Refused(f"it is set to run with {tool['display'] if tool else name} now, which Steam's last launch of it "
+                  "did not use (Steam starts it with that once)")
+
+
+# A game set back to Steam's choice (Default) has no entry to follow, and Steam's choice is Steam's to
+# make. So the launch Steam logged with the tool the player has just left is marked: it is not replayed,
+# and the game goes through Steam until Steam has logged a newer one. Unless Steam's default is a
+# compatibilitytools.d tool that takes the logged one's place (the ARMv8.0 boards' build): a game with
+# no tool of its own has always started with that one without the client, and still does. (A game
+# Steam would start with a Proton has an entry of its own on those boards, which Default keeps:
+# retroforge-steam-proton.)
+def stale_path(appid):
+    return os.path.join(CACHE, f"{appid}.stale")
+
+
+def forget(appid):
+    """Mark Steam's newest logged launch of appid as one not to replay."""
+    launch = logged_launch(appid)
+    if not launch:
+        return
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        with open(stale_path(appid) + ".part", "w", encoding="utf-8") as f:
+            json.dump({"logged": launch[0], "command": launch[1]}, f)
+        os.replace(stale_path(appid) + ".part", stale_path(appid))
+    except OSError as err:
+        log(f"could not mark Steam's launch of app {appid} as out of date: {err}")
+
+
+def forgotten(appid, launch):
+    """True when launch is the one forget marked; a mark a newer launch has passed is removed."""
+    try:
+        with open(stale_path(appid), encoding="utf-8") as f:
+            mark = json.load(f)
+        if (str(mark["logged"]), str(mark["command"])) == launch:
+            return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    try:
+        os.remove(stale_path(appid))
+    except OSError:
+        pass
+    return False
 
 
 # The player's per-game choices (Game settings, steam_game_settings.gd), keyed by app id.
@@ -911,7 +987,7 @@ def plan(appid):
     if not exe:
         raise Refused(f"Steam's launch of {stamp} names no program of the game")
     choice = game_settings(appid)
-    tools, command = swap_tool(appid, tools, command)
+    tools, command = follow_tool(appid, sl, stamp_command, tools, command)
 
     appinfo = {}
     try:
@@ -1220,22 +1296,38 @@ def main(argv):
             key, value = argv[3], argv[4]
             ok = value in CHOICES.get(key, ()) or (key == "launch" and (value == "default" or value in [e["key"] for e in entries])) \
                 or (key == "resolution" and (value == "default" or sane_size(value))) \
-                or (key == "api" and (value == "default" or value in apis))
+                or (key == "api" and (value == "default" or value in apis)) \
+                or (key == "tool" and (value == "default" or value in [t["name"] for t in steam_tool.choices(sl, STEAM_ROOT, appid, app)["tools"]]))
             if not ok:
                 log(f"not a choice: {key} {value}")
                 return 2
-            try:
-                save_game_setting(appid, key, value)
-                if key == "api":
-                    proton_api(appid, app)
-            except OSError as err:
-                log(f"could not save {GAMES}: {err}")
-                return 1
+            if key == "tool":
+                # Steam's own setting, not one of ours: made in Steam (python/steam_tool.py)
+                try:
+                    if steam_tool.choose(sl, STEAM_ROOT, appid, app, value, log):
+                        now = steam_tool.own_tool(STEAM_ROOT, appid)
+                        log(f"app {appid}: its compatibility tool in Steam is now " + (now or "Steam's choice"))
+                        if not now:
+                            forget(appid)
+                except steam_tool.Busy as why:
+                    log(f"app {appid}: its compatibility tool stays as it is: {why}")
+                    return 3
+                except steam_tool.Failed as why:
+                    log(f"app {appid}: could not set its compatibility tool: {why}")
+                    return 1
+            else:
+                try:
+                    save_game_setting(appid, key, value)
+                    if key == "api":
+                        proton_api(appid, app)
+                except OSError as err:
+                    log(f"could not save {GAMES}: {err}")
+                    return 1
         steam = game_resolution(appid)
         print(json.dumps({"settings": game_settings(appid), "direct": state()[0],
                           "launch": [{"key": e["key"], "description": e["description"]} for e in entries],
                           "steam_resolution": "%dx%d" % steam if steam else "", "tso_hint": tso_hint(app),
-                          "x86": x86, "apis": apis}))
+                          "x86": x86, "apis": apis, "tool": steam_tool.choices(sl, STEAM_ROOT, appid, app)}))
         return 0
     log("usage: retroforge-steam-direct status|on|off|remember|check APPID|run APPID|fex APPID|game APPID [set KEY VALUE]"
         "|fastcores APPID PID...")

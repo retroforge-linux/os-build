@@ -101,7 +101,7 @@ chmod +x "$T/bin"/*
 
 ENVS=(env -u DISPLAY -u WAYLAND_DISPLAY -u RETROFORGE_STEAM_X86_GUEST HOME="$H" XDG_DATA_HOME="$DATA" XDG_CACHE_HOME="$CACHE"
       RETROFORGE_STEAM_BOOTSTRAP="$T/bin/bootstrap" RETROFORGE_STEAM_X86_GUEST_HELPER="$T/bin/guest"
-      RETROFORGE_STEAM_WRAPPER="$T/bin/steam" RETROFORGE_CPUINFO="$T/v82"
+      RETROFORGE_STEAM_WRAPPER="$T/bin/steam" RETROFORGE_CPUINFO="$T/v82" RETROFORGE_STEAM_SAREK=off
       RETROFORGE_PROTON_CLI="$T/bin/proton" RETROFORGE_STEAM_PROTON_CLI="$T/bin/steam-proton"
       RETROFORGE_STEAM_DONE_GRACE=1 DISPLAY=:1 WAYLAND_DISPLAY=gamescope-0 PATH="$T/path:$PATH")
 si() {  # si [VAR=value...] -- <args...>
@@ -196,9 +196,9 @@ si RETROFORGE_STEAM_X86_GUEST=0 -- status; [ "$(field steam-client installed)" !
 si -- status; [ "$(field steam-client installed)" = null ] && ok "with the guest on again, not installed (it is missing)" || bad "$OUT"
 
 # ================================================================================================
-# ARMv8.0 CPUs: Proton-CachyOS ARMv8.0 is part of the client's install (retroforge-proton install,
-# its progress file followed), then Steam's default (retroforge-steam-proton apply) once the client's
-# update has written config.vdf.
+# Where our Proton is Steam's tool. ARMv8.0 CPUs: Proton-CachyOS ARMv8.0 is part of the client's install
+# (retroforge-proton install, its progress file followed), then Steam's default (retroforge-steam-proton
+# apply) once the client's update has written config.vdf.
 CASE="ARMv8.0: install client"
 reset; si RETROFORGE_CPUINFO="$T/v80" -- install client
 [ "$RC" = 0 ] && forward && ok "exit 0; forward-only percentages ending at 100%" || bad "rc=$RC out=$OUT err=$ERR"
@@ -217,14 +217,28 @@ python3 -c 'import json,sys; d=json.loads(sys.argv[1]); assert d["steam-client"]
 
 CASE="ARMv8.0: Proton cannot be installed"
 reset; si RETROFORGE_CPUINFO="$T/v80" FAKE_PROTON=net -- install client
-[ "$RC" = 3 ] && grep -q "Proton-CachyOS for this CPU (ARMv8.0) could not be installed" <<<"$ERR" && [ ! -e "$T/steam.log" ] \
+[ "$RC" = 3 ] && grep -q "Proton-CachyOS for this device could not be installed" <<<"$ERR" && [ ! -e "$T/steam.log" ] \
   && ok "exit 3 (network), before the client's update" || bad "rc=$RC err=$ERR"
 [ ! -e "$PROG_CLIENT" ] && ok "no progress file left" || bad "left: $(cat "$PROG_CLIENT")"
 
-CASE="a CPU with LSE atomics"
+# A GPU that needs DXVK-Sarek (the SM4450's Adreno 613) on a CPU with LSE atomics: Valve's Protons start
+# no DirectX game there, so Proton-CachyOS's arm64 build comes with the client and is Steam's default.
+CASE="a GPU that needs DXVK-Sarek: install client"
+reset; si RETROFORGE_CPUINFO="$T/v82" RETROFORGE_STEAM_SAREK=on -- install client
+[ "$RC" = 0 ] && forward && grep -qx "install" "$T/proton.log" && ok "retroforge-proton install ran there too" || bad "rc=$RC $(cat "$T/proton.log" 2>&1) err=$ERR"
+grep -qx "apply" "$T/steam-proton.log" && [ "$(head -1 "$T/order.log")" = proton ] && [ "$(tail -1 "$T/order.log")" = apply ] \
+  && ok "then retroforge-steam-proton apply, after the update" || bad "order: $(cat "$T/order.log" 2>&1)"
+si RETROFORGE_CPUINFO="$T/v82" RETROFORGE_STEAM_SAREK=on -- status
+python3 -c 'import json,sys; s=json.loads(sys.argv[1])["steam-client"]["size"]; assert s == (1296 + 652 + 110 + 356) << 20, s' "$OUT" \
+  && ok "status: its size counts the arm64 build's download (356 MB, not the ARMv8.0 rebuild's 420)" || bad "$OUT"
+
+CASE="a CPU with LSE atomics, a GPU that runs upstream DXVK"
 reset; si RETROFORGE_CPUINFO="$T/v82" -- install client
 [ "$RC" = 0 ] && [ ! -e "$T/proton.log" ] && [ ! -e "$T/steam-proton.log" ] \
   && ok "no Proton downloaded, Steam's default left alone" || bad "rc=$RC $(cat "$T/proton.log" "$T/steam-proton.log" 2>&1)"
+si RETROFORGE_CPUINFO="$T/v82" -- status
+python3 -c 'import json,sys; s=json.loads(sys.argv[1])["steam-client"]["size"]; assert s == (1296 + 652 + 110) << 20, s' "$OUT" \
+  && ok "status: no Proton in its size" || bad "$OUT"
 
 echo
 echo "$PASS passed, $FAIL failed"

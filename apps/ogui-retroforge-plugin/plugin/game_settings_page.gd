@@ -1,10 +1,13 @@
 extends ScrollContainer
 
 ## Game settings > RetroForge: per-ROM options, in the screen the gear on OGUI's launch menu opens.
-## For Steam games: their FEX TSO, launch option and resolution, which retroforge-steam-direct keeps
-## and uses when it starts the game without the client; and an x86 game's graphics driver, which
-## /usr/bin/steam sets before every launch of it. For an installed GOG or Epic game: its FEX TSO,
-## Proton, game fixes, (Epic) online and resolution, which `store <s> launch` reads (its GAME CHOICES).
+## For Steam games: their compatibility tool, Steam's own setting (its Properties > Compatibility),
+## which retroforge-steam-direct changes in Steam (python/steam_tool.py: a few seconds while the client
+## runs, and not while Steam runs a game); their FEX TSO, launch option and resolution, which
+## retroforge-steam-direct keeps and uses when it starts the game without the client; and an x86
+## game's graphics driver, which /usr/bin/steam sets before every launch of it. For an installed GOG
+## or Epic game: its FEX TSO, Proton, game fixes, (Epic) online and resolution, which `store <s>
+## launch` reads (its GAME CHOICES).
 ## For both, the graphics API of a Unity, Unreal or Godot game built with more than one
 ## (python/graphics_api.py), and Run on fast cores ("cpus": on, python/fastcores.py; how is Settings >
 ## General > Pin to fast cores).
@@ -63,6 +66,8 @@ var _item: LibraryLaunchItem  # the RetroForge launch item of the game being con
 const STEAM_LIBRARY_ID := "retroforge-steam"
 const STEAM_DIRECT := "/usr/bin/retroforge-steam-direct"
 const TSO_CHOICES := ["default", "on", "off"]
+const TOOL_ABOUT := "What Steam runs this game with, as its Properties > Compatibility in Steam. A Proton runs the game's Windows build; Steam Linux Runtime its Linux build, all of it through FEX. Steam downloads a tool that is not installed, or the game's other build, when the game next starts."
+const TOOL_CHANGING := "Changing it in Steam..."
 const TSO_ABOUT := "How closely FEX keeps x86 memory ordering between a game's threads. Off is faster on this CPU; some games then crash or glitch. Default: Valve's tested setting for the game, else On."
 const DRIVER_CHOICES := ["default", "native", "x86"]
 const DRIVER_ABOUT := "An x86 game's OpenGL and Vulkan driver. x86 Mesa: our x86 driver, emulated with the game. Native: the device's own, which FEX hands the game's calls to (less CPU, faster loading; a 32-bit game's Vulkan stays on x86), but some games crash on it. Default: x86 Mesa."
@@ -82,7 +87,8 @@ const DisplaySettings := preload("display_settings.gd")
 var _steam_app := 0  # the Steam app id of the game being configured, 0 for none
 var _store := ""  # "gog" or "epic" for an installed store game being configured, else ""
 var _store_game := ""  # its id in that store
-var _tso: Control  # OGUI Dropdowns: the Steam or store game's own choices
+var _tool: Control  # OGUI Dropdowns: the Steam or store game's own choices
+var _tso: Control
 var _proton: Control
 var _fixes: Control
 var _online: Control
@@ -173,9 +179,10 @@ func _build_page() -> void:
 	_scrape.progressed.connect(func(pct: int) -> void: _art.description = "Scraping... %d%%" % pct)
 	_scrape.finished.connect(_on_art_scraped)
 
-	# In this order, so a Steam game shows FEX TSO, Launch option, Resolution, Graphics driver,
-	# Graphics API, Run on fast cores, and a store game FEX TSO, Proton, Game fixes, Online,
-	# Resolution, Graphics API, Run on fast cores.
+	# In this order, so a Steam game shows Compatibility tool, FEX TSO, Launch option, Resolution,
+	# Graphics driver, Graphics API, Run on fast cores, and a store game FEX TSO, Proton, Game fixes,
+	# Online, Resolution, Graphics API, Run on fast cores.
+	_tool = _game_dropdown("Compatibility tool", TOOL_ABOUT, "tool")
 	_tso = _game_dropdown("FEX TSO", TSO_ABOUT, "tso")
 	_proton = _game_dropdown("Proton", PROTON_ABOUT, "proton")
 	_fixes = _game_dropdown("Game fixes", FIXES_ABOUT, "protonfixes")
@@ -276,7 +283,7 @@ func _on_game_settings_entered(_from: State) -> void:
 ## another one is installed, a graphics API when the game's engine has more than one).
 func _fill_game_rows() -> void:
 	var cmd := _rows_command()
-	for row in [_tso, _proton, _fixes, _online, _launch, _resolution, _driver, _api, _game_cpus]:
+	for row in [_tool, _tso, _proton, _fixes, _online, _launch, _resolution, _driver, _api, _game_cpus]:
 		row.visible = false
 	if _item != null:
 		_focus_group.current_focus = _fast_cores
@@ -296,7 +303,7 @@ func _fill_game_rows() -> void:
 		str((data.get("settings", {}) as Dictionary).get("cpus", "default")))
 	_game_cpus.description = GAME_CPUS_ABOUT + (GAME_CPUS_STEAM if _steam_app > 0 else "")
 	_game_cpus.visible = true
-	_focus_group.current_focus = _tso
+	_focus_group.current_focus = _tool if _tool.visible else _tso
 	_focus_group.recalculate_focus()
 
 
@@ -337,7 +344,22 @@ func _resolution_items(default_label: String) -> Array:
 	return items
 
 
+## The game's compatibility tool in Steam: Default, then the tools retroforge-steam-direct offers
+## (steam_tool.py). A tool the game was set to in Steam that is not among them stays offered.
+func _fill_tool(data: Dictionary) -> void:
+	var tool: Dictionary = data.get("tool", {}) if data.get("tool") is Dictionary else {}
+	var items := [["default", str(tool.get("default", "Default"))]]
+	for entry in tool.get("tools", []):
+		if entry is Dictionary:
+			items.append([str(entry.get("name", "")), str(entry.get("label", ""))])
+	var mine := str(tool.get("choice", "default"))
+	_fill_row(_tool, "tool", items, mine, str(tool.get("other", "")))
+	_tool.description = TOOL_ABOUT
+	_tool.visible = items.size() > 1 or mine != "default"
+
+
 func _fill_steam(data: Dictionary) -> void:
+	_fill_tool(data)
 	var settings: Dictionary = data.get("settings", {})
 	var entries: Array = data.get("launch", [])
 	var hint := str(data.get("tso_hint", ""))
@@ -418,15 +440,22 @@ func _on_game_choice(key: String, index: int) -> void:
 		return
 	var args: Array[String] = base.slice(1)
 	args.append_array(["set", key, str(values[index])])
+	if key == "tool":
+		_tool.description = TOOL_CHANGING  # Steam's own setting: a few seconds while its client runs
 	var cmd := Command.create(base[0], args)
 	var code := -1
 	if cmd.execute() == OK:
 		code = await cmd.finished as int
+	if key == "tool":
+		_tool.description = TOOL_ABOUT
 	if code == 0:
 		logger.info("%s: %s = %s" % [" ".join(PackedStringArray(base.slice(1))), key, values[index]])
 		return
 	logger.warn("%s set %s %s exited %d: %s" % [" ".join(PackedStringArray(base)), key, values[index], code, cmd.stderr])
-	notification_manager.show(Notification.new("Could not save this game's " + key))
+	var text := "Could not save this game's " + key
+	if key == "tool":  # 3: retroforge-steam-direct changes no tool while Steam runs a game
+		text = "Close the Steam game that is running first" if code == 3 else "Steam did not take this game's compatibility tool"
+	notification_manager.show(Notification.new(text))
 	if base == _rows_command():
 		_fill_game_rows()
 

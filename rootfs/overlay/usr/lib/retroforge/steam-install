@@ -25,15 +25,17 @@
 #   2. steam-x86-guest fetch: the x86 guest Valve's FEX tool needs for x86 games (FEX's ArchLinux
 #      RootFS channel, ~1.3 GB, checked against the channel's XXH3), unless RETROFORGE_STEAM_X86_GUEST=0.
 #      Its "NN% of MMMM MB" lines are the progress;
-#   3. on ARMv8.0 CPUs (no `atomics` in /proc/cpuinfo, e.g. the SM6115) only: Proton-CachyOS rebuilt
-#      for them (~420 MB), by retroforge-proton install (steam-compat-tools, proton-cachyos-armv8.pin),
+#   3. only on the boards where our Proton is Steam's tool (steam_tool.our_proton): on ARMv8.0 CPUs (no
+#      `atomics` in /proc/cpuinfo, e.g. the SM6115) Proton-CachyOS rebuilt for them (~420 MB,
+#      proton-cachyos-armv8.pin), on another board whose GPU needs DXVK-Sarek (the SM4450) its arm64
+#      build (~356 MB, proton-cachyos-arm64.pin), by retroforge-proton install (steam-compat-tools),
 #      which writes its percentage to ~/.local/share/retroforge/steam-compat-tools.progress, read here
 #      for the bar. Without it Steam has no Proton that runs well there, so the install fails without
 #      it. After the client's update (4), retroforge-steam-proton apply makes it Steam's default (it
 #      writes config.vdf if the client has not yet: the client writes its own only at its first real
 #      start, and reads one that is there; with a client running it leaves config.vdf alone, and the
 #      default is set at the client's next start: a kept one is restarted for it before the next
-#      launch that nothing else needs it during). Other CPUs get no Proton here: Steam
+#      launch that nothing else needs it during). Other boards get no Proton here: Steam
 #      keeps its own default, and Proton-CachyOS is an optional download in Apps > Proton;
 #   4. the client's own update, by Valve's updater: `steam -steamdeck -exitsteam` through /usr/bin/steam
 #      (the wrapper every start goes through), which downloads the rest of the client (~600 MB: its
@@ -67,8 +69,9 @@
 # TEST SEAMS (tests/test-steam-install.sh): RETROFORGE_STEAM_BOOTSTRAP, RETROFORGE_STEAM_X86_GUEST_HELPER,
 # RETROFORGE_STEAM_WRAPPER, RETROFORGE_STEAM_ROOT, RETROFORGE_STEAM_X86_GUEST_DIR,
 # RETROFORGE_STEAM_UPDATE_TIMEOUT, RETROFORGE_STEAM_DONE_GRACE, RETROFORGE_CPUINFO,
-# RETROFORGE_PROTON_CLI, RETROFORGE_STEAM_PROTON_CLI; RETROFORGE_PROC (/proc) and systemctl from PATH
-# (tests/test-steam.sh, the update through the real /usr/bin/steam).
+# RETROFORGE_PROTON_CLI, RETROFORGE_STEAM_PROTON_CLI, steam_tool.needs_sarek's RETROFORGE_DEVICE_ENV and
+# RETROFORGE_STEAM_SAREK; RETROFORGE_PROC (/proc) and systemctl from PATH (tests/test-steam.sh, the
+# update through the real /usr/bin/steam).
 import fcntl
 import json
 import os
@@ -78,6 +81,9 @@ import subprocess
 import sys
 import tempfile
 import threading
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "python"))
+import steam_tool  # noqa: E402  (which Proton build is Steam's tool on this board)
 
 DATA = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
 CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "retroforge")
@@ -103,7 +109,8 @@ EXIT_OK, EXIT_USAGE, EXIT_NET, EXIT_VERIFY, EXIT_LOCAL = 0, 2, 3, 4, 5
 
 # Download sizes for the bar (2026-10): what each stage fetches on a fresh card.
 CLIENT_STAGES = {"bootstrap": 110 * MB, "guest": 1296 * MB, "update": 652 * MB}
-PROTON_STAGE = 420 * MB  # Proton-CachyOS ARMv8.0's tarball, on ARMv8.0 CPUs only
+# Our Proton's tarball, on the boards where it is Steam's tool: the ARMv8.0 rebuild, or CachyOS's arm64 build.
+PROTON_STAGES = {steam_tool.ARMV8_PROTON: 420 * MB, steam_tool.ARM64_PROTON: 356 * MB}
 # The client's unpacking and install of its update, weighted for the bar like a 400 MB download (it
 # takes about as long), moved by APPLY_STEPS. Not a download: not in the size the page shows.
 APPLY_WEIGHT = 400 * MB
@@ -125,18 +132,15 @@ def log(msg):
     print(f"steam-install: {msg}", file=sys.stderr, flush=True)
 
 
-def lacks_atomics():
-    """Whether a CPU here has no LSE atomics (ARMv8.0): Steam's Proton comes with the client there."""
-    try:
-        with open(CPUINFO, encoding="utf-8", errors="replace") as f:
-            feats = [line.split(":", 1)[1].split() for line in f if line.startswith("Features")]
-    except OSError:
-        return False
-    return any("atomics" not in x for x in feats)
+def our_proton():
+    """The Proton build that comes with the client here, "" for none: where it is Steam's tool (an ARMv8.0
+    CPU, or a GPU that needs DXVK-Sarek)."""
+    return steam_tool.our_proton(CPUINFO)
 
 
 def client_stages():
-    return dict(CLIENT_STAGES, proton=PROTON_STAGE) if lacks_atomics() else dict(CLIENT_STAGES)
+    name = our_proton()
+    return dict(CLIENT_STAGES, proton=PROTON_STAGES[name]) if name else dict(CLIENT_STAGES)
 
 
 def guest_on():
@@ -319,7 +323,7 @@ def failure_code(tail, default=EXIT_NET):
 
 
 def install_proton(prog):
-    """Stage 3: the ARMv8.0 Proton, with the bar following steam-compat-tools' progress file."""
+    """Stage 3: our Proton, with the bar following steam-compat-tools' progress file."""
     stop = threading.Event()
 
     def follow():
@@ -342,19 +346,19 @@ def install_proton(prog):
         stop.set()
         watcher.join()
     if code != 0:
-        raise Fail(failure_code(tail), "Proton-CachyOS for this CPU (ARMv8.0) could not be installed")
+        raise Fail(failure_code(tail), "Proton-CachyOS for this device could not be installed")
     prog.set("proton", 1.0)
 
 
 def make_proton_default():
-    """After the client's update: the ARMv8.0 Proton as Steam's default (retroforge-steam-proton)."""
+    """After the client's update: our Proton as Steam's default (retroforge-steam-proton)."""
     code, tail = run_stage([STEAM_PROTON_CLI, "apply"], lambda line: None)
     if code != 0:
         log(f"Steam's default Proton is not set yet (exit {code}); it is set when Steam next starts")
 
 
 def install_client():
-    armv8 = lacks_atomics()
+    ours = bool(our_proton())
     prog = Progress("steam-client", dict(client_stages(), apply=APPLY_WEIGHT))
     try:
         # 1. the client binaries
@@ -391,8 +395,8 @@ def install_client():
                                      "be running; try again once it is done")
         prog.set("guest", 1.0)
 
-        # 3. the ARMv8.0 Proton
-        if armv8:
+        # 3. our Proton
+        if ours:
             install_proton(prog)
 
         # 4. the client's own update, unless a client runs; RETROFORGE_STEAM_KEPT: not as the kept unit
@@ -420,7 +424,7 @@ def install_client():
                     "Steam is first opened")
         if client_installed() is None:
             raise Fail(EXIT_LOCAL, "the client is not complete after the install")
-        if armv8:
+        if ours:
             make_proton_default()
         prog.finish()
         log("Steam Client is installed")

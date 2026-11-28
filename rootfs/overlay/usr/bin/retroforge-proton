@@ -10,12 +10,14 @@
 # install runs /usr/lib/retroforge/steam-compat-tools install as the user unit
 # retroforge-steam-compat-tools (it goes on if the shell restarts; without a user manager, in the
 # foreground), and waits for it. A run of that unit already going (retroforge-steam-proton's, at a
-# `steam` start) is waited for first, and a run outside it too (`install --wait`: the store's). steam-install runs this too, on ARMv8.0 CPUs. Its progress is in
+# `steam` start) is waited for first, and a run outside it too (`install --wait`: the store's).
+# steam-install runs this too, on the boards where the tool is Steam's own. Its progress is in
 # ~/.local/share/retroforge/steam-compat-tools.progress, its log in
 # ~/.local/share/retroforge/steam-compat-tools.log, whose last line goes to stderr when it fails.
 # DXVK-Sarek is on in the tool only where the GPU needs it (steam-compat-tools). Nothing here selects
-# a tool in Steam: on an ARMv8.0 CPU retroforge-steam-proton makes ours Steam's default when the
-# client starts; elsewhere the player selects Proton-CachyOS per game (Properties > Compatibility).
+# a tool in Steam: on an ARMv8.0 CPU, or with a GPU that needs DXVK-Sarek, retroforge-steam-proton
+# makes ours Steam's default when the client starts; elsewhere the player selects Proton-CachyOS per
+# game (Properties > Compatibility).
 # The store's launcher runs every GOG and Epic game with it unless the game has a Proton of its own.
 # docs/steam-arm64.md.
 #

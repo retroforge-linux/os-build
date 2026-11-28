@@ -2,8 +2,9 @@
 # steam-compat-tools — Proton-CachyOS's arm64 build as a Steam compatibility tool, kept on its newest
 # release (on ARMv8.0 CPUs its ARMv8.0 rebuild instead, below), with DXVK-Sarek on in it where the GPU
 # needs it. Run by /usr/bin/retroforge-proton (the player's Download / Update in Apps > Proton, and
-# Steam Client's install on ARMv8.0 CPUs), by /usr/bin/retroforge-steam-proton (ARMv8.0 CPUs, at each
-# `steam` start) and by the store's launcher.
+# Steam Client's install on the boards where the tool is Steam's own: ARMv8.0 CPUs, GPUs that need
+# Sarek), by /usr/bin/retroforge-steam-proton (those boards, at each `steam` start) and by the store's
+# launcher.
 #
 #   steam-compat-tools install [--wait]
 #                               install or update the tool, and DXVK-Sarek on or off in every tool of
@@ -13,14 +14,17 @@
 #   steam-compat-tools status   print (JSON) the tool this device takes and what is installed of it:
 #                               {"name", "display_name", "author", "homepage", "installed": tag or
 #                               null, "path": its complete folder or null, "armv8": true on an ARMv8.0
-#                               CPU}. Never touches the network (the store's launches use it so).
+#                               CPU, "steam_default": true where retroforge-steam-proton makes it
+#                               Steam's tool}. Never touches the network (the store's launches use it
+#                               so).
 #
 # WHICH GPUS NEED SAREK. The a6xx_gen1_low Adreno 610 (SM6115) and 613 (SM4450): no hardware
 # multiview, so no multiViewport, which every upstream DXVK requires; Turnip fakes it only under
 # TU_DEBUG=noconform (etc/retroforge/session.conf), which Mesa 26.3 removes. There DXVK-Sarek is not a
 # choice: it is on in every tool of ours, and nothing offers to turn it off. Every other GPU runs
 # upstream DXVK, and nothing of ours turns Sarek on there (a player can, per game, in Steam's launch
-# options). The SoC class comes from device-env; RETROFORGE_STEAM_SAREK=on|off overrides it, for testing.
+# options). The SoC class comes from device-env; RETROFORGE_STEAM_SAREK=on|off overrides it, for testing
+# (python/steam_tool.py's needs_sarek, which a Steam game's Compatibility tool row asks too).
 #
 # PROGRESS. While a run downloads, ~/.local/share/retroforge/steam-compat-tools.progress holds its
 # percentage (0-100), then `unpacking` while the tarball unpacks; it is removed when the run ends. The
@@ -33,7 +37,7 @@
 # downloads it into the player's home.
 #
 # WHICH RELEASE. /usr/share/retroforge/steam/proton-cachyos-arm64.pin names a channel, not a version.
-# Every `install` (each Download/Update, store launch, and on ARMv8.0 CPUs each `steam` start) makes
+# Every `install` (each Download/Update, store launch, and where it is Steam's tool each `steam` start) makes
 # ONE request to GitHub's API, which allows 60 an hour without a token, and takes the newest release that has the pin's arm64 tarball and
 # its .sha512sum: the highest Proton version first, then the latest published, so the last release of
 # an older line (cachyos-10.0-sunset-slr came out after cachyos-11.0-20260601-slr) is not taken for an
@@ -68,15 +72,16 @@
 # this writes (or wrote, LEGACY_SETTINGS) is the player's: never written over, carried into an update,
 # never deleted. On a GPU that does not need Sarek, ours is deleted (left by the old DXVK-Sarek toggle).
 # Ours also ends Steam's driver query (d3ddriverquery64.exe) at once: on these boards the tool is Steam's
-# default (SM6115, ARMv8.0), the query's two Wine starts cost the first game after a boot ~10 s, and the
+# default (retroforge-steam-proton), the query's two Wine starts cost the first game after a boot ~10 s, and the
 # per-tool shader caches it selects had no shader in common with what Hades created here (2026-11-23).
 # And it keeps vkd3d-proton (D3D12) within the 4 descriptor sets Turnip offers on these GPUs (it reserves
 # the 5th): with descriptor buffers vkd3d-proton splits its heap into two sets, and a root signature with
 # static samplers and root descriptors then needs 5, so CreateRootSignature fails (Ghostrunner,
 # 2026-11-26). One mutable set without descriptor buffers needs 4. Only vkd3d-proton reads these.
 #
-# Steam is never told to use the tool (config.vdf is not edited). The player picks it per game
-# (Properties > Compatibility) or as the Steam Play default (docs/steam-arm64.md).
+# Nothing here tells Steam to use the tool (config.vdf is not edited). retroforge-steam-proton does, on
+# ARMv8.0 CPUs and where the GPU needs Sarek; elsewhere the player picks it per game (Properties >
+# Compatibility) or as the Steam Play default (docs/steam-arm64.md).
 #
 # Exit 0 (the tool's folder on stdout, or nothing when another run holds the lock), also when
 # GitHub cannot be asked and a tool is installed; 1 when the release could not be installed (nothing
@@ -97,7 +102,6 @@ import hashlib
 import json
 import os
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -107,31 +111,15 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "python"))
+import steam_tool  # noqa: E402
+from steam_tool import needs_sarek  # noqa: E402  (WHICH GPUS NEED SAREK: the Game settings row asks too)
+
 DATA = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
 STEAM_ROOT = os.environ.get("RETROFORGE_STEAM_ROOT") or os.path.join(DATA, "Steam")
 PINS = os.environ.get("RETROFORGE_STEAM_PINS", "/usr/share/retroforge/steam")
 CPUINFO = os.environ.get("RETROFORGE_CPUINFO", "/proc/cpuinfo")
 PROGRESS = os.path.join(DATA, "retroforge", "steam-compat-tools.progress")
-DEVICE_ENV = os.environ.get("RETROFORGE_DEVICE_ENV", "/usr/lib/retroforge/device-env")
-SAREK_SOCS = ("SM6115", "SM4450")  # Adreno 610 and 613: see WHICH GPUS NEED SAREK
-
-
-def needs_sarek():
-    """Whether this GPU needs DXVK-Sarek (RETROFORGE_STEAM_SAREK=on|off decides instead, when set)."""
-    forced = os.environ.get("RETROFORGE_STEAM_SAREK")
-    if forced in ("on", "off"):
-        return forced == "on"
-    try:
-        out = subprocess.run([DEVICE_ENV], capture_output=True, text=True, timeout=30).stdout
-    except (OSError, subprocess.SubprocessError):
-        return False
-    for line in out.splitlines():
-        if line.startswith("RETROFORGE_SOC_CLASS="):
-            value = shlex.split(line.split("=", 1)[1]) or [""]
-            return value[0] in SAREK_SOCS
-    return False
-
-
 def lacks_atomics():
     """Whether a CPU here has no LSE atomics (ARMv8.0)."""
     try:
@@ -784,7 +772,7 @@ def status(pin):
             "author": m.group(1) if m else None,
             "homepage": f"https://github.com/{m.group(1)}/{m.group(2)}" if m else None,
             "installed": have["tag"] if have and have["tag"] else None, "path": final if have else None,
-            "armv8": lacks_atomics()}
+            "armv8": lacks_atomics(), "steam_default": bool(steam_tool.our_proton(CPUINFO))}
 
 
 def main(argv):

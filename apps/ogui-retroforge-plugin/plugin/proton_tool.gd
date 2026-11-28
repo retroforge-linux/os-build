@@ -62,7 +62,8 @@ func detach() -> void:
 
 
 ## What `retroforge-proton status` reports: {name, display_name, author, homepage, installed (a tag or
-## null), armv8}, or {} when it cannot run.
+## null), armv8, steam_default (Steam uses it by default on this board: an ARMv8.0 CPU, or a GPU that
+## needs DXVK-Sarek)}, or {} when it cannot run.
 func status() -> Dictionary:
 	var output: Array = []
 	if OS.execute(TOOL, ["status"], output) != 0 or output.is_empty():
@@ -85,14 +86,14 @@ func _label(now: Dictionary) -> void:
 		_row.description = _shown
 		return
 	_row.text = _title(now)
-	var armv8: bool = now.get("armv8", false)
-	var steam := "Steam uses it for every Windows game not set to another tool." if armv8 \
+	var ours: bool = now.get("steam_default", false)
+	var steam := "Steam uses it for every Windows game not set to another tool." if ours \
 		else "In Steam, select it for a game: Properties > Compatibility."
 	if now.get("installed") != null:
 		_row.description = "Installed: %s. GOG and Epic games run with it. %s" % [now["installed"], steam]
 		_row.button_text = "Update"
 	else:
-		var comes := "It comes with Steam Client and with the first GOG or Epic game you install." if armv8 \
+		var comes := "It comes with Steam Client and with the first GOG or Epic game you install." if ours \
 			else "GOG and Epic games download it at their first install."
 		_row.description = "Not installed. %s %s" % [comes, steam]
 		_row.button_text = "Download"
@@ -150,7 +151,7 @@ func install() -> void:
 	var installed = now.get("installed")
 	if code == 0 and installed != null and installed == before.get("installed"):
 		_notify(tool_name + " is up to date")
-	elif code == 0 and installed != null and now.get("armv8", false):
+	elif code == 0 and installed != null and now.get("steam_default", false):
 		_notify(tool_name + " installed")
 	elif code == 0 and installed != null:
 		_notify(tool_name + " installed. Restart Steam to select it for a game.")

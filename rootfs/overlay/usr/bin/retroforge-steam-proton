@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-# retroforge-steam-proton — Steam's default Proton on ARMv8.0 CPUs (no LSE atomics, e.g. the SM6115):
-# Proton-CachyOS rebuilt for them (retroforge-linux/proton-cachyos-armv8). On other CPUs it does nothing
-# and Steam keeps its own default: there Proton-CachyOS is an optional download (Apps > Proton), never
-# a default.
+# retroforge-steam-proton — Steam's Proton on the boards where Valve's own is the wrong tool
+# (steam_tool.our_proton):
+#   - ARMv8.0 CPUs (no LSE atomics, e.g. the SM6115): Proton-CachyOS rebuilt for them
+#     (retroforge-linux/proton-cachyos-armv8). Valve builds its Protons with LSE atomics, which the
+#     kernel emulates there;
+#   - another board whose GPU needs DXVK-Sarek (the SM4450's Adreno 613): Proton-CachyOS's own arm64
+#     build. Valve's Protons carry only upstream DXVK, so no DirectX game starts with them there (the
+#     Adreno 610: Among Us and Hollow Knight, "d3d11: failed to create factory (80004005)", MANGMI
+#     Air X, 2026-11-28; user's choice for the SM4450 too, 2026-11-28, not run on one).
+# On every other board it does nothing and Steam keeps its own default: there Proton-CachyOS is an
+# optional download (Apps > Proton), never a default.
 #
-#   retroforge-steam-proton status   armv8, or steam (not an ARMv8.0 CPU)
+#   retroforge-steam-proton status   armv8 or arm64 (which build is Steam's tool here), or steam (none)
 #   retroforge-steam-proton apply    /usr/bin/steam runs this before the client starts, and
 #                                    steam-install once Steam Client is installed
 #   retroforge-steam-proton pending  exit 0 when the running client should be restarted for apply to
@@ -17,14 +24,17 @@
 # Before the client's first real start there is no config.vdf: this writes one holding only that
 # entry, which the client reads and keeps, so the first Windows game already runs with our build.
 #
-# EACH WINDOWS GAME TOO. Steam picks a game's tool by priority: one set for the game (250), Valve's
-# recommendation for it (85), the default (75). Valve recommends its own Proton for most Windows games,
-# so the client ran them with Valve's build while the launches without the client ran ours, and each
-# switch made the next launch redo Wine's prefix set-up (~45 s on the Air X: Hades, 2026-10-24). So each
-# installed game Steam's app cache lists for Windows and not Linux gets its own entry for our build, as
-# the player would set it in its Properties; a game set to any other tool keeps it, one set to an
-# ARMv8.0 build RetroForge offered before (Valve's Proton rebuilt, OLD_DIRS) moves to this one. Native
-# Linux games are left to Steam.
+# EACH GAME STEAM WOULD START WITH A PROTON TOO. Steam picks a game's tool by priority: one set for the
+# game (250), Valve's recommendation for it (100 or 85), the default (75). Valve recommends its own
+# Proton for most Windows games, so the client ran them with Valve's build while the launches without
+# the client ran ours, and each switch made the next launch redo Wine's prefix set-up (~45 s on the Air
+# X: Hades, 2026-10-24). So each such installed game gets its own entry for our build, as the player
+# would set it in its Properties (steam_tool.proton_game): one Steam's app cache lists for Windows and
+# not Linux, and one with a Linux build that Valve recommends a Proton for all the same, in its own
+# list of games or in the game's Deck test result (Hollow Knight and SuperTux; started by the client,
+# Hollow Knight died with Valve's Proton on the Air X). A game set to any other tool keeps it, one set
+# to an ARMv8.0 build RetroForge offered before (Valve's Proton rebuilt, OLD_DIRS) moves to this one. A
+# game Valve leaves on its Linux build is left to Steam.
 #
 # A RUNNING CLIENT. config.vdf is the client's while it runs (it writes its own when it exits), so apply
 # leaves it alone then, and our build is set at the client's next start. A client kept running in the
@@ -39,12 +49,16 @@
 # TEST SEAMS (tests/test-steam-proton.sh): RETROFORGE_STEAM_ROOT, RETROFORGE_CPUINFO,
 # RETROFORGE_STEAM_COMPAT_TOOLS (the helper), RETROFORGE_STEAM_PROTON_START (a command run with the
 # helper and `install` as arguments instead of systemd-run), RETROFORGE_STEAM_LIBRARY (the steam-library
-# whose readers this uses).
+# whose readers this uses), and steam_tool.needs_sarek's RETROFORGE_DEVICE_ENV and RETROFORGE_STEAM_SAREK.
 import importlib.machinery
 import importlib.util
 import os
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "lib", "retroforge", "python"))
+import steam_tool  # noqa: E402  (config.vdf's editor, which build is Steam's tool here and for which games)
+from steam_tool import mappings, set_entry  # noqa: E402
 
 DATA = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
 STEAM_ROOT = os.environ.get("RETROFORGE_STEAM_ROOT") or os.path.join(DATA, "Steam")
@@ -52,13 +66,12 @@ CPUINFO = os.environ.get("RETROFORGE_CPUINFO", "/proc/cpuinfo")
 HELPER = os.environ.get("RETROFORGE_STEAM_COMPAT_TOOLS", "/usr/lib/retroforge/steam-compat-tools")
 START = os.environ.get("RETROFORGE_STEAM_PROTON_START")
 LOG = os.path.join(DATA, "retroforge", "steam-compat-tools.log")
-DIR = "proton-cachyos-armv8-retroforge"  # steam-compat-tools' proton-cachyos-armv8.pin
+KINDS = {steam_tool.ARMV8_PROTON: "armv8", steam_tool.ARM64_PROTON: "arm64"}  # what status and apply print
 # The folders of the Valve-based ARMv8.0 builds offered before (steam-compat-tools' DROPPED).
 OLD_DIRS = ("proton-armv8-retroforge", "proton-armv8-experimental-retroforge")
 STEAM_LIBRARY = os.environ.get("RETROFORGE_STEAM_LIBRARY", "/usr/lib/retroforge/steam-library")
 VDF = os.path.join(STEAM_ROOT, "config", "config.vdf")
-MAPPING = ["InstallConfigStore", "Software", "Valve", "Steam", "CompatToolMapping"]
-EMPTY_VDF = '"InstallConfigStore"\n{\n}\n'  # what set_tools starts from before the client wrote one
+MAPPING, EMPTY_VDF = steam_tool.MAPPING, steam_tool.EMPTY_VDF
 DEFAULT = MAPPING + ["0"]
 # The CompatToolMapping entries set_tools wrote since this boot, one key per line ("0", app ids).
 WRITTEN = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "retroforge-steam-proton.set")
@@ -68,13 +81,9 @@ def log(msg):
     print(f"retroforge-steam-proton: {msg}", file=sys.stderr, flush=True)
 
 
-def lacks_atomics():
-    try:
-        with open(CPUINFO, encoding="utf-8", errors="replace") as f:
-            feats = [line.split(":", 1)[1].split() for line in f if line.startswith("Features")]
-    except OSError:
-        return False
-    return any("atomics" not in x for x in feats)
+def our_tool():
+    """The build that is Steam's tool on this board, "" where Steam keeps its own."""
+    return steam_tool.our_proton(CPUINFO)
 
 
 def installed(tool):
@@ -111,120 +120,6 @@ def start_install():
         subprocess.Popen([HELPER, "install"], stdout=out, stderr=out, start_new_session=True)
 
 
-# ---- config.vdf: one entry changed, the rest of the text kept as it is -------------------------------
-def tokens(text):
-    """(kind, value, start, end) per token: "str", "{" or "}". ValueError on anything else."""
-    i = 0
-    while i < len(text):
-        c = text[i]
-        if c.isspace():
-            i += 1
-        elif text.startswith("//", i):
-            end = text.find("\n", i)
-            i = len(text) if end < 0 else end
-        elif c in "{}":
-            yield c, c, i, i + 1
-            i += 1
-        elif c == '"':
-            j, value = i + 1, []
-            while j < len(text) and text[j] != '"':
-                if text[j] == "\\" and j + 1 < len(text):
-                    j += 1
-                value.append(text[j])
-                j += 1
-            if j >= len(text):
-                raise ValueError("a string is not closed")
-            yield "str", "".join(value), i, j + 1
-            i = j + 1
-        else:
-            raise ValueError(f"unexpected {c!r} at {i}")
-
-
-def closing(toks, i):
-    depth = 0
-    for j in range(i, len(toks)):
-        depth += toks[j][0] == "{"
-        depth -= toks[j][0] == "}"
-        if depth == 0:
-            return j
-    raise ValueError("a section is not closed")
-
-
-def find(toks, lo, hi, key):
-    """(key index, value index) of key among the entries toks[lo:hi] (case-insensitive), or None."""
-    i = lo
-    while i < hi:
-        if toks[i][0] != "str" or i + 1 >= hi:
-            raise ValueError("not key/value pairs")
-        j = i + 1
-        if toks[i][1].lower() == key.lower():
-            return i, j
-        i = closing(toks, j) + 1 if toks[j][0] == "{" else j + 1
-    return None
-
-
-def quote(s):
-    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
-
-
-def nest(keys, values, depth):
-    pad = "\t" * depth
-    if not keys:
-        return "".join(f"{pad}{quote(k)}\t\t{quote(v)}\n" for k, v in values.items())
-    return f"{pad}{quote(keys[0])}\n{pad}{{\n{nest(keys[1:], values, depth + 1)}{pad}}}\n"
-
-
-def set_entry(text, path, values):
-    """text with the section at path holding values (created when missing)."""
-    toks = list(tokens(text))
-    lo, hi, close, depth = 0, len(toks), None, 0
-    line_of = lambda tok: text.rfind("\n", 0, tok[2]) + 1
-    for n, key in enumerate(path):
-        hit = find(toks, lo, hi, key)
-        if hit is None:
-            at = line_of(toks[close]) if close is not None else len(text)
-            return text[:at] + nest(path[n:], values, depth) + text[at:]
-        j = hit[1]
-        if toks[j][0] != "{":
-            raise ValueError(f"{key} is a value, not a section")
-        close = closing(toks, j)
-        lo, hi, depth = j + 1, close, depth + 1
-    edits = []
-    for key, value in values.items():
-        hit = find(toks, lo, hi, key)
-        if hit is None:
-            at = line_of(toks[close])
-            edits.append((at, at, "\t" * depth + f"{quote(key)}\t\t{quote(value)}\n"))
-        elif toks[hit[1]][0] == "str":
-            edits.append((toks[hit[1]][2], toks[hit[1]][3], quote(value)))
-        else:
-            raise ValueError(f"{key} is a section, not a value")
-    for start, end, new in sorted(edits, reverse=True):
-        text = text[:start] + new + text[end:]
-    return text
-
-
-def mappings(text):
-    """{entry key: tool name} of CompatToolMapping in text ({} without one)."""
-    toks = list(tokens(text))
-    lo, hi = 0, len(toks)
-    for key in MAPPING:
-        hit = find(toks, lo, hi, key)
-        if hit is None or toks[hit[1]][0] != "{":
-            return {}
-        lo, hi = hit[1] + 1, closing(toks, hit[1])
-    out, i = {}, lo
-    while i < hi:
-        j = i + 1
-        if toks[j][0] == "{":
-            name = find(toks, j + 1, closing(toks, j), "name")
-            out[toks[i][1]] = toks[name[1]][1] if name and toks[name[1]][0] == "str" else ""
-            i = closing(toks, j) + 1
-        else:
-            i = j + 1
-    return out
-
-
 def steam_library():
     """/usr/lib/retroforge/steam-library as a module: its manifest and app cache readers."""
     loader = importlib.machinery.SourceFileLoader("steam_library", STEAM_LIBRARY)
@@ -234,20 +129,17 @@ def steam_library():
     return module
 
 
-def windows_games():
-    """{appid: name} of the installed games Steam's app cache lists for Windows and not for Linux."""
+def proton_games():
+    """{appid: name} of the installed games Steam would start with a Proton (steam_tool.proton_game), by
+    the client's app cache: its lists of tools hold Valve's own mappings."""
     lib = steam_library()
     installed = lib.installed_apps(STEAM_ROOT)
     if not installed:
         return {}
-    nodes = lib.app_nodes(STEAM_ROOT, set(installed))
-    games = {}
-    for appid, node in nodes.items():
-        common = node.get("appinfo", node).get("common", {})
-        oslist = str(common.get("oslist", "")).lower().split(",")
-        if str(common.get("type", "")).lower() in ("game", "demo") and "windows" in oslist and "linux" not in oslist:
-            games[appid] = installed[appid]["name"]
-    return games
+    nodes = lib.app_nodes(STEAM_ROOT, set(installed) | set(steam_tool.LISTS))
+    mapped = steam_tool.valve_mappings(nodes)
+    return {appid: installed[appid]["name"] for appid, node in nodes.items()
+            if appid in installed and steam_tool.proton_game(appid, node, mapped)}
 
 
 def plan(name):
@@ -264,7 +156,7 @@ def plan(name):
     new = set_entry(text, DEFAULT, {"name": name, "config": "", "priority": "75"})
     keys = ["0"] if new != text else []
     try:
-        games = windows_games()
+        games = proton_games()
     except Exception as err:  # the app cache unreadable: the default alone
         log(f"could not read the installed games' platforms: {err}")
         games = {}
@@ -289,17 +181,19 @@ def written():
 
 def pending():
     """See A RUNNING CLIENT."""
-    if not lacks_atomics() or not installed(os.path.join(STEAM_ROOT, "compatibilitytools.d", DIR)):
+    name = our_tool()
+    if not name or not installed(os.path.join(STEAM_ROOT, "compatibilitytools.d", name)):
         return False
     try:
-        keys = plan(DIR)[3]
+        keys = plan(name)[3]
     except (OSError, ValueError):  # a config.vdf we cannot edit: a restart would not help
         return False
     return bool(set(keys) - written())
 
 
 def set_tools(name):
-    """Our build as Steam's default and as each Windows game's own tool (see EACH WINDOWS GAME TOO)."""
+    """Our build as Steam's default and as the own tool of each game Steam would start with a Proton
+    (see EACH GAME STEAM WOULD START WITH A PROTON TOO)."""
     text, new, fresh, keys, added = plan(name)
     if added:
         log(f"{name} is now the tool of {', '.join(added)}")
@@ -323,26 +217,27 @@ def set_tools(name):
 
 
 def apply():
-    if not lacks_atomics():
+    name = our_tool()
+    if not name:
         return "steam"
-    tool = os.path.join(STEAM_ROOT, "compatibilitytools.d", DIR)
+    tool = os.path.join(STEAM_ROOT, "compatibilitytools.d", name)
     start_install()
     if not installed(tool):
-        log(f"{DIR} is not installed yet (it downloads in the background); Steam keeps its default for now")
+        log(f"{name} is not installed yet (it downloads in the background); Steam keeps its default for now")
     elif client_running():
         log("the Steam client is running; its default tool is set at its next start (a kept client "
             "is restarted for it before a launch that nothing else needs it during)")
     else:
         try:
-            set_tools(DIR)
+            set_tools(name)
         except (OSError, ValueError) as err:
             log(f"could not set Steam's default tool in {VDF}: {err}")
-    return "armv8"
+    return KINDS[name]
 
 
 def main(argv):
     if argv[1:] == ["status"]:
-        print("armv8" if lacks_atomics() else "steam")
+        print(KINDS.get(our_tool(), "steam"))
         return 0
     if argv[1:] == ["apply"]:
         print(apply())

@@ -856,6 +856,13 @@ OUT8="$("${NOPROXY[@]}" HOME="$T/home8" RETROFORGE_STEAM_ROOT="$S8" RETROFORGE_S
         RETROFORGE_STEAM_COMPAT_TOOLS="$HELPER" bash "$CCLI" status 2>&1)"
 [ "$(field "$OUT8" name)" = proton-cachyos-armv8 ] && [ "$(field "$OUT8" armv8)" = true ] && [ "$(field "$OUT8" installed)" = "$A8" ] \
   && ok "an ARMv8.0 CPU: Proton-CachyOS ARMv8.0, armv8 true" || bad "out=$OUT8"
+SOUT="$("${NOPROXY[@]}" -u XDG_DATA_HOME -u RETROFORGE_STEAM_ROOT HOME="$T/home" RETROFORGE_CPUINFO="$T/cpuinfo-v82" \
+        RETROFORGE_STEAM_COMPAT_TOOLS="$HELPER" RETROFORGE_STEAM_COMPAT_PIN="$PIN" RETROFORGE_STEAM_SAREK=on bash "$CCLI" status 2>&1)"
+proton 0 status
+[ "$(field "$OUT8" steam_default)" = true ] && [ "$(field "$SOUT" steam_default)" = true ] && [ "$(field "$SOUT" armv8)" = false ] \
+  && [ "$(field "$COUT" steam_default)" = false ] \
+  && ok "steam_default: true where it is Steam's tool (an ARMv8.0 CPU, a GPU that needs DXVK-Sarek), false elsewhere" \
+  || bad "v80=$OUT8 sarek=$SOUT other=$COUT"
 python3 - "$PIN_REAL" "$PIN8_REAL" "$HELPER" <<'PY' && ok "the real pins credit CachyOS and retroforge-linux, with their GitHub pages" || bad "author/homepage from the real pins"
 import importlib.machinery, importlib.util, os, sys
 os.environ["RETROFORGE_STEAM_ROOT"] = "/nonexistent"

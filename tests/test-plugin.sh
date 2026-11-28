@@ -358,6 +358,25 @@ s = open(sys.argv[1]).read()
 sep, add = s.find("_toggle.separator_visible = false"), s.find("box.add_child(_toggle)")
 sys.exit(0 if 0 <= sep < add and s.find('["RetroForgeSteamKeep", ') > 0 else 1)
 PY2
+# A Steam game's compatibility tool is Steam's own setting (its Properties > Compatibility): the row
+# takes its tools from retroforge-steam-direct and makes the choice through it (`set tool`), first of a
+# Steam game's rows and never on a store game's page, and says why nothing changed while Steam runs a
+# game (exit 3) instead of "could not save".
+python3 - "$SRC/game_settings_page.gd" <<'PY4' \
+  && ok "Game settings has a Steam game's Compatibility tool row, filled from and saved through retroforge-steam-direct" \
+  || bad "game_settings_page.gd has no Compatibility tool row for Steam games, or it is not first, or a refusal reads as a failed save"
+import sys
+s = open(sys.argv[1]).read()
+assert s.index('_tool = _game_dropdown("Compatibility tool", TOOL_ABOUT, "tool")') < s.index('_tso = _game_dropdown("FEX TSO"')
+steam = s[s.index("func _fill_steam("):s.index("func _fill_store(")]
+store = s[s.index("func _fill_store("):s.index("func _fill_api(")]
+assert "_fill_tool(data)" in steam and "_fill_tool(" not in store
+fill = s[s.index("func _fill_tool("):s.index("func _fill_steam(")]
+assert 'data.get("tool", {})' in fill and '_fill_row(_tool, "tool", items, mine, str(tool.get("other", "")))' in fill
+assert "for row in [_tool, _tso, " in s and "_focus_group.current_focus = _tool if _tool.visible else _tso" in s
+choice = s[s.index("func _on_game_choice("):s.index("## The game's emulator options")]
+assert 'args.append_array(["set", key, str(values[index])])' in choice and "if code == 3" in choice
+PY4
 
 # =================================================================================================
 CASE="zip"
