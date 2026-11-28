@@ -631,6 +631,14 @@ else
   grep -q '^+	tabs_container.set_process_input(false)$' "$P0065" && grep -q '^+	tabs_container.set_process_input(true)$' "$P0065" \
     && ok "the library's tabs give up L1 and R1 as the library is left and take them back when it is entered" \
     || bad "the library's tabs still take L1 and R1 while they fade out"
+  # The bottom bar names the two buttons, hidden until the page says a game is that way, and the
+  # page says so each time it shows a game and takes them away as it is left.
+  grep -q '^+func show_game_steps(previous: bool, next: bool) -> void:$' "$P0065" \
+    && [ "$(grep -c '^+visible = false$' "$P0065" | tr -d ' ')" -eq 2 ] \
+    && grep -q '^+text = "Previous"$' "$P0065" && grep -q '^+text = "Next"$' "$P0065" \
+    && ok "the bottom bar has Previous and Next, hidden until asked for" || bad "the bottom bar's Previous and Next are missing or shown everywhere"
+  grep -q '^+	_hint_steps(true)$' "$P0065" && grep -q '^+	_hint_steps(false)$' "$P0065" \
+    && ok "the page shows them with each game and hides them as it is left" || bad "the page does not show or does not hide the bottom bar's hints"
   # Two games' art can load at once now: the one no longer shown must not set its art.
   [ "$(grep -c '^+	if launcher_state.data.get("item") != library_item:$' "$P0065" | tr -d ' ')" -eq 2 ] \
     && ok "art that arrives for a game no longer shown is dropped" || bad "a late logo or banner can still land on another game's page"

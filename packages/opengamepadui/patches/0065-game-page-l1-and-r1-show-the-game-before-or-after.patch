@@ -26,6 +26,14 @@ its first card. The page defers that twice, so that it comes after the
 list's own choice, which the list defers as its state is entered. Back
 without L1 or R1 is as before.
 
+The bottom bar names the two buttons on that page: "Previous" with
+L1's icon and "Next" with R1's, after Accept and Back, each only while
+there is a game that way, so the first game of a row shows Next alone.
+The page tells the bar (its group, show_game_steps()) each time it shows
+a game and as it is left. The bar shows and hides a box around each
+InputIcon, since an InputIcon makes itself visible again whenever the
+kind of input changes.
+
 The page's logo and banner load in two awaited steps, and two games'
 loads can now overlap: art that arrives for a game no longer shown is
 dropped.
@@ -42,10 +50,14 @@ last of the nine did nothing. From All Games, A on the sixth card, the
 last of its row, then R1 twice showed the seventh and the eighth, and
 Back put the focus on the eighth; in the grid R1 and L1 changed tab as
 before. From the RetroForge plugin's Steam tab likewise. A and R1 60 ms
-apart showed the next game and left the tab alone.
+apart showed the next game and left the tab alone. The bottom bar had
+Next alone on the first game of Home's row, Previous and Next on the
+second, Previous alone on the ninth and last, neither in the game's
+settings, both again back on its page, and neither on Home or in the
+library.
 ---
 diff --git a/core/ui/card_ui/launch/game_launch_menu.gd b/core/ui/card_ui/launch/game_launch_menu.gd
-index e3b7e91..f98d86c 100644
+index e3b7e91..0aeff10 100644
 --- a/core/ui/card_ui/launch/game_launch_menu.gd
 +++ b/core/ui/card_ui/launch/game_launch_menu.gd
 @@ -16,8 +16,15 @@ var game_settings_state := preload("res://assets/state/states/game_settings.tres
@@ -72,7 +84,7 @@ index e3b7e91..f98d86c 100644
  	launcher_state.state_entered.connect(_on_state_entered)
  	launcher_state.state_exited.connect(_on_state_exited)
  	launch_button.button_up.connect(_on_launch)
-@@ -55,6 +63,48 @@ func _process(_delta: float) -> void:
+@@ -55,6 +63,57 @@ func _process(_delta: float) -> void:
  
  
  func _on_state_entered(_from: State) -> void:
@@ -116,12 +128,21 @@ index e3b7e91..f98d86c 100644
 +	_show_game()
 +
 +
++## The bottom bar names L1 and R1, each while it has a game to show (none once the page is left).
++func _hint_steps(on_page: bool) -> void:
++	var nodes: Array = _list.get_children() if on_page and is_instance_valid(_list) else []
++	var item := launcher_state.data.get("item") as LibraryItem
++	get_tree().call_group("context_bar", "show_game_steps",
++		GameBeside.beside(nodes, item, -1) != null, GameBeside.beside(nodes, item, 1) != null)
++
++
 +## Sets the page up for the game in the launcher state's data
 +func _show_game() -> void:
++	_hint_steps(true)
  	# Fade in the banner texture
  	player.play("fade_in")
  
-@@ -105,10 +155,15 @@ func _on_state_entered(_from: State) -> void:
+@@ -105,10 +164,15 @@ func _on_state_entered(_from: State) -> void:
  	var logo_texture = await (
  		BoxArtManager.get_boxart_or_placeholder(library_item, BoxArtProvider.LAYOUT.LOGO)
  	)
@@ -137,11 +158,12 @@ index e3b7e91..f98d86c 100644
  	banner.texture = banner_texture
  
  	loading.visible = false
-@@ -120,6 +175,18 @@ func _on_state_exited(to: State) -> void:
+@@ -120,6 +184,19 @@ func _on_state_exited(to: State) -> void:
  	if to == in_game_state:
  		state_machine.remove_state(launcher_state)
  	set_process(false)
 +	set_process_input(false)
++	_hint_steps(false)
 +	# Back at the list on another game than the one it opened: that game's card takes the focus,
 +	# after the list's own choice (Home's first card, the library's last focused one), which the
 +	# list defers as its state is entered. Hence deferred twice.
@@ -156,6 +178,76 @@ index e3b7e91..f98d86c 100644
  
  
  func _update_launch_button() -> void:
+diff --git a/core/ui/card_ui/navigation/context_bar_menu.gd b/core/ui/card_ui/navigation/context_bar_menu.gd
+index 51d1ec1..4c97bd7 100644
+--- a/core/ui/card_ui/navigation/context_bar_menu.gd
++++ b/core/ui/card_ui/navigation/context_bar_menu.gd
+@@ -3,11 +3,17 @@ extends PanelContainer
+ var state_machine := load("res://assets/state/state_machines/global_state_machine.tres") as StateMachine
+ var logger := Log.get_logger("ContextBar")
+ 
++## The game page (GameLaunchMenu) finds the bar by this group to show what L1 and R1 do there
++const GROUP := "context_bar"
++
+ @onready var time_label: Label = $%TimeLabel
++@onready var previous_game: Control = $%PreviousGame
++@onready var next_game: Control = $%NextGame
+ 
+ 
+ # Called when the node enters the scene tree for the first time.
+ func _ready() -> void:
++	add_to_group(GROUP)
+ 	state_machine.state_changed.connect(_on_state_changed)
+ 
+ 	# Create a timer to update the time
+@@ -29,6 +35,14 @@ func _on_state_changed(from: State, to: State):
+ 	logger.debug(state_stack)
+ 
+ 
++## Shows "Previous" with L1's icon and "Next" with R1's: on a game's page, each while there is a
++## game that way. Their boxes are shown and hidden, as an InputIcon shows itself when the kind of
++## input changes.
++func show_game_steps(previous: bool, next: bool) -> void:
++	previous_game.visible = previous
++	next_game.visible = next
++
++
+ # Updates the current time on timer timeout
+ func _on_update_time():
+ 	# year, month, day, weekday, hour, minute, second
+diff --git a/core/ui/card_ui/navigation/context_bar_menu.tscn b/core/ui/card_ui/navigation/context_bar_menu.tscn
+index c4dfeec..00d316e 100644
+--- a/core/ui/card_ui/navigation/context_bar_menu.tscn
++++ b/core/ui/card_ui/navigation/context_bar_menu.tscn
+@@ -43,6 +43,28 @@ script = ExtResource("8_l6mey")
+ text = "Back"
+ path = "ogui_east"
+ 
++[node name="PreviousGame" type="HBoxContainer" parent="MarginContainer/HBoxContainer/HBoxContainer"]
++unique_name_in_owner = true
++visible = false
++layout_mode = 2
++
++[node name="InputIcon" type="HBoxContainer" parent="MarginContainer/HBoxContainer/HBoxContainer/PreviousGame"]
++layout_mode = 2
++script = ExtResource("8_l6mey")
++text = "Previous"
++path = "ogui_tab_left"
++
++[node name="NextGame" type="HBoxContainer" parent="MarginContainer/HBoxContainer/HBoxContainer"]
++unique_name_in_owner = true
++visible = false
++layout_mode = 2
++
++[node name="InputIcon" type="HBoxContainer" parent="MarginContainer/HBoxContainer/HBoxContainer/NextGame"]
++layout_mode = 2
++script = ExtResource("8_l6mey")
++text = "Next"
++path = "ogui_tab_right"
++
+ [node name="VBoxContainer" type="HBoxContainer" parent="MarginContainer/HBoxContainer"]
+ layout_mode = 2
+ size_flags_horizontal = 3
 diff --git a/core/ui/card_ui/navigation/search_bar_menu.gd b/core/ui/card_ui/navigation/search_bar_menu.gd
 index 3498281..820eca7 100644
 --- a/core/ui/card_ui/navigation/search_bar_menu.gd

@@ -341,9 +341,11 @@
 #         from, Home's recent games or a library tab, without going back to pick it. In the order
 #         the cards are laid out (a grid's row runs on into the next), nothing past the ends, and
 #         cards a search has hidden are passed over. Back then lands on the card of the game last
-#         shown. L1 and R1 did nothing on that page; in the library they still change tab, but its
-#         tab header no longer takes them while it fades out after the library is left (R1 60 ms
-#         after a card opened its page changed the tab behind the page). HW, MANGMI Air X.
+#         shown. The bottom bar names them there, Previous and Next beside Accept and Back, each
+#         while there is a game that way. L1 and R1 did nothing on that page; in the library they
+#         still change tab, but its tab header no longer takes them while it fades out after the
+#         library is left (R1 60 ms after a card opened its page changed the tab behind the page).
+#         HW, MANGMI Air X.
 #
 # 0020, 0028 and 0044 fixed the patch they follow and were folded into it (0017, 0026, 0019) on
 # 2026-11-11; their numbers stay unused so the others keep theirs.
