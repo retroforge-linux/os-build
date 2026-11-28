@@ -231,6 +231,10 @@ if [ -d "$OVERLAY" ]; then
   # fails at once. A replacement file would have to name another bus, which dbus-broker-launch
   # warns about at every session start. rootfs/overlay/README.md has the measurements.
   rm -f "$stage/usr/share/dbus-1/services/org.a11y.Bus.service"
+  # And systemd's for systemd-homed, which the overlay masks (no home areas here): pam_systemd_home
+  # asks for it at every player login, and a masked name that is still activatable logs a failed
+  # activation each time (MANGMI Air X, 2026-11-27). Without the file the ask fails at once, unlogged.
+  rm -f "$stage/usr/share/dbus-1/system-services/org.freedesktop.home1.service"
   # Host-side Python bytecode, same class of thing as the README: build-tree litter, not rootfs
   # content. The offline suites import rootfs/overlay's clients as modules (test-fan-curve.sh,
   # -cpu-scheduler, -update), and CPython writes a __pycache__ NEXT TO THE SOURCE — inside rootfs/overlay/, which this

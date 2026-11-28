@@ -929,6 +929,20 @@ done
   || bad "etc/systemd/user/at-spi-dbus-bus.service is not masked"
 
 # ------------------------------------------------------------------------------------------
+# 9d. systemd-homed is off: masked, and its bus name not activatable.
+#
+# No home areas on this image. pam_systemd_home asks org.freedesktop.home1 at every player login;
+# masked but still activatable, each ask logs a failed activation. Looked for by name, as 9c.
+# ------------------------------------------------------------------------------------------
+for f in "$STAGE"/usr/share/dbus-1/system-services/*.service; do
+  [ -f "$f" ] || continue
+  grep -qx 'Name=org.freedesktop.home1' "$f" \
+    && bad "${f#"$STAGE"/} makes org.freedesktop.home1 activatable: every login would log a failed activation of the masked systemd-homed"
+done
+[ "$(readlink "$STAGE/etc/systemd/system/systemd-homed.service" 2>/dev/null)" = /dev/null ] \
+  || bad "etc/systemd/system/systemd-homed.service is not masked"
+
+# ------------------------------------------------------------------------------------------
 # 10. Python bytecode is the image's own: no host bytecode rode in, and the stdlib has its own.
 #
 # rootfs/overlay/ is injected with `cp -a` of the WORKING TREE, and the offline suites import its

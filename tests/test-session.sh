@@ -875,5 +875,16 @@ awk '/^# STAGE overlay-payload/ { f = 1 } /^# STAGE / && !/overlay-payload/ { f 
   && ok "at-spi-dbus-bus.service is masked for the session user" \
   || bad "etc/systemd/user/at-spi-dbus-bus.service is not a /dev/null mask"
 
+CASE="no systemd-homed"
+# Masked in the overlay, and its bus name not activatable (the same stage, for the same reason).
+awk '/^# STAGE overlay-payload/ { f = 1 } /^# STAGE / && !/overlay-payload/ { f = 0 }
+     f && /^[[:space:]]*rm -f "\$stage\/usr\/share\/dbus-1\/system-services\/org\.freedesktop\.home1\.service"$/ { found = 1 }
+     END { exit !found }' "$ASM" \
+  && ok "assemble-rootfs.sh deletes org.freedesktop.home1.service in the overlay stage (dev and release builds)" \
+  || bad "assemble-rootfs.sh does not delete usr/share/dbus-1/system-services/org.freedesktop.home1.service in the overlay stage"
+[ "$(readlink "$ROOT/rootfs/overlay/etc/systemd/system/systemd-homed.service" 2>/dev/null)" = /dev/null ] \
+  && ok "systemd-homed.service is masked" \
+  || bad "etc/systemd/system/systemd-homed.service is not a /dev/null mask"
+
 printf '\ntest-session.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

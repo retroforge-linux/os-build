@@ -135,6 +135,11 @@ which its self-updates would overwrite. The overlay-ownership stage resets it to
   maintenance timers with nothing to do on an image OS (users and groups are pinned at build time,
   release images carry no pacman keyring, man-db is not installed), which can otherwise fire in
   the middle of a game. `man-db.timer` is masked ahead of time, in case a dependency pulls man-db in.
+- `etc/systemd/system/systemd-homed.service -> /dev/null`, with `rootfs/assemble-rootfs.sh` deleting
+  systemd's `usr/share/dbus-1/system-services/org.freedesktop.home1.service` — the image has no home
+  areas (the player is a plain account), and homed started at every boot (257 ms, MANGMI Air X).
+  `pam_systemd_home` still asks for it at every player login: masked but activatable, each ask
+  logged a failed activation; without the file it fails at once and logs nothing.
 - `etc/systemd/user/at-spi-dbus-bus.service -> /dev/null`, with `rootfs/assemble-rootfs.sh` deleting
   at-spi2-core's `usr/share/dbus-1/services/org.a11y.Bus.service` (a deletion the mirror cannot
   express) — no accessibility bus. Godot 4.7.1's X11 display server asks `org.a11y.Status` for
