@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 28 Nov 2026 07:10:00 -0800
+Subject: [PATCH] media: iris: return no picture for a frame the gen2 firmware
+ does not show
+
+For a frame that is decoded but not shown, such as a VP9 alt-ref frame
+packed in a superframe, the gen2 firmware returns the output buffer with
+HFI_PROP_PICTURE_TYPE NOSHOW and the length of a whole picture. iris
+flagged the buffer V4L2_BUF_FLAG_ERROR but kept that length and the
+timestamp. Chromium's stateful decoder outputs every CAPTURE buffer
+whose bytesused is not zero and does not look at the error flag.
+
+Return such a buffer with no payload and no timestamp, as the gen1 path
+now does. Valve's startup_machine.webm, which the Steam client plays,
+has 11 hidden frames in 94 packets: on a KONKR Pocket FIT Elite
+(SM8750) ffmpeg got 105 pictures from it, all equal to frames that
+software decoding shows.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+index f0782c4..8bbd2c3 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_response.c
+@@ -390,6 +390,12 @@ static int iris_hfi_gen2_handle_output_buffer(struct iris_inst *inst,
+ 
+ 	buf->flags = iris_hfi_gen2_get_driver_buffer_flags(inst, hfi_buffer->flags);
+ 
++	/* A frame not to be shown (VP9 hidden frame): no picture, as on gen1 */
++	if (to_iris_inst_hfi_gen2(inst)->hfi_frame_info.picture_type & HFI_GEN2_PICTURE_NOSHOW) {
++		buf->data_size = 0;
++		buf->timestamp = 0;
++	}
++
+ 	if (!buf->data_size && inst->state == IRIS_INST_STREAMING &&
+ 	    !(hfi_buffer->flags & HFI_BUF_FW_FLAG_LAST)) {
+ 		buf->flags |= V4L2_BUF_FLAG_ERROR;
+-- 
+2.47.0
+

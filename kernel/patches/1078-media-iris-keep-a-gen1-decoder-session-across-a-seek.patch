@@ -31,8 +31,8 @@ Tested on a MANGMI Air X (SM6115, venus-6.0) in the Steam client with
 startup_machine.webm (1080p VP9) looping: 282-296 of 300 frames in 10 s,
 0-2 dropped, no firmware errors, against 300 in software; the web
 helper used 92-99% of a core against 120-128% in software. ffmpeg
-decodes H.264, HEVC and VP9 bit-exact. SM8250 takes the same path and is
-untested.
+decodes H.264, HEVC and VP9 bit-exact. SM8250 takes the same path: on a
+Retroid Pocket 5 the same clip loops in the Steam client at 298-300 of 300.
 
 Signed-off-by: sunshineinabox <aqemail@gmail.com>
 ---

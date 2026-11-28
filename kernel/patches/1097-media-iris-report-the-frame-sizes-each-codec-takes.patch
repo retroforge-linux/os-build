@@ -1,0 +1,187 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sun, 23 Nov 2026 12:10:00 -0800
+Subject: [PATCH] media: iris: report the frame sizes each codec takes
+
+VIDIOC_ENUM_FRAMESIZES reports the platform's width and height limits,
+but every core also limits a frame to a number of macroblocks, which a
+stepwise range cannot express. AR50_LITE takes 8160 macroblocks
+(1920x1088) and reports 128x128 - 1920x1920; SM8250 and SM8550 to SM8750
+take 8192x4320 and 8192x4352 and report 8192x8192.
+
+A client that checks only the reported bounds takes the decoder for
+streams it cannot decode. Chromium's V4L2 decoder does: on the SM6115 it
+would send Steam's 1920x1200 VP9 startup movies (9000 macroblocks) to
+the decoder instead of to software.
+
+Report the tallest frame that fits the macroblock limit at the widest
+width instead, on every platform. Portrait frames taller than that leave
+the reported range, although the hardware could decode them.
+
+VP9 has lower limits than the other codecs on the SM8550-class cores:
+msm_vidc (kalama, pineapple, sun) takes VP9 up to 4096x4096 and 36864
+macroblocks (4096x2304), and the others up to 8192. Give the platform
+caps VP9 limits, set them there, and use them for VP9 in ENUM_FRAMESIZES
+and in the session's size and macroblock checks. A KONKR Pocket FIT
+Elite (SM8750) now reports H.264, HEVC and AV1 as 96x96 - 8192x4352 and
+VP9 as 96x96 - 4096x2304.
+
+The frame-size part is the same change as our venus patch of 2026-11-22,
+which this replaces now that iris drives the SM6115.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/iris/iris_platform_common.h |  3 +++
+ drivers/media/platform/qcom/iris/iris_platform_sm8550.h |  2 ++
+ drivers/media/platform/qcom/iris/iris_utils.c           | 22 ++++++++++++++++++++++
+ drivers/media/platform/qcom/iris/iris_utils.h           |  2 ++
+ drivers/media/platform/qcom/iris/iris_vb2.c             | 11 ++++-------
+ drivers/media/platform/qcom/iris/iris_vidc.c            | 14 ++++++++++++--
+ 6 files changed, 45 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+index cddab9a..b1d5cc1 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_common.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
+@@ -118,6 +118,9 @@ struct platform_inst_caps {
+ 	u32 min_frame_height;
+ 	u32 max_frame_height;
+ 	u32 max_mbpf;
++	/* VP9's frame limits, where lower than the other codecs' (0: the same) */
++	u32 max_vp9_frame_size;
++	u32 max_vp9_mbpf;
+ 	u32 mb_cycles_vsp;
+ 	u32 mb_cycles_vpp;
+ 	u32 mb_cycles_fw;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_sm8550.h b/drivers/media/platform/qcom/iris/iris_platform_sm8550.h
+index 3c9dae9..96a1b55 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_sm8550.h
++++ b/drivers/media/platform/qcom/iris/iris_platform_sm8550.h
+@@ -20,6 +20,8 @@ static struct platform_inst_caps platform_inst_cap_sm8550 = {
+ 	.min_frame_height = 96,
+ 	.max_frame_height = 8192,
+ 	.max_mbpf = (8192 * 4352) / 256,
++	.max_vp9_frame_size = 4096,
++	.max_vp9_mbpf = (4096 * 2304) / 256,
+ 	.mb_cycles_vpp = 200,
+ 	.mb_cycles_fw = 489583,
+ 	.mb_cycles_fw_vpp = 66234,
+diff --git a/drivers/media/platform/qcom/iris/iris_utils.c b/drivers/media/platform/qcom/iris/iris_utils.c
+index 1096cc4..b695939 100644
+--- a/drivers/media/platform/qcom/iris/iris_utils.c
++++ b/drivers/media/platform/qcom/iris/iris_utils.c
+@@ -148,3 +148,25 @@ bool is_rotation_90_or_270(struct iris_inst *inst)
+ 	return inst->fw_caps[ROTATION].value == 90 ||
+ 		inst->fw_caps[ROTATION].value == 270;
+ }
++
++/*
++ * The largest frame the core takes for a codec. VP9's limits are lower than
++ * the other codecs' on some cores: 4096x2304 on SM8550, SM8650 and SM8750,
++ * as msm_vidc has them.
++ */
++void iris_get_frame_caps(struct iris_inst *inst, u32 pixfmt, u32 *max_width,
++			 u32 *max_height, u32 *max_mbpf)
++{
++	struct platform_inst_caps *caps = inst->core->iris_platform_data->inst_caps;
++
++	*max_width = caps->max_frame_width;
++	*max_height = caps->max_frame_height;
++	*max_mbpf = caps->max_mbpf;
++
++	if (inst->domain == DECODER && pixfmt == V4L2_PIX_FMT_VP9 &&
++	    caps->max_vp9_frame_size) {
++		*max_width = caps->max_vp9_frame_size;
++		*max_height = caps->max_vp9_frame_size;
++		*max_mbpf = caps->max_vp9_mbpf;
++	}
++}
+diff --git a/drivers/media/platform/qcom/iris/iris_utils.h b/drivers/media/platform/qcom/iris/iris_utils.h
+index be23acc..d908063 100644
+--- a/drivers/media/platform/qcom/iris/iris_utils.h
++++ b/drivers/media/platform/qcom/iris/iris_utils.h
+@@ -55,5 +55,7 @@ int iris_wait_for_session_response(struct iris_inst *inst, bool is_flush);
+ int iris_check_core_mbpf(struct iris_inst *inst);
+ int iris_check_core_mbps(struct iris_inst *inst);
+ bool is_rotation_90_or_270(struct iris_inst *inst);
++void iris_get_frame_caps(struct iris_inst *inst, u32 pixfmt, u32 *max_width,
++			 u32 *max_height, u32 *max_mbpf);
+ 
+ #endif
+diff --git a/drivers/media/platform/qcom/iris/iris_vb2.c b/drivers/media/platform/qcom/iris/iris_vb2.c
+index 620d836..5a385a9 100644
+--- a/drivers/media/platform/qcom/iris/iris_vb2.c
++++ b/drivers/media/platform/qcom/iris/iris_vb2.c
+@@ -16,11 +16,9 @@
+ 
+ static int iris_check_inst_mbpf(struct iris_inst *inst)
+ {
+-	struct platform_inst_caps *caps;
+-	u32 mbpf, max_mbpf;
++	u32 mbpf, max_mbpf, max_width, max_height;
+ 
+-	caps = inst->core->iris_platform_data->inst_caps;
+-	max_mbpf = caps->max_mbpf;
++	iris_get_frame_caps(inst, inst->codec, &max_width, &max_height, &max_mbpf);
+ 	mbpf = iris_get_mbpf(inst);
+ 	if (mbpf > max_mbpf)
+ 		return -ENOMEM;
+@@ -30,7 +28,7 @@ static int iris_check_inst_mbpf(struct iris_inst *inst)
+ 
+ static int iris_check_resolution_supported(struct iris_inst *inst)
+ {
+-	u32 width, height, min_width, min_height, max_width, max_height;
++	u32 width, height, min_width, min_height, max_width, max_height, max_mbpf;
+ 	struct platform_inst_caps *caps;
+ 
+ 	caps = inst->core->iris_platform_data->inst_caps;
+@@ -38,9 +36,8 @@ static int iris_check_resolution_supported(struct iris_inst *inst)
+ 	height = inst->fmt_src->fmt.pix_mp.height;
+ 
+ 	min_width = caps->min_frame_width;
+-	max_width = caps->max_frame_width;
+ 	min_height = caps->min_frame_height;
+-	max_height = caps->max_frame_height;
++	iris_get_frame_caps(inst, inst->codec, &max_width, &max_height, &max_mbpf);
+ 
+ 	if (!(min_width <= width && width <= max_width) ||
+ 	    !(min_height <= height && height <= max_height))
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+index e3eaec1..91af616 100644
+--- a/drivers/media/platform/qcom/iris/iris_vidc.c
++++ b/drivers/media/platform/qcom/iris/iris_vidc.c
+@@ -397,6 +397,7 @@ static int iris_enum_framesizes(struct file *filp, void *fh,
+ {
+ 	struct iris_inst *inst = iris_get_inst(filp);
+ 	struct platform_inst_caps *caps;
++	u32 max_width, max_height, max_mbpf, rows;
+ 	int ret = 0;
+ 
+ 	if (fsize->index)
+@@ -411,15 +412,24 @@ static int iris_enum_framesizes(struct file *filp, void *fh,
+ 		return ret;
+ 
+ 	caps = inst->core->iris_platform_data->inst_caps;
++	iris_get_frame_caps(inst, fsize->pixel_format, &max_width, &max_height, &max_mbpf);
+ 
+ 	fsize->type = V4L2_FRMSIZE_TYPE_STEPWISE;
+ 	fsize->stepwise.min_width = caps->min_frame_width;
+-	fsize->stepwise.max_width = caps->max_frame_width;
++	fsize->stepwise.max_width = max_width;
+ 	fsize->stepwise.step_width = STEP_WIDTH;
+ 	fsize->stepwise.min_height = caps->min_frame_height;
+-	fsize->stepwise.max_height = caps->max_frame_height;
++	fsize->stepwise.max_height = max_height;
+ 	fsize->stepwise.step_height = STEP_HEIGHT;
+ 
++	/*
++	 * A stepwise range cannot express the macroblocks-per-frame limit, so
++	 * report the tallest frame that fits it at the widest width.
++	 */
++	rows = max_mbpf / DIV_ROUND_UP(max_width, 16);
++	if (rows * 16 < fsize->stepwise.max_height)
++		fsize->stepwise.max_height = rows * 16;
++
+ 	return ret;
+ }
+ 

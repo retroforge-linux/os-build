@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 28 Nov 2026 07:20:00 -0800
+Subject: [PATCH] media: iris: send a gen2 decoder's input parameters only
+ before the firmware parses the stream
+
+When a video loops or seeks, Chromium drains the decoder and restarts
+both queues. At each STREAMON of the input queue iris sent the decoder's
+input parameters again: its bitstream resolution aligned to 16
+(1920x1088) and its minimum output count (4). The firmware had parsed
+1920x1080 and 11, so after the seek it compared and reported a settings
+change (HFI_CMD_SETTINGS_CHANGE) but never returned the last buffer of
+the old sequence. Chromium waits for that LAST buffer before it
+reconfigures, so the video stopped after its first pass, at 94 of 300
+frames, and after two such stalls Chromium decoded every video in
+software.
+
+msm_vidc sends these parameters only with its first subscription to
+port settings changes. Do the same: once the input subscription is set,
+skip them.
+
+Tested on a KONKR Pocket FIT Elite (SM8750, vpu35_p4.mbn) in the Steam
+client: startup_machine.webm (1080p VP9) loops at 299 of 300 frames in
+10 s with no settings change after the first, and Steam's 1920x1200
+startup movies loop at 600 of 600.
+
+Signed-off-by: sunshineinabox <aqemail@gmail.com>
+---
+ drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+index 388a36f..9eb9d41 100644
+--- a/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
++++ b/drivers/media/platform/qcom/iris/iris_hfi_gen2_command.c
+@@ -668,6 +668,7 @@ static int iris_hfi_gen2_set_super_block(struct iris_inst *inst, u32 plane)
+ static int iris_hfi_gen2_session_set_config_params(struct iris_inst *inst, u32 plane)
+ {
+ 	const struct iris_firmware_data *fdata = inst->core->iris_firmware_data;
++	struct iris_inst_hfi_gen2 *inst_hfi_gen2 = to_iris_inst_hfi_gen2(inst);
+ 	u32 config_params_size = 0, i, j;
+ 	const u32 *config_params = NULL;
+ 	int ret;
+@@ -693,6 +694,15 @@ static int iris_hfi_gen2_session_set_config_params(struct iris_inst *inst, u32 p
+ 		{HFI_PROP_AV1_SUPER_BLOCK_ENABLED,    iris_hfi_gen2_set_super_block            },
+ 	};
+ 
++	/*
++	 * The decoder's input parameters go to the firmware once, before it has parsed the
++	 * stream, as msm_vidc does. Sent again after a seek, our aligned guesses differ from
++	 * what it parsed, and it reports a settings change that never completes.
++	 */
++	if (inst->domain == DECODER && V4L2_TYPE_IS_OUTPUT(plane) &&
++	    inst_hfi_gen2->ipsc_properties_set)
++		return 0;
++
+ 	if (inst->domain == DECODER) {
+ 		if (V4L2_TYPE_IS_OUTPUT(plane)) {
+ 			if (inst->codec == V4L2_PIX_FMT_H264) {
+-- 
+2.47.0
+

@@ -2,7 +2,7 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: sunshineinabox <aqemail@gmail.com>
 Date: Sun, 23 Nov 2026 12:20:00 -0800
 Subject: [PATCH] media: iris: give decoded frames a cached CPU mapping on
- AR50_LITE
+ SM8250 and AR50_LITE
 
 The SM6115's video core is not cache-coherent, so its MMAP CAPTURE
 buffers are mapped uncached, and a client that reads a decoded frame on
@@ -11,7 +11,7 @@ every frame: with venus on the SM6115 (Cortex-A73) a 1080p30 VP9 stream
 showed 180-188 of 300 frames, dropped 55-62 and used 167-175% CPU, worse
 than its software decoder (300 frames at 161-170%).
 
-On platforms that set cached_dec_capture (only AR50_LITE here), let the
+On platforms that set cached_dec_capture (AR50_LITE and SM8250 here), let the
 decoder's CAPTURE queue take cache hints and ask for non-coherent memory
 for its MMAP buffers, so vb2 allocates them cached and cleans and
 invalidates them at QBUF and DQBUF. With venus the same stream then
@@ -21,37 +21,62 @@ The same change as our venus patch of 2026-11-22, which this replaces now
 that iris drives the SM6115. On a cache-coherent core (the SM4450's) vb2
 syncs nothing and the flag changes nothing.
 
+The SM8250's video core is not cache-coherent either (its node has no
+dma-coherent, unlike SM8550 and later), so it gets the flag too. On a
+Retroid Pocket 5, ffmpeg decoding and reading every frame of a 1080p VP9
+clip used 1.04 s of CPU against 1.69 s in software (1920x1200: 2.96 s
+against 5.13 s).
+
 Signed-off-by: sunshineinabox <aqemail@gmail.com>
 ---
- drivers/media/platform/qcom/iris/iris_platform_common.h     |    2 
- drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c |    1 
- drivers/media/platform/qcom/iris/iris_vidc.c                |   38 +++++++++++-
- 3 files changed, 39 insertions(+), 2 deletions(-)
+ drivers/media/platform/qcom/iris/iris_platform_common.h     |  2 ++
+ drivers/media/platform/qcom/iris/iris_platform_vpu2.c       |  1 +
+ drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c |  1 +
+ drivers/media/platform/qcom/iris/iris_vidc.c                | 38 ++++++++++++++++++++++++++++++++++++--
+ 4 files changed, 40 insertions(+), 2 deletions(-)
 
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_common.h b/drivers/media/platform/qcom/iris/iris_platform_common.h
+index b1d5cc1..ffa18cc 100644
 --- a/drivers/media/platform/qcom/iris/iris_platform_common.h
 +++ b/drivers/media/platform/qcom/iris/iris_platform_common.h
-@@ -350,6 +350,8 @@ struct iris_platform_data {
+@@ -351,6 +351,8 @@ struct iris_platform_data {
+ 	u32 num_vpp_pipe;
+ 	bool no_aon;
  	bool no_rpmh;
- 	/* Report only frame sizes that fit inst_caps->max_mbpf. */
- 	bool framesizes_fit_mbpf;
 +	/* Map decoded MMAP frames cached (non-coherent memory). */
 +	bool cached_dec_capture;
  	u32 wd_intr_mask;
  	u32 icc_ib_multiplier;
  	u32 max_session_count;
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+index becbe37..e3203ad 100644
+--- a/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
++++ b/drivers/media/platform/qcom/iris/iris_platform_vpu2.c
+@@ -166,6 +166,7 @@ const struct iris_platform_data sm8250_data = {
+ 	.num_vpp_pipe = 4,
+ 	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
+ 	.icc_ib_multiplier = 1,
++	.cached_dec_capture = true,
+ 	.max_session_count = 16,
+ 	.max_core_mbpf = NUM_MBS_8K,
+ 	.max_core_mbps = ((7680 * 4320) / 256) * 60,
+diff --git a/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c b/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
+index 43460b8..8efa1e7 100644
 --- a/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
 +++ b/drivers/media/platform/qcom/iris/iris_platform_vpu_ar50lt.c
-@@ -109,6 +109,7 @@ const struct iris_platform_data qcm2290_data = {
+@@ -108,6 +108,7 @@ const struct iris_platform_data qcm2290_data = {
+ 	.tz_cp_config_data_size = ARRAY_SIZE(tz_cp_config_ar50lt),
  	.num_vpp_pipe = 1,
  	.no_rpmh = true,
- 	.framesizes_fit_mbpf = true,
 +	.cached_dec_capture = true,
  	.wd_intr_mask = WRAPPER_INTR_STATUS_A2HWD_BMSK,
  	.icc_ib_multiplier = 2,
  	.max_session_count = 8,
+diff --git a/drivers/media/platform/qcom/iris/iris_vidc.c b/drivers/media/platform/qcom/iris/iris_vidc.c
+index 91af616..532f0ba 100644
 --- a/drivers/media/platform/qcom/iris/iris_vidc.c
 +++ b/drivers/media/platform/qcom/iris/iris_vidc.c
-@@ -142,6 +142,9 @@ iris_m2m_queue_init(void *priv, struct vb2_queue *src_
+@@ -142,6 +142,9 @@ iris_m2m_queue_init(void *priv, struct vb2_queue *src_vq, struct vb2_queue *dst_
  	dst_vq->min_reqbufs_allocation = MIN_BUFFERS;
  	dst_vq->dev = inst->core->dev;
  	dst_vq->lock = &inst->ctx_q_lock;
@@ -61,12 +86,10 @@ Signed-off-by: sunshineinabox <aqemail@gmail.com>
  
  	return vb2_queue_init(dst_vq);
  }
-@@ -390,8 +393,39 @@ static int iris_g_fmt_vid_mplane(struct file *filp, vo
- 	mutex_unlock(&inst->lock);
- 
+@@ -392,6 +395,37 @@ static int iris_g_fmt_vid_mplane(struct file *filp, void *fh, struct v4l2_format
  	return ret;
-+}
-+
+ }
+ 
 +/*
 + * A client that reads decoded frames on the CPU (Chromium's V4L2 decoder)
 + * reads uncached DRAM on a non-coherent core unless the frames are cached;
@@ -83,8 +106,8 @@ Signed-off-by: sunshineinabox <aqemail@gmail.com>
 +		rb->flags |= V4L2_MEMORY_FLAG_NON_COHERENT;
 +
 +	return v4l2_m2m_ioctl_reqbufs(filp, fh, rb);
- }
- 
++}
++
 +static int iris_dec_create_bufs(struct file *filp, void *fh,
 +				struct v4l2_create_buffers *cb)
 +{
@@ -101,7 +124,7 @@ Signed-off-by: sunshineinabox <aqemail@gmail.com>
  static int iris_enum_framesizes(struct file *filp, void *fh,
  				struct v4l2_frmsizeenum *fsize)
  {
-@@ -700,9 +734,9 @@ static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops
+@@ -698,9 +732,9 @@ static const struct v4l2_ioctl_ops iris_v4l2_ioctl_ops_dec = {
  	.vidioc_g_fmt_vid_cap_mplane    = iris_g_fmt_vid_mplane,
  	.vidioc_g_fmt_vid_out_mplane    = iris_g_fmt_vid_mplane,
  	.vidioc_enum_framesizes         = iris_enum_framesizes,
@@ -113,6 +136,3 @@ Signed-off-by: sunshineinabox <aqemail@gmail.com>
  	.vidioc_prepare_buf             = v4l2_m2m_ioctl_prepare_buf,
  	.vidioc_expbuf                  = v4l2_m2m_ioctl_expbuf,
  	.vidioc_qbuf                    = v4l2_m2m_ioctl_qbuf,
--- 
-2.47.0
-

@@ -1061,6 +1061,13 @@
 	firmware-name = "qcom/sm8750/gen80000_zap.mbn";
 };
 
+/* Video codec (iris, vpu35): linux-firmware's qcom/vpu/vpu35_p4.mbn loads
+ * on this board (2026-11-28); Steam's UI decodes on it and Remote Play
+ * finds it. */
+&iris {
+	status = "okay";
+};
+
 /* ===================================================================== *
  *  Storage (UFS) — required to boot
  * ===================================================================== */
