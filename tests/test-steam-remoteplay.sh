@@ -12,9 +12,8 @@
 #     2026-10-18: Steam is installed and opened from Emulators).
 #   - Valve's rules must stay verbatim below their header (the header names the upstream blob), or a
 #     hand edit hides behind "Valve's file".
-#   - the codec links must name iris's encoder (every SoC), and a decoder on the SM6115 only:
-#     /dev/video-dec0 puts the Steam UI's video on the hardware, slower and hotter than the CPU on
-#     SM8250/8550/8650, but on the SM6115 it spares the weak cores (SM4450 unmeasured, no link).
+#   - the codec links must name iris's encoder and decoder on every SoC: /dev/video-dec0 puts the
+#     Steam UI's video on the hardware (user, 2026-11-28, with kernel patches 1076-1080, 1097, 1098).
 #   - udev syntax is checked with `udevadm verify` where the host has it (systemd >= 255).
 set -uo pipefail
 
@@ -68,15 +67,14 @@ grants="$(tail -n +"$((start + 1))" "$INPUT" | grep -vE '^\s*(#|$)' | grep -c 'T
   || bad "$grants of $rules rules grant uaccess"
 
 CASE="codec links"
-# The decoder link only on the SM6115: elsewhere the Steam UI's Chromium decodes on the hardware
-# slower and hotter than on its CPU (four cores at 95 C on the Pocket FIT, 2026-10-29). Every
-# video-dec rule must name the SM6115's compatible, not the qcm2290 fallback the SM4450 shares.
+# The decoder link on every SoC: a rule narrowed to one SoC's compatible (the SM6115's until
+# 2026-11-28) would leave the Steam UI decoding in software everywhere else.
 dec="$(grep -E 'SYMLINK\+="video-dec' "$CODEC")"
-! grep -qv 'ATTRS{modalias}=="\*Cqcom,sm6115-venusC\*"' <<<"$dec" \
-  && ok "no decoder link but the SM6115's (other SoCs' Steam UI decodes on the CPU)" \
-  || bad "a /dev/video-dec* link beyond the SM6115: the Steam UI decodes on the hardware there"
-grep -qE 'ATTR\{name\}=="qcom-iris-decoder".*ATTRS\{modalias\}=="\*Cqcom,sm6115-venusC\*".*SYMLINK\+="video-dec0"' <<<"$dec" \
-  && ok "SM6115 qcom-iris-decoder -> /dev/video-dec0 (the Steam UI decodes on it)" || bad "no decoder link for the SM6115"
+grep -qE '^SUBSYSTEM=="video4linux", ATTR\{name\}=="qcom-iris-decoder", SYMLINK\+="video-dec0"$' <<<"$dec" \
+  && ok "qcom-iris-decoder -> /dev/video-dec0 on every SoC (the Steam UI decodes on it)" \
+  || bad "no plain qcom-iris-decoder -> /dev/video-dec0 rule"
+! grep -q 'ATTRS{modalias}' <<<"$dec" && ok "the decoder link names no SoC" \
+  || bad "the decoder link is narrowed to a SoC: the others' Steam UI decodes in software"
 ! grep -q 'qcom-venus' "$CODEC" && ok "no venus rules (venus is not built)" || bad "a rule still names venus"
 grep -qE 'ATTR\{name\}=="qcom-iris-encoder".*SYMLINK\+="video-enc0"' "$CODEC" \
   && ok "qcom-iris-encoder -> /dev/video-enc0" || bad "no rule for qcom-iris-encoder"

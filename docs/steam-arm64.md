@@ -1203,18 +1203,24 @@ paths (VR streaming, pairing over the Frame's own hotspot, echo cancellation) sw
 - **Hardware decode.** The client decodes H.264/HEVC through its own stateful V4L2 decoder
   (`CV4L2Accel`): it probes `/dev/video-dec0..99` and `/dev/video0..99` for a mem2mem device, so
   iris (every SoC; SM6115 and SM4450 since 2026-11-23 through `kernel/patches/1095`, venus before)
-  needs no package in the image. `70-retroforge-video-codec.rules` links `/dev/video-enc0`, and
-  `/dev/video-dec0` on the SM6115 only: the UI's Chromium decodes on the codec only when
-  `/dev/video-dec0` exists, and on SM8250/8550/8650 that is slower and hotter than its CPU decode
-  (four cores at 95 C on the Pocket FIT at its first sign-in, 2026-10-29; Nova-Deck measured the
-  same and ships no link). The SM4450 gets none until measured. On the SM6115 the codec decodes the
-  UI's video up to its 1920x1088 frame limit, which `kernel/patches/1097` makes it report (larger
-  video, such as Steam's 1920x1200 startup movies, stays in software). Chromium reads every decoded
-  frame on the CPU, so `1098` maps the frames cached: uncached, a 1080p30 VP9 clip in Steam's UI
-  showed 180-188 of 300 frames at 167-175% CPU, worse than software; cached, 297-298 at 106-112%,
-  against software's 300 at 161-170% (venus on the MANGMI Air X, 2026-11-22; the iris ports of both
-  patches are not measured yet). Without a decoder the client falls back to software (FFmpeg 8 in
-  `libvideo.so`).
+  needs no package in the image. `70-retroforge-video-codec.rules` links `/dev/video-enc0` and
+  `/dev/video-dec0` on every SoC (since 2026-11-28): the UI's Chromium decodes on the codec only
+  when `/dev/video-dec0` exists when its GPU process starts. That needs these patches:
+  `1076`-`1078` (gen1 firmware: SM6115, SM8250) and `1079`-`1080` (gen2: SM8550, SM8650, SM8750)
+  return frames the firmware decodes but does not show with no picture, and keep a loop or seek
+  from stalling the decoder. Without `1080` every video stopped after its first pass and Chromium
+  then decoded all of them in software, which was the 95 C Pocket FIT case of 2026-10-29. `1097`
+  makes every decoder report the frame sizes it takes (AR50_LITE on the SM6115 and SM4450
+  1920x1088, so Steam's 1920x1200 startup movies stay in software there; SM8250 8192x4320;
+  SM8550-SM8750 8192x4352, and 4096x2304 for VP9, as msm_vidc has them). Chromium reads every decoded frame on the CPU,
+  so `1098` maps the frames cached where the video core is not cache-coherent (SM6115, SM8250;
+  SM8550 and later are coherent): uncached, a 1080p30 VP9 clip in Steam's UI showed 180-188 of 300
+  frames at 167-175% CPU, worse than software; cached, 297-298 at 106-112%, against software's 300
+  at 161-170% (venus on the MANGMI Air X, 2026-11-22). On the KONKR Pocket FIT Elite (SM8750,
+  2026-11-28) 1080p VP9 shows 299 of 300 frames at 45% of a core (software 56-60%) and the
+  1920x1200 startup movies 600 of 600 at 59-62% (software 75-76%); one run in about 40 left two of
+  Chromium's threads spinning, cause not found. On the Retroid Pocket 5 (SM8250) the clips loop on the codec too, but use the same CPU as software (1080p 67% both, 1920x1200 111-112% vs 113-118%): Chromium's GPU process converts each decoded frame on the CPU. SM8550 and SM8650 are not measured. Without
+  a decoder the client falls back to software (FFmpeg 8 in `libvideo.so`).
 - **Network.** The image has no firewall: discovery (UDP broadcast on 27036) and the stream
   (UDP 27031-27036, TCP 27036-27037) are open. A firewall added later must keep those open.
 - **Audio** goes through pipewire-pulse, as for everything else.
