@@ -292,7 +292,7 @@ func _add_emulator(id: String, emu: Dictionary) -> void:
 
 	var fast = toggle_scene.instantiate()
 	fast.text = "Run on fast cores"
-	fast.description = "Games can override this in their own settings. Settings > General > Pin to fast cores says whether the slow cores may help when the fast ones are busy."
+	fast.description = "The default for this emulator's games; a game can override it in its own settings. Whether they may spill onto the slow cores: Settings > General > Fast cores only."
 	fast.button_pressed = LaunchArgs.emulator_fast_cores(id)
 	fast.separator_visible = false
 	fast.toggled.connect(_set_fast_cores.bind(id, name_text, fast))

@@ -2,7 +2,7 @@
 # (Steam games, also those the kept client starts, through /usr/bin/steam) and the store tool (GOG, Epic).
 #
 # WHETHER is the player's choice for each game (and each emulator, for its ROM games): nothing ships on.
-# HOW is one switch, Settings > General > "Pin to fast cores" (FAST_CORES=pin in
+# HOW is one switch, Settings > General > "Fast cores only" (FAST_CORES=pin in
 # ~/.config/retroforge/fast-cores.conf; anything else is prefer):
 #
 #   prefer (the default): every thread of the game gets a minimum utilisation clamp (uclamp.min) just

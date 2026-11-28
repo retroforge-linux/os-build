@@ -1,5 +1,5 @@
 extends RefCounted
-## Settings > General > "Pin to fast cores": how "Run on fast cores" (a game's choice on its RetroForge
+## Settings > General > "Fast cores only": how "Run on fast cores" (a game's choice on its RetroForge
 ## settings page, or an emulator's default in Apps) puts a game there. Off, the default: preferred, a
 ## uclamp.min on each of its threads, so they run on the fast cores and spill onto the slow ones only
 ## when every fast one is busy. On: pinned with taskset, never on a slow core, even when the fast ones
@@ -52,8 +52,8 @@ func attach() -> bool:
 	var after: Node = box.get_node_or_null("RetroForgePauseInMenus")
 	_toggle = toggle_scene.instantiate()
 	_toggle.name = "RetroForgeFastCores"
-	_toggle.text = "Pin to fast cores"
-	_toggle.description = "For games and emulators set to Run on fast cores: keep them on the fast CPU cores only. Off, they prefer the fast cores and use the slow ones too when all fast ones are busy."
+	_toggle.text = "Fast cores only"
+	_toggle.description = "How Run on fast cores works, for every game and emulator that has it on. Off: they prefer the fast CPU cores and use the slow ones only when all fast ones are busy. On: they never use the slow cores."
 	_toggle.separator_visible = false  # as the rows around it; read in _ready, so before add_child
 	box.add_child(_toggle)
 	if after:
@@ -74,12 +74,12 @@ func _on_toggled(on: bool) -> void:
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file:
-		file.store_string("# Settings > General > Pin to fast cores (python/fastcores.py)\n%s=%s\n" % [KEY, "pin" if on else "prefer"])
+		file.store_string("# Settings > General > Fast cores only (python/fastcores.py)\n%s=%s\n" % [KEY, "pin" if on else "prefer"])
 		file.close()
 	if pinned() == on:
 		logger.info("Run on fast cores: " + ("pinned" if on else "preferred"))
 		return
 	logger.warn("could not save " + path)
-	notification_manager.show(Notification.new("Could not save Pin to fast cores"))
+	notification_manager.show(Notification.new("Could not save Fast cores only"))
 	if is_instance_valid(_toggle):
 		_toggle.button_pressed = pinned()

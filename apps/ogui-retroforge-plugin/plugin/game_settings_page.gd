@@ -10,7 +10,7 @@ extends ScrollContainer
 ## launch` reads (its GAME CHOICES).
 ## For both, the graphics API of a Unity, Unreal or Godot game built with more than one
 ## (python/graphics_api.py), and Run on fast cores ("cpus": on, python/fastcores.py; how is Settings >
-## General > Pin to fast cores).
+## General > Fast cores only).
 ## "Run on fast cores": the emulator's default (Main menu > Apps), On or Off for this game
 ## (CPUS=big / all in the game's conf, which retroforge-launch reads; launch_args.gd). "Screen size"
 ## (SCREEN=WxH: gamescope's games display for this game, the sizes of Settings > Display > Game
@@ -78,7 +78,7 @@ const ONLINE_ABOUT := "Online, the game starts signed in to Epic: online play, a
 const STORE_RESOLUTION_ABOUT := "The size the game draws at; the display scales it to the panel. Default: Settings > Display."
 const API_ABOUT := "The graphics API the game renders with, of those its engine has. DirectX runs through DXVK or vkd3d-proton; Vulkan and OpenGL go to the device's own driver. A game built without the one picked may not start or may draw wrong: set it back to Default."
 const API_STEAM := " When Steam itself starts the game, only with Proton-CachyOS."
-const GAME_CPUS_ABOUT := "Run the game on the fast CPU cores: helps a game the CPU holds back, for more power. Settings > General > Pin to fast cores says whether it may also use the slow ones when the fast ones are busy. Default: Off."
+const GAME_CPUS_ABOUT := "On: this game runs on the fast CPU cores. Helps a game the CPU holds back; uses more power. Whether it may spill onto the slow cores when the fast ones are busy is one switch for all games: Settings > General > Fast cores only. Default: Off."
 const GAME_CPUS_STEAM := " When the game starts from this library."
 const API_LABELS := {"d3d11": "DirectX 11", "d3d12": "DirectX 12", "vulkan": "Vulkan", "opengl": "OpenGL"}
 const STORE_TOOL := "/usr/lib/retroforge/store"
@@ -161,7 +161,7 @@ func _build_page() -> void:
 
 	_fast_cores = dropdown_scene.instantiate()
 	_fast_cores.title = "Run on fast cores"
-	_fast_cores.description = "Keep the emulator on the fast CPU cores. Helps demanding systems (PS2, PS3, Wii U); PS1 does not need it. The default is set per emulator in Apps, in the main menu; whether it may also use the slow cores, in Settings > General."
+	_fast_cores.description = "On: this game's emulator runs on the fast CPU cores. Helps demanding systems (PS2, PS3, Wii U); PS1 does not need it. Emulator default is what Apps sets for the emulator. Whether it may spill onto the slow cores: Settings > General > Fast cores only."
 	_fast_cores.item_selected.connect(_on_fast_cores_selected)
 	_focus_group = focus_group_scene.instantiate() as FocusGroup
 	_focus_group.focus_stack = focus_stack

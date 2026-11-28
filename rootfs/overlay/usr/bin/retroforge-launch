@@ -19,7 +19,7 @@
 # Run on fast cores (CPUS=big): the emulator is started on the device's fast cores (fastcores in
 # /usr/lib/retroforge/python, shared with Steam and store games): preferred by default (a uclamp.min on
 # every thread, so they run on the fast cores and spill onto the slow ones only when all fast ones are
-# busy), or pinned with taskset when the player turns on Settings > General > Pin to fast cores (and
+# busy), or pinned with taskset when the player turns on Settings > General > Fast cores only (and
 # under a sched_ext scheduler, which reads no uclamp; scx_lavd honours the affinity mask, HW
 # 2026-10-03). "Fast" is every ONLINE CPU whose cpu_capacity is above the smallest online one; with
 # none of them online (PowerStation's core-count slider offlines them first) or on a homogeneous SoC,

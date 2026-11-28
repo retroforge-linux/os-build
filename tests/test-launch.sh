@@ -1727,7 +1727,7 @@ touch "$T/stop-emu"; reap_launcher "$lpid"
 # =================================================================================================
 CASE="fast cores (CPUS=big)"
 # The game's own conf (Game settings > RetroForge) holds the per-game choice; how, prefer (uclamp) or pin
-# (taskset), is Settings > General > Pin to fast cores (fast-cores.conf, python/fastcores.py).
+# (taskset), is Settings > General > Fast cores only (fast-cores.conf, python/fastcores.py).
 GCONF="$HOME/.config/retroforge/games/psx/$(basename "$ROM").conf"
 FCONF="$HOME/.config/retroforge/fast-cores.conf"
 # A fake /sys/devices/system/cpu: online list + per-CPU cpu_capacity (offline CPUs have none).
@@ -1765,7 +1765,7 @@ rm -f "$FCONF"
   || bad "SM8250 default: '$(cat "$T/taskset.log" 2>&1)'"
 [ "$(field pid)" = "$(field sid)" ] && ok "preferred, the emulator still leads its own session (uclampset execs)" || bad "uclampset broke the emulator's session"
 mkdir -p "$(dirname "$FCONF")"; echo "FAST_CORES=pin" > "$FCONF"
-[ "$(pinned_run)" = "pin:4,5,6,7" ] && ok "SM8250, Pin to fast cores: pinned to cpu4-7 (big + prime, not the prime core alone)" || bad "SM8250 pinned to '$(cat "$T/taskset.log" 2>&1)'"
+[ "$(pinned_run)" = "pin:4,5,6,7" ] && ok "SM8250, Fast cores only: pinned to cpu4-7 (big + prime, not the prime core alone)" || bad "SM8250 pinned to '$(cat "$T/taskset.log" 2>&1)'"
 [ "$(field pid)" = "$(field sid)" ] && ok "pinned, the emulator still leads its own session (taskset execs)" || bad "taskset broke the emulator's session"
 echo "FAST_CORES=pin" > "$FCONF"; echo "FAST_CORES=sideways" >> "$FCONF"
 [ "$(pinned_run)" = "prefer:285" ] && ok "an unknown FAST_CORES value (the last line wins) is the default, prefer" || bad "FAST_CORES=sideways: '$(cat "$T/taskset.log" 2>&1)'"
