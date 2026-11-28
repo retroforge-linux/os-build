@@ -592,9 +592,16 @@ rm -rf "$S/steamapps/compatdata/1145360" "$S/steamapps/compatdata/4000" "$S/stea
 CASE="graphics API"
 LF="$H/.config/protonfixes/localfixes/1145360.py"
 apis() { python3 -c 'import json, sys; print(" ".join(json.loads(sys.argv[1])["apis"]))' "$OUT"; }
-touch "$GAME/x64Vk/UnityPlayer.dll"
+# A Unity player, its build's API list in Hades_Data (tests/lib-unity-data.py; 2 Direct3D 11, 21 Vulkan).
+touch "$GAME/x64Vk/UnityPlayer.dll"; mkdir -p "$GAME/x64Vk/Hades_Data"
+python3 "$ROOT/tests/lib-unity-data.py" "$GAME/x64Vk/Hades_Data/globalgamemanagers" 2023 2
 direct -- game 1145360
-[ "$RC" = 0 ] && [ "$(apis)" = "d3d11 vulkan" ] && ok "game: a Unity game offers DirectX 11 and Vulkan" || bad "rc=$RC out=$OUT err=$ERR"
+[ "$RC" = 0 ] && [ -z "$(apis)" ] && ok "game: a Unity game built for Direct3D 11 alone offers none (Megabonk)" || bad "rc=$RC out=$OUT err=$ERR"
+direct -- game 1145360 set api vulkan
+[ "$RC" = 2 ] && [ ! -e "$LF" ] && ok "set: Vulkan refused when the build has none" || bad "rc=$RC"
+python3 "$ROOT/tests/lib-unity-data.py" "$GAME/x64Vk/Hades_Data/globalgamemanagers" 2019 2 21
+direct -- game 1145360
+[ "$RC" = 0 ] && [ "$(apis)" = "d3d11 vulkan" ] && ok "game: one that lists Vulkan offers DirectX 11 and Vulkan" || bad "rc=$RC out=$OUT err=$ERR"
 direct -- game 1145360 set api d3d12
 [ "$RC" = 2 ] && [ ! -e "$LF" ] && ok "set: DirectX 12 refused without the game's D3D12 folder" || bad "rc=$RC"
 direct -- game 1145360 set api vulkan
@@ -614,7 +621,7 @@ direct -- game 1145360 set api default
 rm -f "$LF"; direct -- game 1145360 set api vulkan; direct -- game 1145360 set api default
 [ ! -e "$LF" ] && python3 -c 'import json, sys; assert json.load(open(sys.argv[1])) == {}' "$GAMES" \
   && ok "back to default: our local fix goes, nothing kept" || bad "$(ls "$(dirname "$LF")") $(cat "$GAMES")"
-rm -f "$GAME/x64Vk/UnityPlayer.dll"; rm -rf "$T/pf" "$H/.config/protonfixes" "$GAMES"
+rm -f "$GAME/x64Vk/UnityPlayer.dll"; rm -rf "$GAME/x64Vk/Hades_Data" "$T/pf" "$H/.config/protonfixes" "$GAMES"
 
 CASE="run: Steam's game resolution"
 mkdir -p "$S/config" "$S/userdata/12345/config"

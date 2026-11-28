@@ -26,7 +26,7 @@ T="$(mktemp -d)" && [ -d "$T" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
 python3 - "$STORE" "$T" "$ROOT" <<'PY'
-import hashlib, http.server, io, json, os, re, resource, shutil, signal, stat, subprocess, sys, tarfile, threading, time
+import hashlib, http.server, io, json, os, re, resource, runpy, shutil, signal, stat, subprocess, sys, tarfile, threading, time
 import urllib.error, urllib.parse, urllib.request, zipfile
 
 STORE, T, ROOT = sys.argv[1:4]
@@ -934,13 +934,24 @@ r, _ = game("set", "resolution", "big")
 ok(r.returncode == 2, "a resolution is WxH", r.stderr)
 r, _ = game("set", "api", "vulkan")
 ok(r.returncode == 2, "no graphics API the game does not offer", r.stderr)
-open(os.path.join(gamedir, "UnityPlayer.dll"), "w").close()
+# A Unity player beside the program, its build's API list in game_Data (tests/lib-unity-data.py).
+unity_data = runpy.run_path(os.path.join(ROOT, "tests", "lib-unity-data.py"))["write"]
+bindir = os.path.join(gamedir, "BIN")
+open(os.path.join(bindir, "UnityPlayer.dll"), "w").close()
+os.makedirs(os.path.join(bindir, "game_Data"))
+unity_data(os.path.join(bindir, "game_Data", "globalgamemanagers"), "2023", [2])
 r, g = game()
-ok(g and g["engine"] == "unity" and g["apis"] == ["d3d11", "vulkan"], "a Unity game: DirectX 11 and Vulkan", str(g))
-os.makedirs(os.path.join(gamedir, "D3D12"))
+ok(g and g["apis"] == [], "a Unity game built for Direct3D 11 alone: no row", str(g))
+os.makedirs(os.path.join(bindir, "D3D12"))
+r, g = game()
+ok(g and g["engine"] == "unity" and g["apis"] == ["d3d11", "d3d12"],
+   "with a D3D12 folder (Megabonk): DirectX 11 and 12, no Vulkan", str(g))
+r, _ = game("set", "api", "vulkan")
+ok(r.returncode == 2, "Vulkan refused: the build has none", r.stderr)
+unity_data(os.path.join(bindir, "game_Data", "globalgamemanagers"), "2023", [2, 21])
 r, g = game("set", "api", "vulkan")
 ok(r.returncode == 0 and g["apis"] == ["d3d11", "d3d12", "vulkan"] and g["settings"]["api"] == "vulkan",
-   "DirectX 12 with its D3D12 folder; the choice saved", str(g))
+   "a build that lists Vulkan offers it; the choice saved", str(g))
 ok(g and g["settings"] == {"tso": "off", "proton": "cachy-test", "protonfixes": "off", "online": "default",
                            "resolution": "1280x720", "api": "vulkan", "cpus": "default"}, "every choice as saved", str(g))
 reset_calls()
@@ -980,8 +991,9 @@ r = store("gog", "launch", "1", env=fast_env, unset=["DISPLAY"])
 run = game_run(calls())
 ok(run and run[1].endswith("_v2-entry-point"), "Default: started as before, no uclamp", str(run))
 shutil.rmtree(cachy)
-shutil.rmtree(os.path.join(gamedir, "D3D12"))
-os.remove(os.path.join(gamedir, "UnityPlayer.dll"))
+shutil.rmtree(os.path.join(bindir, "D3D12"))
+shutil.rmtree(os.path.join(bindir, "game_Data"))
+os.remove(os.path.join(bindir, "UnityPlayer.dll"))
 r = store("epic", "game", "Fortnite2")
 ok(r.returncode == 0 and json.loads(r.stdout)["online"] is True, "an Epic game offers Online", r.stderr)
 r = store("gog", "game", "999")

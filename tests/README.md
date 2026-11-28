@@ -41,7 +41,9 @@ are invoked directly there rather than through `make test-disk` — a failure na
   card starts and stops an emulator AppImage), `test-shares.sh` (the player's network
   shares), `test-oom.sh` (either OOM killer takes a running game before the session spine).
 - **Graphics** — `test-mesa-source.sh`, `test-fex-guest.sh` (the downloadable x86 guest's
-  Mesa overlay, `packages/mesa-x86`), `test-splash.sh`, `test-splash-status.sh`.
+  Mesa overlay, `packages/mesa-x86`), `test-splash.sh`, `test-splash-status.sh`,
+  `test-graphics-api.sh` (the Graphics API a Windows game is offered: a Unity build's own list,
+  written by `lib-unity-data.py`).
 - **The tree itself** — `test-guard.sh`, `test-lib-pins.sh`, `test-verify-lock.sh`, and
   `test-upstream-name.sh` (no leftover upstream name anywhere).
 - **Publishing** — `test-publish-bundle.sh`, `test-verify-signing.sh`.
