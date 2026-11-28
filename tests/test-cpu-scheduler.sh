@@ -110,6 +110,27 @@ o.available_cpu_schedulers = lambda: ["none"]
 o.scx_unit_active = lambda: (_ for _ in ()).throw(AssertionError("must not probe the unit"))
 check("no scx installed: nothing to reconcile", o.reconcile_scheduler_live(), False)
 
+# ------------------------------------------------------------------ scheduler_tick is cheap ---
+# The 3 s tick asks the unit only when lavd is believed loaded and the kernel no longer says
+# "enabled": `systemctl is-active` on the inactive unit made systemd load and unload it each tick.
+import pathlib, tempfile
+tick_sysfs = pathlib.Path(tempfile.mkdtemp())
+real_sysfs_tick = pd.SCX_SYSFS
+pd.SCX_SYSFS = tick_sysfs
+def tick(scheduler_live, kernel_state, unit_active):
+    o = fresh(unit_active=unit_active, scheduler_live=scheduler_live)
+    o.suspended = False
+    probes = []
+    o.scx_unit_active = lambda: probes.append(1) or o.unit_active
+    (tick_sysfs / "state").write_text(kernel_state + "\n")
+    o.scheduler_tick()
+    return len(probes), o.scheduler_live
+check("tick on the stock scheduler never asks the unit", tick("none", "disabled", False), (0, "none"))
+check("tick with lavd enabled in the kernel never asks the unit", tick("lavd", "enabled", True), (0, "lavd"))
+check("tick after an ejection asks and drops to none", tick("lavd", "disabled", False), (1, "none"))
+check("tick while lavd attaches keeps lavd", tick("lavd", "disabled", True), (1, "lavd"))
+pd.SCX_SYSFS = real_sysfs_tick
+
 # ------------------------------------------------------------- apply_scheduler's guard is honest ---
 # The guard is the only thing between a caller and a redundant unit cycle, so it has to compare
 # against reality. Belief says lavd, the unit is dead: asking for lavd must actually start it.

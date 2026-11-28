@@ -1221,10 +1221,15 @@ class RetroForgePower:
         # Suspended = session frozen and CPUs mostly offline; nothing to reconcile then. Never
         # lets an exception kill the timer.
         try:
-            if not self.suspended:
-                # Notice if the scheduler went away underneath us (sched_ext ejection that
-                # scx_lavd did not survive). Nothing else announces that, so a client would
-                # otherwise keep rendering "LAVD" for a system that is back on the stock scheduler.
+            # Notice if the scheduler went away underneath us (sched_ext ejection that
+            # scx_lavd did not survive). Nothing else announces that, so a client would
+            # otherwise keep rendering "LAVD" for a system that is back on the stock scheduler.
+            # Only a loaded lavd can go away, and while the kernel says "enabled" it has not, so
+            # the unit is asked only then: `systemctl is-active` on the inactive unit every 3 s
+            # loaded and unloaded it, and Wine's mount manager answered each of systemd's signals
+            # by asking udisks2 for every drive (5% of a core in a Proton game, FIT Elite).
+            if (not self.suspended and self.scheduler_live == "lavd"
+                    and read_text(SCX_SYSFS / "state") != "enabled"):
                 if self.reconcile_scheduler_live() and self.connection is not None:
                     self.emit_properties({
                         "ActiveCpuScheduler": GLib.Variant("s", self.scheduler_live),
