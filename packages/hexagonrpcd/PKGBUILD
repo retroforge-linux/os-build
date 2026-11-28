@@ -32,8 +32,21 @@
 # 0005-0006 carry the larger and higher-numbered calls the rebuild makes. Verified on the FIT:
 # no fatal, the Sensor Core service (QRTR 400) up.
 #
-# Only the sensors servers are enabled (60-retroforge-hexagonrpcd.preset). The ADSP root PD asks
-# the Air X for nothing the partitions hold (one lowi/lowi_lp.conf, a location config).
+# Patch 0007 adds hexagonrpcd-sdsp-rootpd.service, a server for the SDSP's root PD, which
+# hexagonrpcd-sdsp.service requires and starts after. The SLPI's sensors PD loads its sensor
+# modules through the root PD (the Retroid Pocket 5's sns_bring_to_ear.so, from the dsp
+# partition); unserved, the loader stopped after the module's header, and 21 s after each attach
+# SEE's watchdog took the SLPI down ("SEE Sensor exceeded processing time limit"), 125+ times a
+# boot. A root PD server attaching after that did not release it, hence the ordering, and start
+# order alone lost the race 4 of 4 times: the sensors PD has to attach after the root PD's first
+# calls are answered, so the root PD unit holds its start a second (ExecStartPost=sleep 1). It
+# restarts 1 s after an SLPI restart and, through Requires=, restarts the sensors server after
+# itself. Android runs the same pair (sscrpcd sensorspd, and sscrpcd for the root PD). On the RP5,
+# 2026-11-28: 5 of 5 SLPI restarts and a cold start clean; accelerometer, gyro, magnetometer stream.
+#
+# Only the sensors servers are enabled (60-retroforge-hexagonrpcd.preset); the SDSP root PD server
+# comes with its sensors server. The ADSP root PD asks the Air X for nothing the partitions hold
+# (one lowi/lowi_lp.conf, a location config); the SLPI's asks for the same file.
 #
 # To bump: change pkgver and its sha256sum together (GitHub tag tarball, taken 2026-11-01). makepkg
 # runs with --skipinteg in this tree, so prepare() verifies it itself.

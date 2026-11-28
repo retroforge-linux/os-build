@@ -12,7 +12,10 @@
 #   0003-0006  kettlelinux's (gennro): serve sns_reg_version, serve sensors/persist writable when
 #         the tree has it, input buffers over 256 bytes, methods from 31 on. The Pocket FIT's
 #         sensors PD rebuilds its registry at every start; refused, it took the ADSP down.
+#   0007  ours: a server for the SDSP's root PD, which the SDSP sensors server requires and
+#         starts after. The SLPI's sensors PD loads its sensor modules through the root PD;
+#         unserved, the Retroid Pocket 5's SLPI took a fatal error every 24 s.
 name: hexagonrpcd
 pkgbuild_local: PKGBUILD
-patches: 0001-data-keep-the-ADSP-servers-running-across-suspend.patch 0002-hexagonrpcd-answer-a-request-it-cannot-serve-and-kee.patch 0003-hexagonrpcd-serve-the-sensors-registry-version-file.patch 0004-hexagonrpcd-a-writable-persist-sensors-directory.patch 0005-hexagonrpcd-fetch-large-input-buffers.patch 0006-hexagonrpcd-methods-from-31-on.patch
+patches: 0001-data-keep-the-ADSP-servers-running-across-suspend.patch 0002-hexagonrpcd-answer-a-request-it-cannot-serve-and-kee.patch 0003-hexagonrpcd-serve-the-sensors-registry-version-file.patch 0004-hexagonrpcd-a-writable-persist-sensors-directory.patch 0005-hexagonrpcd-fetch-large-input-buffers.patch 0006-hexagonrpcd-methods-from-31-on.patch 0007-data-serve-the-SDSP-root-PD-before-its-sensors-PD.patch
 pkgrel_suffix: 1

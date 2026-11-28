@@ -1,0 +1,110 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Sat, 28 Nov 2026 02:30:00 -0800
+Subject: [PATCH] data: serve the SDSP root PD before its sensors PD
+
+The SLPI's sensors PD loads its dynamic sensor modules (sns_bring_to_ear.so
+from the dsp partition on the Retroid Pocket 5) through the root PD. With
+nothing serving the root PD, the loader stops after the module's ELF header
+and the PD waits until SEE's watchdog takes the SLPI down 21 s after attach
+("SEE Sensor exceeded processing time limit", sns_thread_manager.c:434);
+hexagonrpcd-sdsp then attaches again and the loop repeats, about every 24 s.
+Android serves both PDs (sscrpcd sensorspd, and sscrpcd for the root PD).
+
+A root PD server that attaches after the sensors PD has stopped does not
+release it, so the sensors server now requires the root PD's and starts
+after it. Start order alone still lost the race on the RP5, 4 times of 4
+with the root PD server started 5 to 20 ms first: the root PD makes its
+first calls within a millisecond of attach, and the sensors PD has to attach
+after they are answered. ExecStartPost holds the root PD unit's start for a
+second, so the sensors server waits that long. The root PD server restarts
+1 s after an SLPI restart and, through Requires=, restarts the sensors server
+after itself.
+---
+ data/Android.bp                         |  7 +++++++
+ data/hexagonrpcd-sdsp-rootpd.rc         |  4 ++++
+ data/hexagonrpcd-sdsp-rootpd.service.in | 19 +++++++++++++++++++
+ data/hexagonrpcd-sdsp.service.in        |  5 +++++
+ data/meson.build                        |  1 +
+ 5 files changed, 36 insertions(+)
+ create mode 100644 data/hexagonrpcd-sdsp-rootpd.rc
+ create mode 100644 data/hexagonrpcd-sdsp-rootpd.service.in
+
+diff --git a/data/Android.bp b/data/Android.bp
+index a491998..f83517e 100644
+--- a/data/Android.bp
++++ b/data/Android.bp
+@@ -18,3 +18,10 @@ prebuilt_etc {
+     sub_dir: "init",
+     vendor: true,
+ }
++
++prebuilt_etc {
++    name: "hexagonrpcd-sdsp-rootpd.rc",
++    src: "hexagonrpcd-sdsp-rootpd.rc",
++    sub_dir: "init",
++    vendor: true,
++}
+diff --git a/data/hexagonrpcd-sdsp-rootpd.rc b/data/hexagonrpcd-sdsp-rootpd.rc
+new file mode 100644
+index 0000000..96c1339
+--- /dev/null
++++ b/data/hexagonrpcd-sdsp-rootpd.rc
+@@ -0,0 +1,4 @@
++service vendor.hexagonrpcd-sdsp-rootpd /vendor/bin/hexagonrpcd -f /dev/fastrpc-sdsp -d sdsp -R /vendor/etc/hexagonrpcd-root
++    class core
++    user system
++    group system
+diff --git a/data/hexagonrpcd-sdsp-rootpd.service.in b/data/hexagonrpcd-sdsp-rootpd.service.in
+new file mode 100644
+index 0000000..88d4abb
+--- /dev/null
++++ b/data/hexagonrpcd-sdsp-rootpd.service.in
+@@ -0,0 +1,19 @@
++[Unit]
++Description=Server for FastRPC remote procedure calls from Qualcomm SDSP - RootPD
++ConditionPathExists=/dev/fastrpc-sdsp
++
++[Service]
++ExecStart=@bindir@/hexagonrpcd -f /dev/fastrpc-sdsp -d sdsp
++# The sensorspd server starts once this one is up, and its PD has to attach
++# after the root PD's first calls are answered, which a few milliseconds of
++# start order do not ensure
++ExecStartPost=sleep 1
++Restart=always
++# Back before the sensorspd server after an SLPI restart, which it then
++# restarts after itself
++RestartSec=1
++User=fastrpc
++Group=fastrpc
++
++[Install]
++WantedBy=multi-user.target
+diff --git a/data/hexagonrpcd-sdsp.service.in b/data/hexagonrpcd-sdsp.service.in
+index 6a5c2f8..abd0e3e 100644
+--- a/data/hexagonrpcd-sdsp.service.in
++++ b/data/hexagonrpcd-sdsp.service.in
+@@ -1,6 +1,11 @@
+ [Unit]
+ Description=Server for FastRPC remote procedure calls from Qualcomm SDSP
+ ConditionPathExists=/dev/fastrpc-sdsp
++# The sensors PD loads its sensor modules through the root PD, and waits for
++# good if the root PD is not served yet. Requires= also restarts this server
++# after the root PD's, when both come back from an SLPI restart.
++Requires=hexagonrpcd-sdsp-rootpd.service
++After=hexagonrpcd-sdsp-rootpd.service
+ 
+ [Service]
+ ExecStart=@bindir@/hexagonrpcd -f /dev/fastrpc-sdsp -d sdsp -s
+diff --git a/data/meson.build b/data/meson.build
+index 0ad24ab..65a58f0 100644
+--- a/data/meson.build
++++ b/data/meson.build
+@@ -2,6 +2,7 @@ systemd_units = [
+   'hexagonrpcd-adsp-rootpd.service',
+   'hexagonrpcd-adsp-sensorspd.service',
+   'hexagonrpcd-sdsp.service',
++  'hexagonrpcd-sdsp-rootpd.service',
+ ]
+ 
+ foreach unit : systemd_units

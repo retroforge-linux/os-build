@@ -1,5 +1,6 @@
 # retroforge: the sensors servers of packages/hexagonrpcd. Upstream gates each on its fastrpc node
 # and the drop-ins on a sensors registry in this board's persist, so enabling both fleet-wide costs
-# nothing elsewhere. The root PD server stays off; see the PKGBUILD header.
+# nothing elsewhere. The ADSP root PD server stays off; the SDSP's is not enabled either, as
+# hexagonrpcd-sdsp.service requires it (hexagonrpcd 0007). See the PKGBUILD header.
 enable hexagonrpcd-adsp-sensorspd.service
 enable hexagonrpcd-sdsp.service
