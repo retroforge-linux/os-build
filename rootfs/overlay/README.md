@@ -125,6 +125,12 @@ which its self-updates would overwrite. The overlay-ownership stage resets it to
   behind the Wi-Fi receive softirq. Today: SM8550 3-6, SM8650 2-6, SM8750 2-5; SM8250, SM6115 and
   SM4450 carry no `irqaffinity`, so the thread is left alone. Retries a late GPU bind for a minute,
   always exits 0. `tests/test-gpu-worker-cpus.sh` drives it against fabricated topologies.
+- `etc/security/limits.d/60-retroforge-proton-nice.conf` — `* hard nice -8`, Valve's SteamOS setting
+  (its `15-proton-nice.conf`): wineserver raises its soft `RLIMIT_NICE` to the hard limit and maps
+  Windows thread priorities onto nice -8..8, and with the default hard limit of 0 it sets none.
+  `pam_limits` (in `system-auth`) applies it to the session and the user manager. Megabonk under
+  Proton, KONKR Pocket FIT Elite (2026-11-28): audio thread -8, main threads -1/-2, background and
+  shader-compile threads +3.
 - `etc/chromium/policies/managed/retroforge-signin.json` — policies for the store sign-in's
   Chromium (`usr/lib/retroforge/python/chromium_signin.py`), the only Chromium on the device; the
   Arch build it unpacks reads `/etc/chromium/policies` wherever it runs from. No warning bar for
