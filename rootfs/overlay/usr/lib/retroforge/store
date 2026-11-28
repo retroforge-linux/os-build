@@ -41,7 +41,8 @@
 # The game and its prefix's set-up start at oom_score_adj 900, as Steam's launch wrapper starts a Steam
 # game, so either OOM killer takes the game first. GRIP ran at the session's 0 on the Air X and the
 # kernel killed the session's audio and bus instead (2026-10-24). This process keeps the session's
-# value, to upload the saves after the game.
+# value, to upload the saves after the game. Nor do they leave a core file (RLIMIT_CORE 0): a crashed
+# Ghostrunner held its memory 41-46 s while systemd-coredump wrote 130 MB (Air X, 2026-11-26).
 #
 # PROTONFIXES. Proton-CachyOS runs umu-protonfixes' per-game fixes, which find a
 # store game by UMU_ID and STORE (gog, egs) in its environment, as umu-run sets them. The umu-database
@@ -105,6 +106,7 @@ import hashlib
 import json
 import os
 import re
+import resource
 import shutil
 import shlex
 import signal
@@ -680,12 +682,13 @@ def prefix_path(store, gid):
 
 def game_child():
     """The preexec_fn of every Proton process: in the child, before exec, the OOM killer's first choice
-    (header). Its children inherit it."""
+    and no core file (header). Its children inherit both."""
     try:
         with open("/proc/self/oom_score_adj", "w") as f:
             f.write(str(OOM_SCORE_ADJ))
     except OSError:
         pass  # never a reason not to start the game
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 
 def run_windows_game(store, gid, exe, args, workdir, game_dir, extra_env=None):

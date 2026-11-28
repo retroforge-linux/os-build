@@ -32,7 +32,7 @@
 #                                                  file, declared to OpenGamepadUI for the run:
 #                                                  it loads it while the game has focus (below);
 #                                                  Open (--gui) adds the mouse (gui_mouse)
-#    "core_dumps": false,                          no core file when it crashes (default true; below)
+#    "core_dumps": true,                           a core file when it crashes (default false; below)
 #    "secondary_window_title": "^X \\(Bottom\\)$",   the title of its second screen's window: the
 #                                                  second panel of a dual-screen board (below)
 #    "dual_screen_args": ["--dual-window"],        before the others on a dual-screen board whose X
@@ -290,7 +290,7 @@ def load_definition(emulator):
                   f'exactly once, without "{ROM}" or "{SYSTEM}"')
     if stub and d["format"] == "scripts":
         raise bad("stub is for emulators, not the scripts format (a scripts ROM is run, not passed)")
-    core_dumps = d.get("core_dumps", True)
+    core_dumps = d.get("core_dumps", False)
     if not isinstance(core_dumps, bool):
         raise bad("core_dumps must be true or false")
     gamepad_profile = d.get("gamepad_profile")

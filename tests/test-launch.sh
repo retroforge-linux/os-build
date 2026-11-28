@@ -999,14 +999,14 @@ rc="$(cat "$T/install-rc" 2>/dev/null)"; rm -f "$T/install-rc"
   || bad "Exit during install: rc=$rc game=$(emu_up && echo started || echo no) status='$(cat "$ST" 2>/dev/null)'"
 rm -f "$T/install-slow" "$T/install-running"
 wait_for '[ ! -s "$T/mounts" ]' && ok "and the mount is released" || bad "an interrupted install left the mount: $(cat "$T/mounts")"
-# core_dumps false (for an emulator that crashes on every Exit): RLIMIT_CORE 0; default unchanged.
-python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["install"] = []; d["core_dumps"] = False; json.dump(d, open(sys.argv[2], "w"))' \
+# No core file by default (RLIMIT_CORE 0); core_dumps true keeps the session's limit.
+python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d["install"] = []; d["core_dumps"] = True; json.dump(d, open(sys.argv[2], "w"))' \
   "$DS_DEF" "$INST/duckstation/emulator.json"
 reset_logs; ( ulimit -c unlimited; RETROFORGE_EMU_DATA_DIR="$INST" exec "$LAUNCH" psx "$ROM" 2>"$T/launch.err" ) & lpid=$!; echo "$lpid" >> "$T/pids"
-wait_for emu_up; [ "$(field core)" = 0 ] && ok "core_dumps false: the emulator runs with no core file (RLIMIT_CORE 0)" || bad "core_dumps false: ulimit -c is '$(field core)'"
+wait_for emu_up; [ "$(field core)" = unlimited ] && ok "core_dumps true: the emulator keeps the session's core limit" || bad "core_dumps true: ulimit -c is '$(field core)'"
 touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null; reset_logs
 ( ulimit -c unlimited; exec "$LAUNCH" psx "$ROM" 2>"$T/launch.err" ) & lpid=$!; echo "$lpid" >> "$T/pids"
-wait_for emu_up; [ "$(field core)" = unlimited ] && ok "by default the emulator keeps the session's core limit" || bad "default core limit changed: '$(field core)'"
+wait_for emu_up; [ "$(field core)" = 0 ] && ok "by default the emulator runs with no core file (RLIMIT_CORE 0)" || bad "default core limit: '$(field core)'"
 touch "$T/stop-emu"; reap_launcher "$lpid" >/dev/null; reset_logs
 # OOM victim (header): the emulator starts at 900, as Steam's games do; the launcher keeps ours.
 start_launcher; wait_for emu_up

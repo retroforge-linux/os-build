@@ -58,6 +58,11 @@ MAGIC_RESTART_EXITCODE=42
 
 log() { echo "steam: $*" >&2; }
 
+# No core files from the client or anything it starts (games, FEX, the web helper): a crash's core holds
+# its memory until written, 383 MB for Stardew Valley under FEX (MANGMI Air X, 2026-11-27), and nobody
+# reads a Steam game's on the device. systemd-coredump still logs each crash in the journal.
+ulimit -c 0
+
 # The shell's VRAM report limit reaches Steam's games on purpose: retroforge-session starts OGUI and the
 # boot-time client with mesa's vram-report-limit layer on (a 512 MiB heap on a board under 4 GiB), a game
 # started without the client gets this script's environment, and a client started here hands it to every

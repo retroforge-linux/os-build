@@ -26,7 +26,7 @@ T="$(mktemp -d)" && [ -d "$T" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
 python3 - "$STORE" "$T" "$ROOT" <<'PY'
-import hashlib, http.server, io, json, os, re, shutil, signal, stat, subprocess, sys, tarfile, threading, time
+import hashlib, http.server, io, json, os, re, resource, shutil, signal, stat, subprocess, sys, tarfile, threading, time
 import urllib.error, urllib.parse, urllib.request, zipfile
 
 STORE, T, ROOT = sys.argv[1:4]
@@ -257,7 +257,8 @@ elif a[0] == "save-sync":
 RUNNER = script("runner", r'''
 with open(os.path.join(os.path.dirname(CALLS), "oom"), "a") as f:
     f.write(json.dumps(["boot" if "wineboot" in sys.argv else "game", open("/proc/self/oom_score_adj").read().strip(),
-                        open(f"/proc/{os.getppid()}/oom_score_adj").read().strip()]) + "\n")
+                        open(f"/proc/{os.getppid()}/oom_score_adj").read().strip(),
+                        __import__("resource").getrlimit(__import__("resource").RLIMIT_CORE)]) + "\n")
 w = os.environ.get("FAKE_WATCH")
 with open(os.path.join(os.path.dirname(CALLS), "vram"), "w") as f:
     f.write(" ".join(k for k in os.environ if "VRAM_REPORT_LIMIT" in k))
@@ -802,9 +803,13 @@ reset_calls()
 OOMS = os.path.join(FAKE, "oom")
 if os.path.exists(OOMS):
     os.remove(OOMS)
+CORE = resource.getrlimit(resource.RLIMIT_CORE)
+resource.setrlimit(resource.RLIMIT_CORE, (CORE[1], CORE[1]))  # the session's limit up, so 0 is the store's
 r = store("gog", "launch", "1", env={"FAKE_GAME_RC": "7"})
+resource.setrlimit(resource.RLIMIT_CORE, CORE)
 cs = calls()
 ooms = [json.loads(line) for line in open(OOMS)] if os.path.exists(OOMS) else []
+ok(ooms and all(o[3] == [0, 0] for o in ooms), "the prefix's set-up and the game leave no core file (RLIMIT_CORE 0)", str(ooms))
 ok([o[:2] for o in ooms] == [["boot", "900"], ["game", "900"]],
    "the prefix's set-up and the game start at oom_score_adj 900, the OOM killer's first choice", str(ooms))
 session = open("/proc/self/oom_score_adj").read().strip()

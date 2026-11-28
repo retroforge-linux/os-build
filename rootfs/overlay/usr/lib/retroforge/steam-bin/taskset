@@ -70,7 +70,7 @@ ui_cpus() {
 if [ "$#" -ge 2 ] && [[ $1 =~ ^(0x)?[0-9a-fA-F]+$ ]] && [ "${2##*/}" = steamwebhelper ]; then
   # No core dumps from the UI: a crashed web helper (its Chromium runs with breakpad off) went to
   # systemd-coredump, and the client started the next one only once that was written, 16 s later
-  # (336 MB read, MANGMI Air X, 2026-11-23); 608 MB of them had piled up on the card. Games keep theirs.
+  # (336 MB read, MANGMI Air X, 2026-11-23); 608 MB of them had piled up on the card.
   ulimit -c 0
   cpus=$(ui_cpus)
   shift

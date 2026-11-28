@@ -269,7 +269,7 @@ cat >"$W/client" <<EOF
 #!/usr/bin/env bash
 n=\$(( \$(cat "$W/count" 2>/dev/null || echo 0) + 1 )); echo "\$n" >"$W/count"
 { echo "args: \$*"; echo "cwd: \$PWD"; echo "dbus: \${DBUS_SESSION_BUS_ADDRESS-unset}"; echo "rt: \${STEAM_RUNTIME-unset}"
-  echo "ld: \${LD_LIBRARY_PATH-unset}"; } >"$W/call\$n"
+  echo "ld: \${LD_LIBRARY_PATH-unset}"; echo "core: \$(ulimit -c)"; } >"$W/call\$n"
 codes=(\$(cat "$W/codes")); c="\${codes[\$((n-1))]:-0}"
 [ -e "$W/say" ] && cat "$W/say"   # the real client's lines, for steam-install's cases
 if [ "\$c" = S ]; then   # S: run until TERMed, like the real client
@@ -352,6 +352,9 @@ grep -qx "ld: $WROOT/steamrtarm64:$WROOT/steamrtarm64/video" "$W/call1" \
   && ok "~/.steam/steam and ~/.steam/root point at it" || bad "links: $(ls -la "$W/home/.steam")"
 grep -qx "dbus: unix:path=$W/mybus" "$W/call1" && ok "our own D-Bus address is kept" || bad "$(grep dbus "$W/call1")"
 grep -qx "rt: unset" "$W/call1" && ok "STEAM_RUNTIME is unset" || bad "$(grep rt: "$W/call1")"
+( ulimit -c unlimited 2>/dev/null; wrap 0 -gamepadui -silent steam://rungameid/42 )
+grep -qx "core: 0" "$W/call1" && ok "no core files from the client or what it starts, whatever the session's limit" \
+  || bad "$(grep core: "$W/call1")"
 [ -z "$WERR" ] && ok "nothing on stderr" || bad "stderr: $WERR"
 [ "$(readlink "$W/home/.steam/bin64")" = "$WROOT/ubuntu12_64" ] && [ "$(readlink "$W/home/.steam/bin32")" = "$WROOT/ubuntu12_32" ] \
   && ok "~/.steam/bin64 and bin32 point at ubuntu12_64 and ubuntu12_32 (the overlay's preload paths)" || bad "links: $(ls -la "$W/home/.steam")"
