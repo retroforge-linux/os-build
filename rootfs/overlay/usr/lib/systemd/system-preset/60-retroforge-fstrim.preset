@@ -1,0 +1,4 @@
+# retroforge: util-linux's weekly fstrim of /etc/fstab's filesystems (/home, /esp), so the card knows
+# which blocks Steam installs and deletes freed. The first run after a boot trims all free space again:
+# 321 GiB in 40 s on the MANGMI Air X, card reads at p99 15 ms meanwhile (0.95 idle).
+enable fstrim.timer
