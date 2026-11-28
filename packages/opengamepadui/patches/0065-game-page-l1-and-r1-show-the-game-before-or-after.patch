@@ -1,0 +1,216 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sunshineinabox <aqemail@gmail.com>
+Date: Fri, 27 Nov 2026 23:00:00 +0000
+Subject: [PATCH] feat(GameLaunchMenu): L1 and R1 show the game before or
+ after
+
+On a game's page (Play Now and the controller, settings and delete
+buttons; opened with A on the game's card) the way to another game was
+Back, the D-pad to its card and A again. L1 and R1 did nothing there:
+they are the tab actions, which only the library's tab header handles.
+
+They now show the game before (L1) or after (R1) the one on the page,
+in the row or grid the page was opened from: Home's recent games, or a
+library tab, OpenGamepadUI's own or a plugin's. The order is the one
+the cards are laid out in, so the end of a grid's row is followed by
+the start of the next. Past the first or the last game nothing happens;
+Home's Library card is no game, and cards a search has hidden are
+passed over (game_beside.gd). The list is the one a card of the game is
+on screen in as the page opens, and it is kept through the game's
+settings and back. The page leaves L1 and R1 alone while a menu is open
+over it, while one of its install dialogs is open, and with Guide held.
+
+Back then puts the focus on the card of the game last shown: the
+library would return to the card the page was opened from, and Home to
+its first card. The page defers that twice, so that it comes after the
+list's own choice, which the list defers as its state is entered. Back
+without L1 or R1 is as before.
+
+The page's logo and banner load in two awaited steps, and two games'
+loads can now overlap: art that arrives for a game no longer shown is
+dropped.
+
+The library's tab header fades out for a moment after the library is
+left and still took L1 and R1 meanwhile: R1 pressed 60 ms after a card
+opened its page changed the library's tab behind the page (MANGMI Air X,
+2026-11-27). Its input now stops as the library is left.
+
+On that device, with its own buttons: from Home, A on Stardew Valley,
+then R1, R1, L1 showed Among Us, Megabonk and Among Us again, and Back
+put the focus on Among Us's card; L1 on the first game and R1 on the
+last of the nine did nothing. From All Games, A on the sixth card, the
+last of its row, then R1 twice showed the seventh and the eighth, and
+Back put the focus on the eighth; in the grid R1 and L1 changed tab as
+before. From the RetroForge plugin's Steam tab likewise. A and R1 60 ms
+apart showed the next game and left the tab alone.
+---
+diff --git a/core/ui/card_ui/launch/game_launch_menu.gd b/core/ui/card_ui/launch/game_launch_menu.gd
+index e3b7e91..f98d86c 100644
+--- a/core/ui/card_ui/launch/game_launch_menu.gd
++++ b/core/ui/card_ui/launch/game_launch_menu.gd
+@@ -16,8 +16,15 @@ var game_settings_state := preload("res://assets/state/states/game_settings.tres
+ var gamepad_settings_state := preload("res://assets/state/states/gamepad_settings.tres") as State
+ var logger := Log.get_logger("GameLaunchMenu")
+ 
++const GameBeside := preload("res://core/ui/card_ui/launch/game_beside.gd")
++
+ @export var launch_item: LibraryLaunchItem
+ 
++## The row or grid the page was opened from, and the game it was opened on: L1 and R1 show the
++## game before or after the one shown (_input).
++var _list: Node
++var _opened: LibraryItem
++
+ @onready var banner := $%BannerTexture as TextureRect
+ @onready var logo := $%LogoTexture as TextureRect
+ @onready var launch_button := $%LaunchButton as CardButton
+@@ -34,6 +41,7 @@ var logger := Log.get_logger("GameLaunchMenu")
+ # Called when the node enters the scene tree for the first time.
+ func _ready() -> void:
+ 	set_process(false)
++	set_process_input(false)
+ 	launcher_state.state_entered.connect(_on_state_entered)
+ 	launcher_state.state_exited.connect(_on_state_exited)
+ 	launch_button.button_up.connect(_on_launch)
+@@ -55,6 +63,48 @@ func _process(_delta: float) -> void:
+ 
+ 
+ func _on_state_entered(_from: State) -> void:
++	set_process_input(true)
++	_note_list()
++	_show_game()
++
++
++## The row or grid the page is opened from is the one a card of its game is on screen in: that
++## list is still shown as the page opens. Back from the game's settings none is, and the list
++## found before stays while it has the game.
++func _note_list() -> void:
++	var item := launcher_state.data.get("item") as LibraryItem
++	if not item:
++		_list = null
++		return
++	for card: GameCard in get_tree().get_nodes_in_group(GameCard.GROUP):
++		if card.library_item == item and card.is_visible_in_tree():
++			_list = card.get_parent()
++			_opened = item
++			return
++	if is_instance_valid(_list) and not GameBeside.card_of(_list.get_children(), item):
++		_list = null
++
++
++## L1 and R1 show the game before or after this one in the row or grid the page was opened from,
++## in the order its cards are laid out, and do nothing past its ends.
++func _input(event: InputEvent) -> void:
++	var step := int(event.is_action_pressed("ogui_tab_right")) - int(event.is_action_pressed("ogui_tab_left"))
++	if step == 0 or Input.is_action_pressed("ogui_guide") or not is_instance_valid(_list):
++		return
++	# Not under a menu opened over the page, nor while one of its dialogs is open
++	var focus := get_viewport().gui_get_focus_owner()
++	if not focus or not is_ancestor_of(focus) or location_menu.visible or options_menu.visible:
++		return
++	var card := GameBeside.beside(_list.get_children(), launcher_state.data.get("item"), step) as GameCard
++	if not card:
++		return
++	get_viewport().set_input_as_handled()
++	launcher_state.data = {"item": card.library_item}
++	_show_game()
++
++
++## Sets the page up for the game in the launcher state's data
++func _show_game() -> void:
+ 	# Fade in the banner texture
+ 	player.play("fade_in")
+ 
+@@ -105,10 +155,15 @@ func _on_state_entered(_from: State) -> void:
+ 	var logo_texture = await (
+ 		BoxArtManager.get_boxart_or_placeholder(library_item, BoxArtProvider.LAYOUT.LOGO)
+ 	)
++	# Another game may be shown by now (L1/R1): its own load sets the art
++	if launcher_state.data.get("item") != library_item:
++		return
+ 	logo.texture = logo_texture
+ 	var banner_texture = await (
+ 		BoxArtManager.get_boxart_or_placeholder(library_item, BoxArtProvider.LAYOUT.BANNER)
+ 	)
++	if launcher_state.data.get("item") != library_item:
++		return
+ 	banner.texture = banner_texture
+ 
+ 	loading.visible = false
+@@ -120,6 +175,18 @@ func _on_state_exited(to: State) -> void:
+ 	if to == in_game_state:
+ 		state_machine.remove_state(launcher_state)
+ 	set_process(false)
++	set_process_input(false)
++	# Back at the list on another game than the one it opened: that game's card takes the focus,
++	# after the list's own choice (Home's first card, the library's last focused one), which the
++	# list defers as its state is entered. Hence deferred twice.
++	var item := launcher_state.data.get("item") as LibraryItem
++	if item != _opened and is_instance_valid(_list):
++		_focus_card.call_deferred(GameBeside.card_of(_list.get_children(), item))
++
++
++func _focus_card(card: Control) -> void:
++	if is_instance_valid(card) and card.is_visible_in_tree():
++		card.grab_focus.call_deferred()
+ 
+ 
+ func _update_launch_button() -> void:
+diff --git a/core/ui/card_ui/navigation/search_bar_menu.gd b/core/ui/card_ui/navigation/search_bar_menu.gd
+index 3498281..820eca7 100644
+--- a/core/ui/card_ui/navigation/search_bar_menu.gd
++++ b/core/ui/card_ui/navigation/search_bar_menu.gd
+@@ -29,11 +29,15 @@ func _ready() -> void:
+ 
+ 
+ func _on_library_entered(_from: State) -> void:
++	tabs_container.set_process_input(true)
+ 	_show_library_tabs()
+ 	#_hide_search_bar()
+ 
+ 
+ func _on_library_exited(_to: State) -> void:
++	# The tabs give up L1 and R1 as the library is left, not when their fade-out ends: a game's
++	# page opened from it has its own use for them.
++	tabs_container.set_process_input(false)
+ 	_hide_library_tabs()
+ 	_show_search_bar()
+ 
+diff --git a/core/ui/card_ui/launch/game_beside.gd b/core/ui/card_ui/launch/game_beside.gd
+new file mode 100644
+index 0000000..ffd06aa
+--- /dev/null
++++ b/core/ui/card_ui/launch/game_beside.gd
+@@ -0,0 +1,32 @@
++extends RefCounted
++
++## Which game a game's page shows next when L1 or R1 is pressed on it: the one before or after it
++## in the row or grid the page was opened from. `nodes` are that row's or grid's children.
++
++
++## Whether `node` is a game's card that can be stepped to: one that is shown (a search hides the
++## cards it filters out) and not being removed. Home's Library card and the spacers are not.
++static func is_card(node: Variant) -> bool:
++	return is_instance_valid(node) and node is Control and node.visible \
++		and not node.is_queued_for_deletion() and node.get("library_item") != null
++
++
++## The card of the game `item` among `nodes`, or null when it has none there.
++static func card_of(nodes: Array, item: Object) -> Control:
++	if item == null:
++		return null
++	for node in nodes:
++		if is_card(node) and node.get("library_item") == item:
++			return node
++	return null
++
++
++## The card `step` games after `item`'s (before it when negative), in the order the cards are laid
++## out: in a grid the end of one row is followed by the start of the next. Null past either end, and
++## when `item` has no card among `nodes`.
++static func beside(nodes: Array, item: Object, step: int) -> Control:
++	var cards := nodes.filter(is_card)
++	var at := cards.find(card_of(cards, item))
++	if at < 0 or at + step < 0 or at + step >= cards.size():
++		return null
++	return cards[at + step]

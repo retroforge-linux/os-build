@@ -29,6 +29,9 @@
 #     by the signal's "from" list, half of a game's launches beside another game left it hidden behind
 #     it for good (Air X); a record that never forgets would miss the next launch, whose windows get
 #     the same ids.
+#   - 0065 GameBeside: which game L1 or R1 shows next on a game's page. Stepping onto Home's Library
+#     card, or a card a search has hidden, would open the page on no game; stepping past the ends of
+#     a row or grid must do nothing.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -40,12 +43,13 @@ P0060="$PATCHES/0060-launch-manager-a-steam-window-never-takes-the-focus-from-th
 P0061="$PATCHES/0061-audio-a-volume-key-press-is-written-once-on-the-5-grid.patch"
 P0062="$PATCHES/0062-launch-manager-a-declared-profile-is-its-launchers-apps-a-missing-one-is-passed-over.patch"
 P0064="$PATCHES/0064-launch-manager-a-newly-focusable-window-is-told-by-our-own-record.patch"
+P0065="$PATCHES/0065-game-page-l1-and-r1-show-the-game-before-or-after.patch"
 
 PASS=0; FAIL=0; CASE=""
 ok()  { PASS=$((PASS+1)); printf '  ok   %s -- %s\n' "$CASE" "$1"; }
 bad() { FAIL=$((FAIL+1)); printf '  FAIL %s -- %s\n' "$CASE" "$1"; }
 
-for f in "$P0032" "$P0053" "$P0054" "$P0060" "$P0061" "$P0062" "$P0064"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
+for f in "$P0032" "$P0053" "$P0054" "$P0060" "$P0061" "$P0062" "$P0064" "$P0065"; do [ -f "$f" ] || { echo "missing input: $f" >&2; exit 1; }; done
 T="$(mktemp -d)" && [ -d "$T" ] || { echo "mktemp -d failed" >&2; exit 1; }
 trap 'rm -rf "$T"' EXIT
 
@@ -599,6 +603,100 @@ func _init() -> void:
 	quit(1 if failed else 0)
 GD
   out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P64" --script res://focus_offers_test.gd 2>&1)"; rc=$?
+  printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
+  n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
+  PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
+  if [ "$rc" -ne 0 ] && [ "$n_bad" -eq 0 ]; then
+    bad "Godot failed (rc $rc): $(printf '%s\n' "$out" | grep -E 'ERROR|error' | head -3)"
+  fi
+fi
+
+CASE="game beside (0065)"
+if [ -z "$GODOT" ]; then
+  printf '  skip %s -- no Godot (set RETROFORGE_GODOT to a Godot 4 binary)\n' "$CASE"
+else
+  P65="$T/p65"; mkdir -p "$P65"
+  added_file "$P0065" core/ui/card_ui/launch/game_beside.gd > "$P65/game_beside.gd"
+  grep -q '^static func beside(' "$P65/game_beside.gd" \
+    && ok "the patch adds core/ui/card_ui/launch/game_beside.gd" || bad "game_beside.gd not found in the patch"
+  # The page takes L1 and R1 (OGUI's tab actions) only while it is the menu shown, and the library's
+  # tab header, which has them in the library, is left alone.
+  grep -q '^+	var step := int(event.is_action_pressed("ogui_tab_right")) - int(event.is_action_pressed("ogui_tab_left"))$' "$P0065" \
+    && [ "$(grep -c '^+	set_process_input(false)$' "$P0065" | tr -d ' ')" -eq 2 ] \
+    && ok "the game page steps on L1 and R1, and only while it is shown" || bad "the game page does not take L1 and R1, or takes them while hidden"
+  ! grep -q '^diff --git a/core/ui/components/tabs_header' "$P0065" \
+    && ok "the tab header's own script is untouched: L1 and R1 still change tab in the library" || bad "the patch touches the tab header's script"
+  # The header fades out for a moment after the library is left and took an R1 pressed then (the
+  # library changed tab behind the page, Air X): its input stops with the library.
+  grep -q '^+	tabs_container.set_process_input(false)$' "$P0065" && grep -q '^+	tabs_container.set_process_input(true)$' "$P0065" \
+    && ok "the library's tabs give up L1 and R1 as the library is left and take them back when it is entered" \
+    || bad "the library's tabs still take L1 and R1 while they fade out"
+  # Two games' art can load at once now: the one no longer shown must not set its art.
+  [ "$(grep -c '^+	if launcher_state.data.get("item") != library_item:$' "$P0065" | tr -d ' ')" -eq 2 ] \
+    && ok "art that arrives for a game no longer shown is dropped" || bad "a late logo or banner can still land on another game's page"
+  printf 'config_version=5\n[application]\nconfig/name="ogui-patches-test"\n' > "$P65/project.godot"
+  cat > "$P65/game_beside_test.gd" <<GD
+extends SceneTree
+# Home's row: a spacer, the games' cards, the Library card, a spacer. A game is any object here.
+
+const GameBeside := preload("res://game_beside.gd")
+var failed := 0
+
+
+class FakeCard extends Control:
+	var library_item: Object
+
+
+func check(what: String, got, want) -> void:
+	if got == want:
+		print("  ok   $CASE -- ", what)
+	else:
+		failed += 1
+		print("  FAIL $CASE -- ", what, ": got ", got, ", want ", want)
+
+
+func card(row: Array, game: Object) -> FakeCard:
+	var c := FakeCard.new()
+	c.library_item = game
+	row.append(c)
+	return c
+
+
+func _init() -> void:
+	var games := []
+	for i in 8:
+		games.append(RefCounted.new())
+	var row := [Control.new()]
+	var cards := []
+	for i in 4:
+		cards.append(card(row, games[i]))
+	row.append(Control.new())  # the Library card: no game
+	row.append(Control.new())
+	check("R1: the game after", GameBeside.beside(row, games[0], 1), cards[1])
+	check("L1: the game before", GameBeside.beside(row, games[1], -1), cards[0])
+	check("L1 on the first game: none (the spacer is no game)", GameBeside.beside(row, games[0], -1), null)
+	check("R1 on the last game: none (the Library card is no game)", GameBeside.beside(row, games[3], 1), null)
+	check("a game with no card in the row: none", GameBeside.beside(row, games[7], 1), null)
+	check("no game: none", GameBeside.beside(row, null, 1), null)
+	cards[2].visible = false
+	check("a card a search has hidden is passed over", GameBeside.beside(row, games[1], 1), cards[3])
+	check("in both directions", GameBeside.beside(row, games[3], -1), cards[1])
+	check("and has no neighbours itself", GameBeside.beside(row, games[2], 1), null)
+	cards[2].visible = true
+	cards[1].queue_free()
+	check("a card being removed is passed over", GameBeside.beside(row, games[0], 1), cards[2])
+	# A library grid, six cards to a row: the order its cards are laid out in.
+	var grid := []
+	var grid_cards := []
+	for i in 8:
+		grid_cards.append(card(grid, games[i]))
+	check("R1 at the end of a grid's row: the first game of the next row", GameBeside.beside(grid, games[5], 1), grid_cards[6])
+	check("L1 at the start of a row: the last game of the row above", GameBeside.beside(grid, games[6], -1), grid_cards[5])
+	check("card_of: the game's card", GameBeside.card_of(grid, games[4]), grid_cards[4])
+	check("card_of: none for a game not there", GameBeside.card_of(row, games[6]), null)
+	quit(1 if failed else 0)
+GD
+  out="$(HOME="$T/home" XDG_CONFIG_HOME="$T/config" timeout 60 "$GODOT" --headless --path "$P65" --script res://game_beside_test.gd 2>&1)"; rc=$?
   printf '%s\n' "$out" | grep -E '^  (ok|FAIL) '
   n_ok="$(printf '%s\n' "$out" | grep -c '^  ok ')"; n_bad="$(printf '%s\n' "$out" | grep -c '^  FAIL ')"
   PASS=$((PASS + n_ok)); FAIL=$((FAIL + n_bad))
